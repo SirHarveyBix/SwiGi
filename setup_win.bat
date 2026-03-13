@@ -1,80 +1,104 @@
 @echo off
-REM === SwiGi — Setup ===
-REM Spust z Downloads slozky kde mas vsechno.
+REM === SwiGi — Setup Windows ===
+REM Lance depuis le dossier ou tous les fichiers sont presents.
 
-echo === SwiGi Setup ===
+echo === SwiGi — Installation Windows ===
 echo.
 
-REM Vytvor slozku
+REM Creer le dossier d'installation
 mkdir "%USERPROFILE%\SwiGi" 2>nul
 
-REM Zkopiruj Python
+REM Copier Python embeddable
 if exist "%~dp0python-3\python.exe" (
     xcopy /E /I /Y "%~dp0python-3" "%USERPROFILE%\SwiGi\python"
-    echo [OK] Python zkopirovan
+    echo [OK] Python copie
 ) else (
-    echo [CHYBA] Slozka python-3 s python.exe nenalezena v %~dp0
+    echo [ERREUR] Dossier python-3 avec python.exe introuvable dans %~dp0
+    echo         Telecharge Python embeddable depuis python.org/downloads/windows/
+    echo         Dezippe dans un sous-dossier python-3\
     pause
     exit /b 1
 )
 
-REM Zkopiruj hidapi.dll
+REM Copier hidapi.dll
 if exist "%~dp0hidapi.dll" (
     copy /Y "%~dp0hidapi.dll" "%USERPROFILE%\SwiGi\"
     copy /Y "%~dp0hidapi.dll" "%USERPROFILE%\SwiGi\python\"
-    echo [OK] hidapi.dll zkopirovan
+    echo [OK] hidapi.dll copie
 ) else if exist "%~dp0x64\hidapi.dll" (
     copy /Y "%~dp0x64\hidapi.dll" "%USERPROFILE%\SwiGi\"
     copy /Y "%~dp0x64\hidapi.dll" "%USERPROFILE%\SwiGi\python\"
-    echo [OK] hidapi.dll zkopirovan z x64\
+    echo [OK] hidapi.dll copie depuis x64\
 ) else (
-    echo [CHYBA] hidapi.dll nenalezen v %~dp0
+    echo [ERREUR] hidapi.dll introuvable dans %~dp0
+    echo         Telecharge depuis github.com/libusb/hidapi/releases
+    echo         Assets > hidapi-win.zip > x64\hidapi.dll
     pause
     exit /b 1
 )
 
-REM Zkopiruj daemon
+REM Copier swigi.py
 if exist "%~dp0swigi.py" (
     copy /Y "%~dp0swigi.py" "%USERPROFILE%\SwiGi\"
-    echo [OK] swigi.py zkopirovan
+    echo [OK] swigi.py copie
 ) else (
-    echo [CHYBA] swigi.py nenalezen v %~dp0
+    echo [ERREUR] swigi.py introuvable dans %~dp0
     pause
     exit /b 1
 )
 
-REM Vytvor start.bat
+REM Copier le package swigi
+if exist "%~dp0swigi" (
+    xcopy /E /I /Y "%~dp0swigi" "%USERPROFILE%\SwiGi\swigi"
+    echo [OK] package swigi copie
+) else (
+    echo [ERREUR] dossier swigi introuvable dans %~dp0
+    pause
+    exit /b 1
+)
+
+REM Creer start.bat (avec fenetre — pour voir les logs)
 (
 echo @echo off
+echo title SwiGi
 echo echo === SwiGi ===
-echo echo Cekam na Easy-Switch...
-echo echo Ctrl+C pro ukonceni.
+echo echo Appuie sur Easy-Switch pour synchroniser clavier et souris.
+echo echo Ctrl+C pour quitter.
 echo echo.
 echo "%%~dp0python\python.exe" "%%~dp0swigi.py"
 echo pause
 ) > "%USERPROFILE%\SwiGi\start.bat"
-echo [OK] start.bat vytvoren
+echo [OK] start.bat cree
 
-REM Vytvor start_verbose.bat
+REM Creer start_verbose.bat (mode debug)
 (
 echo @echo off
-echo echo === SwiGi [verbose] ===
-echo echo.
+echo title SwiGi [verbose]
 echo "%%~dp0python\python.exe" "%%~dp0swigi.py" -v
 echo pause
 ) > "%USERPROFILE%\SwiGi\start_verbose.bat"
-echo [OK] start_verbose.bat vytvoren
+echo [OK] start_verbose.bat cree
+
+REM Demarrage automatique via VBScript dans le dossier Startup
+set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+set "VBS=%STARTUP%\SwiGi.vbs"
+
+(
+echo ' SwiGi — demarrage automatique silencieux
+echo Set WshShell = CreateObject("WScript.Shell"^)
+echo WshShell.Run Chr(34^) ^& "%USERPROFILE%\SwiGi\python\pythonw.exe" ^& Chr(34^) ^& " " ^& Chr(34^) ^& "%USERPROFILE%\SwiGi\swigi.py" ^& Chr(34^), 0, False
+) > "%VBS%"
+echo [OK] Demarrage automatique configure (au login Windows)
 
 echo.
-echo === HOTOVO ===
+echo === INSTALLATION TERMINEE ===
 echo.
-echo Slozka: %USERPROFILE%\SwiGi\
+echo  Dossier       : %USERPROFILE%\SwiGi\
+echo  Demarrage auto: au prochain login Windows, SwiGi se lance seul
 echo.
-echo Spusteni: otevri %USERPROFILE%\SwiGi\ a dvojklikni start.bat
+echo  Pour lancer maintenant : ouvre %USERPROFILE%\SwiGi\ et double-clique start.bat
+echo  Pour desactiver l'auto : supprime %VBS%
 echo.
-echo Autostart: ve Startup slozce vytvor zastupce na:
-echo   %USERPROFILE%\SwiGi\python\pythonw.exe %USERPROFILE%\SwiGi\swigi.py
-echo.
-echo Otviram slozku...
+echo Ouverture du dossier...
 explorer "%USERPROFILE%\SwiGi"
 pause

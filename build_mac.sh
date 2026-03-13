@@ -1,10 +1,11 @@
 #!/bin/bash
-# Build SwiGi portable na macOS.
+# SwiGi — Build portable macOS (PyInstaller)
+# Produit dist/SwiGi/ — copie ce dossier n'importe où, aucune installation requise.
 set -e
 
-echo "=== SwiGi — macOS portable build ==="
+echo "=== SwiGi — Build portable macOS ==="
 
-python3 --version || { echo "Python3 nenalezen!"; exit 1; }
+python3 --version || { echo "Python3 introuvable !"; exit 1; }
 
 pip3 install pyinstaller --break-system-packages 2>/dev/null || pip3 install pyinstaller
 
@@ -15,12 +16,12 @@ if [ ! -f lib/libhidapi.dylib ]; then
     elif [ -f /usr/local/lib/libhidapi.dylib ]; then
         cp /usr/local/lib/libhidapi.dylib lib/
     else
-        echo "libhidapi.dylib nenalezen! Spusť: brew install hidapi"
+        echo "libhidapi.dylib introuvable ! Lance : brew install hidapi"
         exit 1
     fi
 fi
 
-echo "Building..."
+echo "Construction en cours..."
 pyinstaller \
   --name SwiGi \
   --onedir \
@@ -28,16 +29,20 @@ pyinstaller \
   --clean \
   --noconfirm \
   --add-binary "lib/libhidapi.dylib:." \
+  --collect-all swigi \
   --exclude-module tkinter \
   --exclude-module unittest \
   swigi.py
 
 if [ -f dist/SwiGi/SwiGi ]; then
     echo ""
-    echo "=== Build hotový! ==="
-    echo "Složka: dist/SwiGi/"
-    echo "Spuštění: ./dist/SwiGi/SwiGi"
+    echo "=== Build terminé ! ==="
+    echo "Dossier : dist/SwiGi/"
+    echo "Lancement : ./dist/SwiGi/SwiGi"
+    echo ""
+    echo "⚠️  Après chaque build, mets à jour Surveillance des entrées dans"
+    echo "   Réglages Système → Confidentialité et sécurité."
 else
-    echo "Build selhal!"
+    echo "Build échoué !"
     exit 1
 fi
