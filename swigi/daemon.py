@@ -11,13 +11,57 @@ from swigi.constants import (
 )
 from swigi.discovery import DeviceInfo, find_device
 from swigi.gui import notify
-from swigi.protocol import send_change_host
+from swigi.protocol import get_current_host, send_change_host
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
 
+_PENDING_HOST_TTL = 60.0  # secondes avant abandon de la correction pending
 
-# _verify_and_sync retiré pour éviter les régressions et boucles de déconnexions infinies
+
+def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
+    """Vérifie que la souris est sur le bon hôte après un switch.
+
+    Compare l'hôte actuel de la souris avec state["pending_host"].
+    Si désync → envoie CHANGE_HOST correctif, ferme le transport.
+    Si sync OK → efface pending_host, laisse mouse ouvert.
+
+    Retourne True si le transport souris a été fermé (correction ou lecture impossible).
+    """
+    pending = state.get("pending_host")
+    if pending is None:
+        return False
+    target_host, deadline = pending
+    if time.time() > deadline:
+        log.debug("pending_host expiré — abandon")
+        state["pending_host"] = None
+        return False
+
+    current = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
+    if current is None:
+        log.debug("pending_host : lecture hôte souris impossible, prochaine tentative au reconnect")
+        return False
+
+    if current == target_host:
+        log.debug("Sync confirmée : souris sur hôte %d ✓", target_host)
+        state["pending_host"] = None
+        return False
+
+    log.warning(
+        "Désync détectée : souris=hôte%d, attendu=hôte%d → correction...",
+        current,
+        target_host,
+    )
+    notify(f"Désync corrigée → hôte {target_host + 1}", "SwiGi")
+    try:
+        send_change_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx, target_host)
+        log.info("Correction désync → hôte %d ✓", target_host)
+        state["pending_host"] = None
+    except (TransportError, OSError) as e:
+        log.warning("Correction désync échouée : %s — nouvelle tentative au prochain reconnect", e)
+    mouse.close()
+    state["mouse"] = None
+    return True
 
 
 def run_daemon(
@@ -28,11 +72,12 @@ def run_daemon(
 ) -> None:
     state["kb"] = kb.name
     state["mouse"] = mouse.name
+    state.setdefault("pending_host", None)
 
     total_switches = 0
     last_response = time.time()
-    last_switch_time = 0.0  # timestamp de la dernière notification Easy-Switch détectée
-    last_mouse_probe = 0.0  # timestamp de la dernière sonde de reconnexion souris
+    last_switch_time = 0.0
+    last_mouse_probe = 0.0
     WATCHDOG_TIMEOUT = 10.0
 
     while not stop_event.is_set():
@@ -54,6 +99,7 @@ def run_daemon(
                 mouse = mouse_new
                 state["mouse"] = mouse.name
                 log.info("Watchdog reconnexion souris : %s", mouse.name)
+                _check_and_apply_pending_host(mouse, state)
             last_response = time.time()
             continue
 
@@ -68,7 +114,6 @@ def run_daemon(
             kb.close()
             state["kb"] = None
             if switch_triggered:
-                # La souris a aussi basculé — marquer déconnectée immédiatement
                 mouse.close()
                 state["mouse"] = None
 
@@ -102,7 +147,8 @@ def run_daemon(
                 mouse = new_mouse
                 state["mouse"] = mouse.name
                 log.debug("Souris prête : %s", mouse.name)
-                notify(f"{mouse.name} reconnectée", "Souris")
+                if not _check_and_apply_pending_host(mouse, state):
+                    notify(f"{mouse.name} reconnectée", "Souris")
             else:
                 log.debug("Souris introuvable, nouvelle tentative au prochain événement")
             continue
@@ -129,7 +175,7 @@ def run_daemon(
             # Notification CHANGE_HOST
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
                 target_host = raw[5]
-                last_switch_time = time.time()  # le clavier va se déconnecter quoi qu'il arrive
+                last_switch_time = time.time()
                 log.info("─" * 50)
                 log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
 
@@ -141,6 +187,7 @@ def run_daemon(
                         state["mouse"] = mouse.name
                     else:
                         log.info("Souris indisponible — basculera au prochain Easy-Switch")
+                        state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
                         break
 
                 try:
@@ -153,9 +200,7 @@ def run_daemon(
                     log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
                     total_switches += 1
                     state["switches"] = total_switches
-
-                    # Bascule de la souris initiée : fermeture immédiate du transport et réinitialisation de l'état
-                    log.info("Bascule de la souris réussie. Fermeture du transport.")
+                    state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
                     mouse.close()
                     state["mouse"] = None
 
@@ -184,10 +229,13 @@ def run_daemon(
                             state["switches"] = total_switches
                         except (TransportError, OSError) as e:
                             log.warning("Retry CHANGE_HOST échoué : %s", e)
-                    else:
-                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
+                    # Dans tous les cas : mémoriser l'hôte cible pour correction au reconnect
+                    state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
+                    if state.get("mouse"):
+                        mouse.close()
+                        state["mouse"] = None
 
-                break  # le clavier va se déconnecter
+                break
 
             if sw_id == 0:
                 log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
@@ -203,11 +251,9 @@ def run_daemon(
                     mouse.close()
                 mouse = new_mouse
                 state["mouse"] = mouse.name
-                log.info(
-                    "Souris reconnectée automatiquement : %s",
-                    mouse.name,
-                )
-                notify(f"{mouse.name} reconnectée", "Souris")
+                log.info("Souris reconnectée automatiquement : %s", mouse.name)
+                if not _check_and_apply_pending_host(mouse, state):
+                    notify(f"{mouse.name} reconnectée", "Souris")
 
     log.info("Arrêt. Total : %d basculements.", total_switches)
     kb.close()

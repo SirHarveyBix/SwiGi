@@ -29,7 +29,7 @@ class DeviceInfo:
     def close(self):
         try:
             self.transport.close()
-        except Exception:
+        except (OSError, TransportError):
             pass
 
 

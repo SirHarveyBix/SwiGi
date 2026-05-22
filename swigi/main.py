@@ -1,6 +1,7 @@
 import argparse
 import logging
 import logging.handlers
+import os
 import signal
 import sys
 import threading
@@ -13,6 +14,43 @@ from swigi.gui import HAS_RUMPS, SwiGiMenuBar, notify
 
 log = logging.getLogger("swigi.main")
 
+_LOCK_FILE = os.path.expanduser("~/.swigi.lock")
+
+
+def _acquire_lock() -> bool:
+    """Vérifie qu'une seule instance tourne. Retourne False si déjà lancé.
+
+    O_CREAT|O_EXCL = création atomique — élimine la race condition TOCTOU.
+    Si le fichier existe déjà, vérifie si le PID est vivant avant de conclure.
+    """
+    try:
+        fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+        return True
+    except FileExistsError:
+        pass  # fichier existe — vérifier si le PID est vivant
+
+    try:
+        with open(_LOCK_FILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return False  # instance vivante
+    except (ValueError, OSError):
+        # PID mort ou fichier corrompu — écraser le lock
+        try:
+            os.remove(_LOCK_FILE)
+        except OSError:
+            pass
+        return _acquire_lock()  # relancer (max 1 récursion)
+
+
+def _release_lock() -> None:
+    try:
+        os.remove(_LOCK_FILE)
+    except OSError:
+        pass
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="SwiGi — synchronisation Easy-Switch via Bluetooth")
@@ -24,6 +62,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if not _acquire_lock():
+        print("SwiGi est déjà en cours d'exécution.", file=sys.stderr)
+        return 0
+
+    try:
+        return _main_inner(args)
+    finally:
+        _release_lock()
+
+
+def _main_inner(args) -> int:
     level = logging.DEBUG if args.verbose else logging.INFO
     fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 
@@ -68,7 +117,7 @@ def main() -> int:
     if not HAS_RUMPS:
         log.info("Ctrl+C pour quitter.")
 
-    state: dict = {"kb": kb.name, "mouse": mouse.name, "switches": 0}
+    state: dict = {"kb": kb.name, "mouse": mouse.name, "switches": 0, "pending_host": None}
     stop_event = threading.Event()
 
     def _on_stop(sig, frame):
