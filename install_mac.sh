@@ -47,6 +47,15 @@ else
     echo "✅ hidapi installé"
 fi
 
+# ── rumps (icône menu bar) ───────────────────────────────────────────────────
+if python3 -c "import rumps" 2>/dev/null; then
+    echo "✅ rumps trouvé"
+else
+    echo "📦 Installation de rumps (icône menu bar)..."
+    pip3 install --quiet rumps --break-system-packages 2>/dev/null || pip3 install --quiet rumps
+    echo "✅ rumps installé"
+fi
+
 # ── LaunchAgent plist ────────────────────────────────────────────────────────
 mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$HOME/Library/Logs"
@@ -62,15 +71,13 @@ cat > "$PLIST" << EOF
     <array>
         <string>$PYTHON_PATH</string>
         <string>$SWIGI_PY</string>
+        <string>--log-file</string>
+        <string>$LOG</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>StandardOutPath</key>
-    <string>$LOG</string>
-    <key>StandardErrorPath</key>
-    <string>$LOG</string>
 </dict>
 </plist>
 EOF

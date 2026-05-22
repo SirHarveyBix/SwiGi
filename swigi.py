@@ -5,14 +5,16 @@ Quand Easy-Switch est pressé sur le clavier Logitech, capture la notification
 CHANGE_HOST et envoie la même commande à la souris. Les deux basculent sur le même hôte.
 
 Autonome : tout le code HID++ est inclus. Seule dépendance = bibliothèque hidapi.
+Icône menu bar macOS : install_mac.sh installe rumps automatiquement.
 
-macOS:  brew install hidapi  (ou libhidapi.dylib dans le dossier de ce fichier)
-Windows: hidapi.dll dans le dossier de ce fichier (télécharger depuis github.com/libusb/hidapi/releases)
-Linux:  sudo apt install libhidapi-hidraw0
+macOS:  bash install_mac.sh  (installe tout + autostart)
+Windows: hidapi.dll dans le dossier de ce fichier + double-cliquer setup_win.bat
+Linux:  sudo apt install libhidapi-hidraw0 && python3 swigi.py
 
-Démarrage :
+Options :
   python swigi.py        # mode normal
   python swigi.py -v     # verbose
+  python swigi.py --log-file swigi.log
 """
 from __future__ import annotations
 
@@ -21,28 +23,17 @@ import ctypes
 import ctypes.util
 import dataclasses
 import logging
+import logging.handlers
 import os
 import platform
 import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 log = logging.getLogger("swigi")
-
-
-def _notify(message: str, subtitle: str = "") -> None:
-    """Notification macOS via osascript. Silencieux sur autres plateformes."""
-    if _SYSTEM != "Darwin":
-        return
-    script = f'display notification "{message}" with title "SwiGi"'
-    if subtitle:
-        script += f' subtitle "{subtitle}"'
-    try:
-        subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
-    except Exception:
-        pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Constantes HID++
@@ -88,6 +79,14 @@ DIRECT_USAGE_PAIRS = [
 
 _SYSTEM = platform.system()
 
+# rumps : icône menu bar macOS (installé par install_mac.sh, optionnel)
+try:
+    import rumps as _rumps
+    _HAS_RUMPS = _SYSTEM == "Darwin"
+except ImportError:
+    _rumps = None
+    _HAS_RUMPS = False
+
 
 class TransportError(Exception):
     pass
@@ -95,7 +94,6 @@ class TransportError(Exception):
 
 def _load_hidapi() -> ctypes.CDLL:
     """Charge hidapi. Ordre de recherche : répertoire app, bundle PyInstaller, système."""
-    # Répertoire app (portable : hidapi à côté de ce script)
     app_dir = os.path.dirname(os.path.abspath(__file__))
     meipass = getattr(sys, "_MEIPASS", None)  # PyInstaller
 
@@ -103,7 +101,6 @@ def _load_hidapi() -> ctypes.CDLL:
     if meipass:
         search_dirs.append(meipass)
 
-    # Noms spécifiques à la plateforme
     if _SYSTEM == "Darwin":
         local_names = ["libhidapi.dylib"]
         system_names = [
@@ -114,7 +111,6 @@ def _load_hidapi() -> ctypes.CDLL:
     elif _SYSTEM == "Windows":
         local_names = ["hidapi.dll", "libhidapi-0.dll"]
         system_names = ["hidapi.dll", "libhidapi-0.dll"]
-        # Chemins de recherche DLL Windows
         for d in search_dirs:
             if os.path.isdir(d):
                 try:
@@ -129,11 +125,8 @@ def _load_hidapi() -> ctypes.CDLL:
                 pass
     else:  # Linux
         local_names = ["libhidapi-hidraw.so.0", "libhidapi-hidraw.so", "libhidapi.so.0", "libhidapi.so"]
-        system_names = local_names + [
-            "libhidapi-libusb.so.0", "libhidapi-libusb.so",
-        ]
+        system_names = local_names + ["libhidapi-libusb.so.0", "libhidapi-libusb.so"]
 
-    # Essayer local (portable) d'abord
     for d in search_dirs:
         for name in local_names:
             path = os.path.join(d, name)
@@ -145,7 +138,6 @@ def _load_hidapi() -> ctypes.CDLL:
                 except OSError:
                     continue
 
-    # Essayer système
     for name in system_names:
         try:
             lib = ctypes.CDLL(name)
@@ -156,7 +148,7 @@ def _load_hidapi() -> ctypes.CDLL:
 
     hints = {
         "Darwin": "brew install hidapi  OU  copier libhidapi.dylib dans le dossier de ce fichier",
-        "Windows": "Télécharger hidapi.dll depuis github.com/libusb/hidapi/releases et le placer dans le dossier de ce fichier",
+        "Windows": "Télécharger hidapi.dll depuis github.com/libusb/hidapi/releases",
         "Linux": "sudo apt install libhidapi-hidraw0",
     }
     raise ImportError(f"hidapi introuvable — {hints.get(_SYSTEM, 'installer hidapi')}")
@@ -164,7 +156,6 @@ def _load_hidapi() -> ctypes.CDLL:
 
 _lib = _load_hidapi()
 
-# Initialisation
 _lib.hid_init.restype = ctypes.c_int
 _lib.hid_init.argtypes = []
 _lib.hid_init()
@@ -295,7 +286,6 @@ def hidpp_request(transport, devnumber, request_id, *params, timeout=500):
 
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
-        # Timeout par lecture borné par le temps restant pour respecter la deadline
         remaining_ms = max(1, int((deadline - time.time()) * 1000))
         raw = transport.read(min(timeout, remaining_ms))
         if not raw or len(raw) < 4:
@@ -341,7 +331,7 @@ def get_device_name(transport, devnumber, feat_idx):
     reply = hidpp_request(transport, devnumber, (feat_idx << 8) | 0x00, timeout=500)
     if not reply:
         return None
-    name_len = min(reply[0], 64)  # limite à 64 pour éviter une boucle infinie si valeur erronée
+    name_len = min(reply[0], 64)
     if name_len == 0:
         return None
     chars = []
@@ -404,20 +394,15 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
             continue
         if (up, usage) not in DIRECT_USAGE_PAIRS:
             continue
-        # Score : interfaces HID++ fabricant en premier (Windows bloque Generic Desktop)
-        if up in (0xFF00, 0xFF43, 0xFF0C):
-            score = 100
-        else:
-            score = 0
+        score = 100 if up in (0xFF00, 0xFF43, 0xFF0C) else 0
         candidates.append((score, info.path, pid, up, usage))
     _lib.hid_free_enumeration(head)
-    # Tri : HID++ fabricant d'abord, puis Generic Desktop
     candidates.sort(key=lambda x: -x[0])
 
     found_pids = set()
     for score, path, pid, up, usage in candidates:
         if pid in found_pids:
-            continue  # périphérique déjà trouvé
+            continue
         try:
             t = HIDTransport(path, pid)
         except OSError:
@@ -430,7 +415,6 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
                 continue
             dt = get_device_type(t, DEVNUMBER_DIRECT, feat)
             name = get_device_name(t, DEVNUMBER_DIRECT, feat) or f"Logitech-0x{pid:04X}"
-            # Types souris : 3 (souris), 4 (trackpad), 5 (trackball)
             is_mouse = dt in (DEVICE_TYPE_MOUSE, DEVICE_TYPE_TRACKPAD, DEVICE_TYPE_TRACKBALL)
             if device_type_wanted == DEVICE_TYPE_KEYBOARD and dt != DEVICE_TYPE_KEYBOARD:
                 t.close()
@@ -451,7 +435,7 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Message ping
+#  Notifications + ping
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _PING_REQUEST_ID = (FEATURE_ROOT << 8) | 0x00 | SW_ID
@@ -459,8 +443,212 @@ _PING_MSG = struct.pack("!BB18s", REPORT_LONG, DEVNUMBER_DIRECT,
                         struct.pack("!H", _PING_REQUEST_ID) + b"\x00\x00\x00")
 
 
+def _notify(message: str, subtitle: str = "") -> None:
+    """Notification macOS via osascript. No-op sur Windows/Linux."""
+    if _SYSTEM != "Darwin":
+        return
+    script = f'display notification "{message}" with title "SwiGi"'
+    if subtitle:
+        script += f' subtitle "{subtitle}"'
+    try:
+        subprocess.Popen(["osascript", "-e", script],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Boucle principale (daemon)
+#  Icône menu bar macOS (rumps — installé par install_mac.sh)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if _HAS_RUMPS:
+    class SwiGiMenuBar(_rumps.App):
+        def __init__(self, state: dict, stop_event: threading.Event):
+            super().__init__("⌨️", quit_button=None)
+            self._state = state
+            self._stop_event = stop_event
+            self._kb_item = _rumps.MenuItem("Clavier : —")
+            self._mouse_item = _rumps.MenuItem("Souris : —")
+            self._count_item = _rumps.MenuItem("Basculements : 0")
+            self.menu = [
+                self._kb_item,
+                self._mouse_item,
+                None,
+                self._count_item,
+                None,
+                _rumps.MenuItem("Quitter", callback=self._quit),
+            ]
+
+        @_rumps.timer(2)
+        def _refresh(self, _):
+            kb = self._state.get("kb")
+            mouse = self._state.get("mouse")
+            switches = self._state.get("switches", 0)
+            self._kb_item.title = f"Clavier : {kb or '—'} {'✅' if kb else '❌'}"
+            self._mouse_item.title = f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
+            self._count_item.title = f"Basculements : {switches}"
+            self.title = "⌨️" if (kb and mouse) else "⌨️⚠"
+
+        def _quit(self, _):
+            self._stop_event.set()
+            _rumps.quit_application()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Boucle daemon
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
+                state: dict, stop_event: threading.Event) -> None:
+    state["kb"] = kb.name
+    state["mouse"] = mouse.name
+
+    total_switches = 0
+    last_response = time.time()
+    WATCHDOG_TIMEOUT = 10.0
+
+    while not stop_event.is_set():
+        # ── Watchdog ──
+        if time.time() - last_response > WATCHDOG_TIMEOUT:
+            log.info("Watchdog : aucune réponse depuis %ds, reconnexion...", int(WATCHDOG_TIMEOUT))
+            kb.close()
+            mouse.close()
+            state["kb"] = None
+            state["mouse"] = None
+            time.sleep(1.0)
+            kb_new = find_device(DEVICE_TYPE_KEYBOARD)
+            if kb_new:
+                kb = kb_new
+                state["kb"] = kb.name
+                log.info("Watchdog reconnexion clavier : %s", kb.name)
+            mouse_new = find_device(DEVICE_TYPE_MOUSE)
+            if mouse_new:
+                mouse = mouse_new
+                state["mouse"] = mouse.name
+                log.info("Watchdog reconnexion souris : %s", mouse.name)
+            last_response = time.time()
+            continue
+
+        # ── Ping ──
+        try:
+            kb.transport.write(_PING_MSG)
+        except (TransportError, OSError):
+            log.info("Clavier déconnecté, attente du retour...")
+            _notify(f"{kb.name} déconnecté", "Clavier")
+            kb.close()
+            state["kb"] = None
+
+            kb_new = None
+            for attempt in range(600):
+                if stop_event.is_set():
+                    break
+                time.sleep(0.1)
+                kb_new = find_device(DEVICE_TYPE_KEYBOARD)
+                if kb_new is not None:
+                    break
+                if attempt % 100 == 99:
+                    log.debug("Reconnexion : tentative %d/600...", attempt + 1)
+
+            if kb_new is None:
+                if not stop_event.is_set():
+                    log.warning("Le clavier n'est pas revenu, nouvelle tentative...")
+                continue
+            kb = kb_new
+            state["kb"] = kb.name
+            log.info("Reconnexion clavier : %s", kb.name)
+            _notify(f"{kb.name} reconnecté", "Clavier")
+            last_response = time.time()
+
+            mouse.close()
+            state["mouse"] = None
+            log.debug("Reconnexion proactive de la souris...")
+            new_mouse = find_device(DEVICE_TYPE_MOUSE)
+            if new_mouse:
+                mouse = new_mouse
+                state["mouse"] = mouse.name
+                log.debug("Souris prête en avance : %s", mouse.name)
+                _notify(f"{mouse.name} reconnectée", "Souris")
+            else:
+                log.debug("Souris introuvable, nouvelle tentative au prochain événement")
+            continue
+
+        # ── Lecture réponses (fenêtre 80ms) ──
+        deadline = time.time() + 0.08
+        while time.time() < deadline and not stop_event.is_set():
+            try:
+                raw = kb.transport.read(timeout=25)
+            except (TransportError, OSError):
+                break
+
+            if raw is None or len(raw) < 4:
+                continue
+            rid = raw[0]
+            if rid not in _MSG_LENGTHS or len(raw) != _MSG_LENGTHS[rid]:
+                continue
+
+            feat = raw[2]
+            func = raw[3]
+            sw_id = func & 0x0F
+            last_response = time.time()
+
+            # Notification CHANGE_HOST
+            if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
+                target_host = raw[5]
+                log.info("")
+                log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
+
+                if not mouse.transport.is_open:
+                    log.debug("Transport souris fermé, reconnexion...")
+                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
+                    if new_mouse:
+                        mouse = new_mouse
+                        state["mouse"] = mouse.name
+                    else:
+                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
+                        break
+
+                try:
+                    send_change_host(mouse.transport, DEVNUMBER_DIRECT,
+                                     mouse.change_host_idx, target_host)
+                    log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
+                    total_switches += 1
+                    state["switches"] = total_switches
+                except (TransportError, OSError):
+                    log.warning("CHANGE_HOST souris échoué, reconnexion...")
+                    mouse.close()
+                    state["mouse"] = None
+                    time.sleep(0.5)
+                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
+                    if new_mouse:
+                        mouse = new_mouse
+                        state["mouse"] = mouse.name
+                        try:
+                            send_change_host(mouse.transport, DEVNUMBER_DIRECT,
+                                             mouse.change_host_idx, target_host)
+                            log.info("★ CHANGE_HOST → %s → hôte %d (après reconnexion)",
+                                     mouse.name, target_host)
+                            total_switches += 1
+                            state["switches"] = total_switches
+                        except (TransportError, OSError) as e:
+                            log.warning("Retry CHANGE_HOST échoué : %s", e)
+                    else:
+                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
+
+                break  # le clavier va se déconnecter
+
+            if sw_id == 0:
+                log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
+
+        time.sleep(0.01)
+
+    log.info("Arrêt. Total : %d basculements.", total_switches)
+    kb.close()
+    mouse.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Point d'entrée
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -468,13 +656,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="SwiGi — synchronisation Easy-Switch via Bluetooth")
     parser.add_argument("-v", "--verbose", action="store_true", help="Journalisation détaillée")
+    parser.add_argument(
+        "--log-file", metavar="FICHIER",
+        help="Écrire les logs dans ce fichier (rotation auto : 1 Mo × 3)",
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    level = logging.DEBUG if args.verbose else logging.INFO
+    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    root_logger.addHandler(ch)
+
+    if args.log_file:
+        fh = logging.handlers.RotatingFileHandler(
+            args.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+        )
+        fh.setFormatter(fmt)
+        root_logger.addHandler(fh)
 
     log.info("SwiGi — recherche des périphériques...")
 
@@ -495,158 +697,37 @@ def main():
 
     log.info("")
     log.info("Prêt. Appuie sur Easy-Switch sur %s.", kb.name)
-    log.info("Ctrl+C pour quitter.")
+    if not _HAS_RUMPS:
+        log.info("Ctrl+C pour quitter.")
 
-    running = True
+    state: dict = {"kb": None, "mouse": None, "switches": 0}
+    stop_event = threading.Event()
 
-    def on_sigint(sig, frame):
-        nonlocal running
-        running = False
-
-    def on_sigterm(sig, frame):
-        nonlocal running
-        running = False
-
-    signal.signal(signal.SIGINT, on_sigint)
-    signal.signal(signal.SIGTERM, on_sigterm)
-
-    total_switches = 0
-    last_response = time.time()  # watchdog : dernière réponse HID++ reçue
-    WATCHDOG_TIMEOUT = 10.0      # forcer reconnexion après N secondes sans réponse
-
-    while running:
-        # ── Watchdog : reconnexion forcée si aucune réponse trop longtemps ──
-        if time.time() - last_response > WATCHDOG_TIMEOUT:
-            log.info("Watchdog : aucune réponse depuis %ds, reconnexion...", int(WATCHDOG_TIMEOUT))
-            kb.close()
-            mouse.close()
-            time.sleep(1.0)
-            kb_new = find_device(DEVICE_TYPE_KEYBOARD)
-            if kb_new:
-                kb = kb_new
-                log.info("Watchdog reconnexion clavier : %s", kb.name)
-            mouse_new = find_device(DEVICE_TYPE_MOUSE)
-            if mouse_new:
-                mouse = mouse_new
-                log.info("Watchdog reconnexion souris : %s", mouse.name)
-            last_response = time.time()  # réinitialiser le compteur dans tous les cas
-            continue
-
-        # ── Envoi ping ──
-        try:
-            kb.transport.write(_PING_MSG)
-        except (TransportError, OSError):
-            log.info("Clavier déconnecté, attente du retour...")
-            _notify(f"{kb.name} déconnecté", "Clavier")
-            kb.close()
-
-            # Polling rapide à 100ms (600 itérations = 60s) pour reconnexion rapide
-            kb_new = None
-            for attempt in range(600):
-                if not running:
-                    break
-                time.sleep(0.1)
-                kb_new = find_device(DEVICE_TYPE_KEYBOARD)
-                if kb_new is not None:
-                    break
-                if attempt % 100 == 99:
-                    log.debug("Reconnexion : tentative %d/600...", attempt + 1)
-
-            if kb_new is None:
-                if running:
-                    log.warning("Le clavier n'est pas revenu, nouvelle tentative...")
-                continue
-            kb = kb_new
-            log.info("Reconnexion clavier : %s", kb.name)
-            _notify(f"{kb.name} reconnecté", "Clavier")
-            last_response = time.time()  # réinitialiser le watchdog
-
-            # Reconnexion proactive de la souris pour libérer le chemin critique du switch
-            mouse.close()
-            log.debug("Reconnexion proactive de la souris...")
-            new_mouse = find_device(DEVICE_TYPE_MOUSE)
-            if new_mouse:
-                mouse = new_mouse
-                log.debug("Souris prête en avance : %s", mouse.name)
-                _notify(f"{mouse.name} reconnectée", "Souris")
-            else:
-                log.debug("Souris introuvable lors de la reconnexion, nouvelle tentative au prochain événement")
-
-            continue
-
-        # ── Lecture réponses (fenêtre 80ms) ──
-        deadline = time.time() + 0.08
-        while time.time() < deadline and running:
+    def _on_stop(sig, frame):
+        stop_event.set()
+        if _HAS_RUMPS:
             try:
-                raw = kb.transport.read(timeout=25)
-            except (TransportError, OSError):
-                break
+                _rumps.quit_application()
+            except Exception:
+                pass
 
-            if raw is None:
-                continue
-            if len(raw) < 4:
-                continue
-            rid = raw[0]
-            if rid not in _MSG_LENGTHS or len(raw) != _MSG_LENGTHS[rid]:
-                continue
+    signal.signal(signal.SIGINT, _on_stop)
+    signal.signal(signal.SIGTERM, _on_stop)
 
-            feat = raw[2]
-            func = raw[3]
-            sw_id = func & 0x0F
-            last_response = time.time()  # watchdog : réponse valide reçue
+    if _HAS_RUMPS:
+        # Daemon en thread background, menu bar sur thread principal (requis AppKit)
+        t = threading.Thread(
+            target=_run_daemon, args=(kb, mouse, state, stop_event), daemon=True
+        )
+        t.start()
+        SwiGiMenuBar(state, stop_event).run()
+        stop_event.set()
+        t.join(timeout=3)
+    else:
+        _run_daemon(kb, mouse, state, stop_event)
 
-            # Notification CHANGE_HOST : feat correspond, sw_id == 0 (notification)
-            if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
-                target_host = raw[5]
-                log.info("")
-                log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
-
-                # Envoi CHANGE_HOST à la souris — vérification état transport
-                if not mouse.transport.is_open:
-                    log.debug("Transport souris fermé, reconnexion...")
-                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
-                    if new_mouse:
-                        mouse = new_mouse
-                    else:
-                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
-                        break
-
-                try:
-                    send_change_host(mouse.transport, DEVNUMBER_DIRECT,
-                                     mouse.change_host_idx, target_host)
-                    log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
-                    total_switches += 1
-                except (TransportError, OSError):
-                    log.warning("CHANGE_HOST vers la souris a échoué, reconnexion souris...")
-                    mouse.close()
-                    time.sleep(0.5)
-                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
-                    if new_mouse:
-                        mouse = new_mouse
-                        try:
-                            send_change_host(mouse.transport, DEVNUMBER_DIRECT,
-                                             mouse.change_host_idx, target_host)
-                            log.info("★ CHANGE_HOST → %s → hôte %d (après reconnexion)",
-                                     mouse.name, target_host)
-                            total_switches += 1
-                        except (TransportError, OSError) as e:
-                            log.warning("Nouvelle tentative CHANGE_HOST échouée : %s — la souris basculera la prochaine fois", e)
-                    else:
-                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
-
-                break  # le clavier va se déconnecter
-
-            # Journaliser autres notifications
-            if sw_id == 0:
-                log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
-
-        # Fréquence d'échantillonnage : 10ms pour réactivité optimale
-        time.sleep(0.01)
-
-    log.info("Arrêt. Total : %d basculements.", total_switches)
-    kb.close()
-    mouse.close()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main() or 0)
