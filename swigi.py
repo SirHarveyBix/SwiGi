@@ -344,7 +344,7 @@ def get_device_name(transport, devnumber, feat_idx):
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
-def _drain_transport(transport: HIDTransport, max_reads: int = 8) -> None:
+def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
     """Vide le buffer d'entrée HID (non-bloquant) avant d'écrire une commande.
 
     Quand la souris envoie beaucoup de rapports de mouvement, ces données
@@ -377,6 +377,11 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
             if attempt == 0:
                 raise  # 1er essai échoué = transport mort avant envoi
             return   # retry échoué = switch réussi, périphérique déconnecté
+    # Flush OS TX buffer : lecture courte force le BT stack à expédier les writes en attente
+    try:
+        transport.read(timeout=5)
+    except (TransportError, OSError):
+        pass  # souris déconnectée = commande reçue, comportement attendu
 
 
 def get_current_host(transport, devnumber, feat_idx):
@@ -514,7 +519,7 @@ def _notify(message: str, subtitle: str = "") -> None:
 if _HAS_RUMPS:
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            initial = "⌨️" if (state.get("kb") and state.get("mouse")) else "⌨"
+            initial = "⌨️"
             super().__init__(initial, quit_button=None)
             self._state = state
             self._stop_event = stop_event
@@ -576,7 +581,8 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
 
     total_switches = 0
     last_response = time.time()
-    last_switch_time = 0.0  # timestamp du dernier CHANGE_HOST réussi
+    last_switch_time = 0.0  # timestamp de la dernière notification Easy-Switch détectée
+    last_mouse_probe = 0.0  # timestamp de la dernière sonde de reconnexion souris
     WATCHDOG_TIMEOUT = 10.0
 
     while not stop_event.is_set():
@@ -605,11 +611,16 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
         try:
             kb.transport.write(_PING_MSG)
         except (TransportError, OSError):
-            log.info("Clavier déconnecté, attente du retour...")
-            if time.time() - last_switch_time > 3.0:
+            switch_triggered = time.time() - last_switch_time <= 3.0
+            log.info("Clavier déconnecté%s", " (post-switch)" if switch_triggered else "")
+            if not switch_triggered:
                 _notify(f"{kb.name} déconnecté", "Clavier")
             kb.close()
             state["kb"] = None
+            if switch_triggered:
+                # La souris a aussi basculé — marquer déconnectée immédiatement
+                mouse.close()
+                state["mouse"] = None
 
             kb_new = None
             for attempt in range(600):
@@ -667,6 +678,7 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
             # Notification CHANGE_HOST
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
                 target_host = raw[5]
+                last_switch_time = time.time()  # le clavier va se déconnecter qoi qu'il arrive
                 log.info("")
                 log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
 
@@ -686,7 +698,6 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                     log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
                     total_switches += 1
                     state["switches"] = total_switches
-                    last_switch_time = time.time()
                 except (TransportError, OSError):
                     log.warning("CHANGE_HOST souris échoué, reconnexion...")
                     mouse.close()
@@ -714,6 +725,18 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                 log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
 
         time.sleep(0.01)
+
+        # Sonde périodique : reconnecter la souris si absente et clavier OK
+        if state.get("mouse") is None and time.time() - last_mouse_probe > 5.0:
+            last_mouse_probe = time.time()
+            new_mouse = find_device(DEVICE_TYPE_MOUSE)
+            if new_mouse:
+                if mouse.transport.is_open:
+                    mouse.close()
+                mouse = new_mouse
+                state["mouse"] = mouse.name
+                log.info("Souris reconnectée automatiquement : %s", mouse.name)
+                _notify(f"{mouse.name} reconnectée", "Souris")
 
     log.info("Arrêt. Total : %d basculements.", total_switches)
     kb.close()
