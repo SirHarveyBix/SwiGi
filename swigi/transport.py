@@ -43,3 +43,12 @@ class HIDTransport:
         if self._dev is not None:
             lib.hid_close(self._dev)
             self._dev = None
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()

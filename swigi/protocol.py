@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import struct
 import time
-from typing import TYPE_CHECKING
 
 from swigi.constants import (
     CHANGE_HOST_FN_SET,
@@ -16,8 +15,6 @@ from swigi.constants import (
 )
 from swigi.transport import HIDTransport, TransportError
 
-if TYPE_CHECKING:
-    from swigi.discovery import DeviceInfo
 
 log = logging.getLogger("swigi.protocol")
 
@@ -171,42 +168,3 @@ def get_current_host(transport: HIDTransport, devnumber: int, feat_idx: int) -> 
         return reply[1]
     return None
 
-
-def _verify_and_sync(kb: DeviceInfo, mouse: DeviceInfo, state: dict) -> None:
-    """Vérifie que clavier et souris sont sur le même hôte. Corrige si désynchronisé.
-
-    Appelé après reconnexion des deux périphériques. Si les hôtes diffèrent,
-    envoie CHANGE_HOST à la souris pour la ramener sur l'hôte du clavier.
-    """
-    try:
-        kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
-        mouse_host = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
-    except (TransportError, OSError) as e:
-        log.warning("Impossible de lire l'hôte actuel pour vérification (erreur transport) : %s", e)
-        return
-
-    if kb_host is None or mouse_host is None:
-        return  # impossible de vérifier
-
-    if kb_host == mouse_host:
-        log.debug("Sync OK : clavier et souris sur hôte %d", kb_host)
-        return
-
-    log.warning(
-        "Désync détectée : clavier=hôte%d, souris=hôte%d → correction...",
-        kb_host,
-        mouse_host,
-    )
-
-    from swigi.gui import notify
-
-    notify(f"Resynchronisation → hôte {kb_host + 1}", "SwiGi")
-    try:
-        send_change_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx, kb_host)
-        log.info("Correction appliquée : souris → hôte %d", kb_host)
-        mouse.close()
-        state["mouse"] = None  # souris va déconnecter après la correction
-    except (TransportError, OSError) as e:
-        log.warning("Correction sync échouée : %s", e)
-        mouse.close()
-        state["mouse"] = None

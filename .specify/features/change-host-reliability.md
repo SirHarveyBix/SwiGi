@@ -79,7 +79,7 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
 
 ## 5. Relation avec la synchronisation garantie
 
-Cette spec couvre uniquement la fiabilité de l'envoi de la commande `CHANGE_HOST` (couche transport). La détection et correction des désynchronisations post-switch (vérification 300ms + resync au reconnect) sont documentées dans [`host-sync.md`](host-sync.md).
+Cette spec couvre uniquement la fiabilité de l'envoi de la commande `CHANGE_HOST` (couche transport). Le burst de 5 écritures et la fermeture proactive associés à la synchronisation et à la reconnexion automatique sont documentés dans [`host-sync.md`](host-sync.md).
 
 ---
 

@@ -4,6 +4,7 @@ import logging.handlers
 import signal
 import sys
 import threading
+import time
 
 from swigi.constants import DEVICE_TYPE_KEYBOARD, DEVICE_TYPE_MOUSE
 from swigi.daemon import run_daemon
@@ -83,15 +84,34 @@ def main() -> int:
     signal.signal(signal.SIGINT, _on_stop)
     signal.signal(signal.SIGTERM, _on_stop)
 
+    def _daemon_loop(kb, mouse, state, stop_event):
+        while not stop_event.is_set():
+            try:
+                run_daemon(kb, mouse, state, stop_event)
+            except Exception:
+                log.exception("Crash inattendu — redémarrage dans 5s...")
+                notify("SwiGi a crashé — redémarrage...", "Erreur")
+                if stop_event.is_set():
+                    break
+                time.sleep(5)
+                kb_new = find_device(DEVICE_TYPE_KEYBOARD)
+                if kb_new:
+                    kb = kb_new
+                    state["kb"] = kb.name
+                mouse_new = find_device(DEVICE_TYPE_MOUSE)
+                if mouse_new:
+                    mouse = mouse_new
+                    state["mouse"] = mouse.name
+
     if HAS_RUMPS and SwiGiMenuBar:
         # Daemon en thread background, menu bar sur thread principal (requis AppKit)
-        t = threading.Thread(target=run_daemon, args=(kb, mouse, state, stop_event), daemon=True)
+        t = threading.Thread(target=_daemon_loop, args=(kb, mouse, state, stop_event), daemon=True)
         t.start()
         SwiGiMenuBar(state, stop_event).run()
         stop_event.set()
         t.join(timeout=3)
     else:
-        run_daemon(kb, mouse, state, stop_event)
+        _daemon_loop(kb, mouse, state, stop_event)
 
     return 0
 

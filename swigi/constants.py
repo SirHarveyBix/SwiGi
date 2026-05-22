@@ -45,5 +45,6 @@ SYSTEM = platform.system()
 PREFS_FILE = os.path.expanduser("~/.swigi_prefs.json")
 
 PING_REQUEST_ID = (FEATURE_ROOT << 8) | 0x00 | SW_ID
-PING_MSG = struct.pack("!BB18s", REPORT_LONG, DEVNUMBER_DIRECT,
-                       struct.pack("!H", PING_REQUEST_ID) + b"\x00\x00\x00")
+# Construction explicite du ping : 20 octets au total (format HID++ REPORT_LONG)
+_PING_DATA = struct.pack("!H", PING_REQUEST_ID) + b"\x00" * 16  # 18 octets total
+PING_MSG = struct.pack("!BB", REPORT_LONG, DEVNUMBER_DIRECT) + _PING_DATA

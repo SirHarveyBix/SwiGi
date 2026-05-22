@@ -29,8 +29,8 @@ def save_prefs(prefs: dict) -> None:
     try:
         with open(PREFS_FILE, "w") as f:
             json.dump(prefs, f)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Impossible de sauvegarder les préférences : %s", e)
 
 
 prefs = load_prefs()
@@ -42,7 +42,8 @@ def notify(message: str, subtitle: str = "") -> None:
         return
 
     def _esc(s: str) -> str:
-        return s.replace("\\", "\\\\").replace('"', '\\"')
+        s = s.replace("\\", "\\\\").replace('"', '\\"')
+        return ''.join(c for c in s if c >= ' ' or c in '\t')  # retire \n, \r, etc.
 
     script = f'display notification "{_esc(message)}" with title "SwiGi"'
     if subtitle:
@@ -64,6 +65,11 @@ if HAS_RUMPS and _rumps:
             kb0 = state.get("kb")
             mouse0 = state.get("mouse")
             super().__init__("⌨️" if (kb0 and mouse0) else "⌨", quit_button=None)
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().setActivationPolicy_(1)  # Accessory — no Dock icon
+            except Exception:
+                pass
             self._state = state
             self._stop_event = stop_event
             self._kb_item = _rumps.MenuItem(f"Clavier : {kb0 or '—'} {'✅' if kb0 else '❌'}")

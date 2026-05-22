@@ -132,10 +132,11 @@ macOS bloque par défaut l'accès aux périphériques d'entrée. Tu dois autoris
 
 Télécharge et place dans un même dossier (ex. `C:\SwiGi\`) :
 
-- `swigi.py` (depuis cette page — bouton vert **Code** → **Download ZIP**)
+- Le ZIP SwiGi complet (bouton vert **Code** → **Download ZIP**) — contient `swigi.py`, le dossier `swigi\` et `setup_win.bat`
 - `hidapi.dll` depuis [github.com/libusb/hidapi/releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → dossier `x64` → `hidapi.dll`
 - Python embeddable depuis [python.org/downloads/windows](https://www.python.org/downloads/windows/) → « Windows embeddable package (64-bit) » → dézippe dans un sous-dossier `python-3\`
-- `setup_win.bat` (inclus dans le ZIP SwiGi)
+
+⚠️ `swigi.py` **seul ne suffit pas** — le dossier `swigi\` doit être présent dans le même répertoire.
 
 **Étape 2 — Lancer le setup**
 
@@ -313,7 +314,7 @@ System Settings → Privacy & Security → Input Monitoring → add Terminal (or
 
 1. Download `hidapi.dll` from [libusb/hidapi releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → `x64/hidapi.dll`
 2. Download the [Python embeddable package](https://www.python.org/downloads/windows/) (64-bit ZIP) → extract to `python-3\`
-3. Put `swigi.py`, `hidapi.dll`, `python-3\`, `setup_win.bat` in one folder
+3. Put `swigi.py`, the `swigi\` folder, `hidapi.dll`, `python-3\`, `setup_win.bat` in one folder
 4. Run **`setup_win.bat`** — installs, configures autostart, opens the folder
 5. Run **`start.bat`** to launch SwiGi
 

@@ -26,12 +26,21 @@ Avec launchd (`KeepAlive = true`), SwiGi tourne indéfiniment. `StandardOutPath`
 ## 4. Implémentation
 
 ```python
+# Configuration propre du logger "swigi" (dans swigi/main.py)
+swigi_logger = logging.getLogger("swigi")
+swigi_logger.setLevel(level)
+swigi_logger.propagate = False
+
+ch = logging.StreamHandler()
+ch.setFormatter(fmt)
+swigi_logger.addHandler(ch)
+
 if args.log_file:
     fh = logging.handlers.RotatingFileHandler(
         args.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
     )
     fh.setFormatter(fmt)
-    root_logger.addHandler(fh)
+    swigi_logger.addHandler(fh)
 ```
 
 `install_mac.sh` génère le plist avec :

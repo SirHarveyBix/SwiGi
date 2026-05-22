@@ -53,10 +53,7 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
     lib.hid_free_enumeration(head)
     candidates.sort(key=lambda x: -x[0])
 
-    found_pids = set()
     for score, path, pid, up, usage in candidates:
-        if pid in found_pids:
-            continue
         try:
             t = HIDTransport(path, pid)
         except OSError:
@@ -80,7 +77,6 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
             if ch is None:
                 t.close()
                 continue
-            found_pids.add(pid)
             return DeviceInfo(t, name, pid, ch)
         except (TransportError, OSError):
             t.close()
