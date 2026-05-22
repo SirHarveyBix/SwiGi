@@ -1,20 +1,21 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0
-Type: Initial constitution — création depuis le contexte du projet
+Version change: 1.0.0 → 1.1.0
+Type: MINOR — amendement P1 (dépendances optionnelles platform-specific)
 
-Principes définis:
-  1. Simplicité (single-file, zéro dépendance métier)
-  2. Portabilité (macOS / Windows / Linux)
-  3. Robustesse (reconnexion, watchdog)
-  4. Non-intrusivité (coexistence avec Logi Options+, pas de root)
-  5. Réactivité (latence minimale Easy-Switch)
+Principes modifiés:
+  P1 Simplicité → étendu : dépendances optionnelles installées par les scripts
+    d'installation platform-specific (install_mac.sh) autorisées si :
+    (a) le script les installe automatiquement sans action manuelle
+    (b) l'absence de la dépendance déclenche un fallback silencieux
+    (c) le core (swigi.py seul + hidapi) reste fonctionnel sans elle
+  Exemples : rumps (menu bar macOS)
 
-Templates créés:
-  ✅ .specify/templates/plan-template.md
-  ✅ .specify/templates/spec-template.md
-  ✅ .specify/templates/tasks-template.md
+Specs ajoutées:
+  ✅ .specify/features/menu-bar-macos.md
+  ✅ .specify/features/change-host-reliability.md
+  ✅ .specify/features/log-rotation.md
 
 Follow-up TODOs:
   - TODO(RATIFICATION_DATE): confirmer la date d'adoption officielle si différente de 2026-05-22
@@ -23,7 +24,7 @@ Follow-up TODOs:
 
 # Constitution du Projet SwiGi
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Date de ratification:** 2026-05-22
 **Dernière modification:** 2026-05-22
 **Mainteneur principal:** SirHarveyBix (gui.lefort.17@gmail.com)
@@ -42,14 +43,20 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 
 ### Principe 1 — Simplicité
 
-**Règle :** SwiGi DOIT rester un fichier Python unique (`swigi.py`). La seule dépendance externe autorisée est `hidapi`. Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être requis pour exécuter le projet.
+**Règle :** SwiGi DOIT rester un fichier Python unique (`swigi.py`). La seule dépendance externe requise est `hidapi`. Les dépendances optionnelles installées automatiquement par les scripts platform-specific (`install_mac.sh`, `setup_win.bat`) sont autorisées si et seulement si :
+- elles sont installées sans action manuelle de l'utilisateur,
+- l'absence de la dépendance déclenche un fallback silencieux (le core reste fonctionnel),
+- elles ne sont jamais importées au top-level sans `try/except ImportError`.
 
-**Rationale :** La friction zéro à l'installation est la proposition de valeur principale. Toute abstraction supplémentaire qui exigerait une installation de dépendances Python invalide cet objectif.
+Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être requis pour le fonctionnement de base.
+
+**Rationale :** La friction zéro à l'installation est la proposition de valeur principale. Les features optionnelles (ex. menu bar macOS) peuvent utiliser des dépendances légères si elles n'ajoutent aucun effort à l'utilisateur.
 
 **Tests de conformité :**
 
 - `python swigi.py` fonctionne après `brew install hidapi` / placement de `hidapi.dll` sans aucune autre commande.
-- `wc -l swigi.py` reste à un niveau raisonnable (< 700 lignes).
+- Sans `rumps` : SwiGi démarre normalement, sans menu bar, sans erreur.
+- `wc -l swigi.py` reste à un niveau raisonnable (< 800 lignes).
 
 ### Principe 2 — Portabilité
 
