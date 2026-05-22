@@ -21,6 +21,6 @@
 
 ## Risques
 
-| Risque | Probabilité | Impact | Mitigation |
-|--------|-------------|--------|------------|
-| [risque] | Faible/Moyen/Élevé | | |
+| Risque   | Probabilité        | Impact | Mitigation |
+| -------- | ------------------ | ------ | ---------- |
+| [risque] | Faible/Moyen/Élevé |        |            |

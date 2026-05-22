@@ -7,9 +7,9 @@
 
 ## Tâches actives
 
-| ID | Titre | Type | Statut | Principe |
-|----|-------|------|--------|----------|
-| T1 | [titre] | feat/fix/docs/refactor | TODO / En cours / Fait | P1-P5 |
+| ID  | Titre   | Type                   | Statut                 | Principe |
+| --- | ------- | ---------------------- | ---------------------- | -------- |
+| T1  | [titre] | feat/fix/docs/refactor | TODO / En cours / Fait | P1-P5    |
 
 ## Types de tâches (alignés constitution)
 

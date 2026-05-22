@@ -47,6 +47,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 **Rationale :** La friction zéro à l'installation est la proposition de valeur principale. Toute abstraction supplémentaire qui exigerait une installation de dépendances Python invalide cet objectif.
 
 **Tests de conformité :**
+
 - `python swigi.py` fonctionne après `brew install hidapi` / placement de `hidapi.dll` sans aucune autre commande.
 - `wc -l swigi.py` reste à un niveau raisonnable (< 700 lignes).
 
@@ -57,6 +58,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 **Rationale :** Le projet est utilisé par des utilisateurs sur les trois plateformes. Une divergence de comportement non documentée constitue un bug, pas une fonctionnalité.
 
 **Tests de conformité :**
+
 - CI/CD ou tests manuels documentés sur les trois OS.
 - Aucun import conditionnel qui provoquerait un `ImportError` sur une plateforme supportée.
 
@@ -67,6 +69,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 **Rationale :** Un daemon qui nécessite un redémarrage manuel perd sa valeur principale. Le Bluetooth est intrinsèquement instable ; la résilience est une exigence fonctionnelle, pas un bonus.
 
 **Tests de conformité :**
+
 - Déconnecter/reconnecter le clavier BT : le daemon se reconnecte en < 60s.
 - Watchdog se déclenche après 10s sans réponse et tente reconnexion des deux périphériques.
 - Arrêt propre via `Ctrl+C` et `SIGTERM` (systemd/launchd).
@@ -78,6 +81,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 **Rationale :** Les utilisateurs qui ont déjà un logiciel Logitech installé doivent pouvoir utiliser SwiGi en parallèle. Forcer un choix exclusif est inacceptable.
 
 **Tests de conformité :**
+
 - Logi Options+ ouvert et actif : SwiGi démarre sans erreur et fonctionne correctement.
 - Pas de `sudo` requis dans les instructions de démarrage normal.
 
@@ -88,6 +92,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 **Rationale :** Une latence perceptible (> 500ms) dégrade l'expérience utilisateur et remet en question l'utilité du tool. La réactivité est une exigence de qualité de service, pas une optimisation facultative.
 
 **Tests de conformité :**
+
 - `time.sleep(0.01)` dans la boucle principale (10ms).
 - Fenêtre de lecture à 80ms (`deadline = time.time() + 0.08`).
 - Pas de `time.sleep()` > 1s dans le chemin critique de traitement d'un événement.
@@ -106,6 +111,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 ### 3.2 Politique de versionnement
 
 Suit la sémantique suivante :
+
 - **MAJOR** : suppression ou redéfinition incompatible d'un principe.
 - **MINOR** : ajout d'un nouveau principe ou extension matérielle d'un existant.
 - **PATCH** : clarifications, formulation, corrections orthographiques.
@@ -117,6 +123,7 @@ Chaque Pull Request modifiant `swigi.py` DOIT inclure une vérification mentale 
 ### 3.4 Compatibilité avec les outils de spécification
 
 Ce projet utilise le framework **SpecKit** pour la documentation technique :
+
 - `.specify/memory/constitution.md` — ce fichier.
 - `.specify/templates/` — gabarits pour plans, specs, et tâches.
 - Skill `speckit-constitution` pour les amendements.
@@ -126,15 +133,15 @@ Ce projet utilise le framework **SpecKit** pour la documentation technique :
 
 ## 4. Référence technique
 
-| Élément | Valeur |
-|---------|--------|
-| Protocole | HID++ 2.0 |
-| Feature CHANGE_HOST | `0x1814` |
-| SW_ID (identifiant SwiGi) | `0x0A` |
-| VID Logitech | `0x046D` |
-| Bolt PID | `0xC548` |
-| Unifying PIDs | `0xC52B`, `0xC532` |
-| Intervalle polling | 10ms |
-| Fenêtre lecture | 80ms |
-| Timeout watchdog | 10s |
-| Python requis | 3.10+ |
+| Élément                   | Valeur             |
+| ------------------------- | ------------------ |
+| Protocole                 | HID++ 2.0          |
+| Feature CHANGE_HOST       | `0x1814`           |
+| SW_ID (identifiant SwiGi) | `0x0A`             |
+| VID Logitech              | `0x046D`           |
+| Bolt PID                  | `0xC548`           |
+| Unifying PIDs             | `0xC52B`, `0xC532` |
+| Intervalle polling        | 10ms               |
+| Fenêtre lecture           | 80ms               |
+| Timeout watchdog          | 10s                |
+| Python requis             | 3.10+              |

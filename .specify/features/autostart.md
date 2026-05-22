@@ -13,23 +13,25 @@ SwiGi doit être utile sans intervention après l'installation initiale. Un util
 ## 2. Périmètre
 
 **Inclus :**
+
 - macOS : LaunchAgent via plist launchd (`install_mac.sh` automatise tout)
 - Windows : VBScript dans le dossier Startup (`setup_win.bat` automatise tout)
 - Linux : service systemd user (`--user enable --now`)
 
 **Exclus :**
+
 - macOS Login Item (API différente, requiert bundle .app signé)
 - Windows Service système (requiert admin, trop intrusif)
 
 ## 3. Exigences fonctionnelles
 
-| # | Exigence | Priorité |
-|---|----------|----------|
-| F1 | SwiGi démarre sans intervention après login | MUST |
-| F2 | SwiGi se relance automatiquement si crash (KeepAlive / Restart) | MUST |
-| F3 | Logs accessibles sans Terminal ouvert | MUST |
-| F4 | Désactivation simple en une commande / suppression d'un fichier | MUST |
-| F5 | Pas de fenêtre visible sur Windows (pythonw.exe / VBScript) | MUST |
+| #   | Exigence                                                        | Priorité |
+| --- | --------------------------------------------------------------- | -------- |
+| F1  | SwiGi démarre sans intervention après login                     | MUST     |
+| F2  | SwiGi se relance automatiquement si crash (KeepAlive / Restart) | MUST     |
+| F3  | Logs accessibles sans Terminal ouvert                           | MUST     |
+| F4  | Désactivation simple en une commande / suppression d'un fichier | MUST     |
+| F5  | Pas de fenêtre visible sur Windows (pythonw.exe / VBScript)     | MUST     |
 
 ## 4. Implémentation par plateforme
 
@@ -66,10 +68,10 @@ Désactivation : `systemctl --user disable swigi`
 
 ## 5. Conformité constitution
 
-| Principe | Impact | Mesure |
-|----------|--------|--------|
-| Simplicité | ✅ Positif | Scripts d'install = zéro effort utilisateur |
-| Portabilité | ✅ Positif | Solution native à chaque OS |
-| Robustesse | ✅ Positif | Restart automatique sur crash |
-| Non-intrusivité | ✅ Neutre | User-level (pas system-level), révocable facilement |
-| Réactivité | ✅ Neutre | Démarre avant utilisation, pas d'impact runtime |
+| Principe        | Impact     | Mesure                                              |
+| --------------- | ---------- | --------------------------------------------------- |
+| Simplicité      | ✅ Positif | Scripts d'install = zéro effort utilisateur         |
+| Portabilité     | ✅ Positif | Solution native à chaque OS                         |
+| Robustesse      | ✅ Positif | Restart automatique sur crash                       |
+| Non-intrusivité | ✅ Neutre  | User-level (pas system-level), révocable facilement |
+| Réactivité      | ✅ Neutre  | Démarre avant utilisation, pas d'impact runtime     |

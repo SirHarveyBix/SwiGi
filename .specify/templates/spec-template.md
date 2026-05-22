@@ -13,26 +13,28 @@
 ## 2. Périmètre
 
 **Inclus :**
+
 - [Ce qui est dans le périmètre]
 
 **Exclus :**
+
 - [Ce qui est explicitement hors périmètre]
 
 ## 3. Exigences fonctionnelles
 
-| # | Exigence | Priorité |
-|---|----------|----------|
-| F1 | [description] | MUST / SHOULD / MAY |
+| #   | Exigence      | Priorité            |
+| --- | ------------- | ------------------- |
+| F1  | [description] | MUST / SHOULD / MAY |
 
 ## 4. Conformité constitution
 
-| Principe | Impact | Mesure |
-|----------|--------|--------|
-| Simplicité | [Neutre / Positif / Risque] | [action si risque] |
-| Portabilité | | |
-| Robustesse | | |
-| Non-intrusivité | | |
-| Réactivité | | |
+| Principe        | Impact                      | Mesure             |
+| --------------- | --------------------------- | ------------------ |
+| Simplicité      | [Neutre / Positif / Risque] | [action si risque] |
+| Portabilité     |                             |                    |
+| Robustesse      |                             |                    |
+| Non-intrusivité |                             |                    |
+| Réactivité      |                             |                    |
 
 ## 5. Plan de test
 
