@@ -29,6 +29,7 @@ pyinstaller \
   --clean \
   --noconfirm \
   --add-binary "lib/libhidapi.dylib:." \
+  --collect-all swigi \
   --exclude-module tkinter \
   --exclude-module unittest \
   swigi.py
