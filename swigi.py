@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import ctypes.util
 import dataclasses
 import json
 import logging
@@ -345,15 +344,15 @@ def get_device_name(transport, devnumber, feat_idx):
 
 
 def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
-    """Vide le buffer d'entrée HID (non-bloquant) avant d'écrire une commande.
+    """Vide le buffer d'entrée HID avant d'écrire une commande.
 
-    Quand la souris envoie beaucoup de rapports de mouvement, ces données
-    saturent la file BT et retardent le traitement des commandes sortantes.
-    Vider le buffer libère la voie avant l'envoi de CHANGE_HOST.
+    timeout=1 (1ms) plutôt que 0 : sur macOS Sonoma/Sequoia + BT 5.3 (M3),
+    hid_read_timeout(..., 0) peut ignorer des paquets déjà en file kernel.
+    1ms suffit pour que le BT stack rende les paquets disponibles.
     """
     for _ in range(max_reads):
         try:
-            if transport.read(timeout=0) is None:
+            if transport.read(timeout=1) is None:
                 break
         except (TransportError, OSError):
             break
@@ -362,15 +361,20 @@ def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
 def send_change_host(transport, devnumber, feat_idx, target_host):
     """Bascule le périphérique vers target_host (base 0).
 
-    Vide le buffer d'entrée puis envoie la commande 3× back-to-back sans délai.
+    Double drain (avant + après 1ms d'attente) pour absorber les paquets
+    in-flight sur les chips BT 5.3 haute fréquence (M3 Pro).
+    Envoie la commande 5× back-to-back sans délai.
     Exception sur 1er essai = erreur réelle (propagée).
     Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
     """
     _drain_transport(transport)
+    time.sleep(0.001)   # laisse arriver les paquets BT in-flight
+    _drain_transport(transport)
+
     request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     params = struct.pack("B", target_host)
     msg = _build_msg(devnumber, request_id, params)
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             transport.write(msg)
         except (TransportError, OSError):
@@ -379,7 +383,7 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
             return   # retry échoué = switch réussi, périphérique déconnecté
     # Flush OS TX buffer : lecture courte force le BT stack à expédier les writes en attente
     try:
-        transport.read(timeout=5)
+        transport.read(timeout=10)
     except (TransportError, OSError):
         pass  # souris déconnectée = commande reçue, comportement attendu
 
@@ -502,9 +506,13 @@ def _notify(message: str, subtitle: str = "") -> None:
     """Notification macOS via osascript. No-op si désactivé ou hors Darwin."""
     if _SYSTEM != "Darwin" or not _prefs.get("notifications", True):
         return
-    script = f'display notification "{message}" with title "SwiGi"'
+
+    def _esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'display notification "{_esc(message)}" with title "SwiGi"'
     if subtitle:
-        script += f' subtitle "{subtitle}"'
+        script += f' subtitle "{_esc(subtitle)}"'
     try:
         subprocess.Popen(["osascript", "-e", script],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -519,12 +527,15 @@ def _notify(message: str, subtitle: str = "") -> None:
 if _HAS_RUMPS:
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            initial = "⌨️"
-            super().__init__(initial, quit_button=None)
+            kb0 = state.get("kb")
+            mouse0 = state.get("mouse")
+            super().__init__("⌨️" if (kb0 and mouse0) else "⌨", quit_button=None)
             self._state = state
             self._stop_event = stop_event
-            self._kb_item = _rumps.MenuItem("Clavier : —")
-            self._mouse_item = _rumps.MenuItem("Souris : —")
+            self._kb_item = _rumps.MenuItem(
+                f"Clavier : {kb0 or '—'} {'✅' if kb0 else '❌'}")
+            self._mouse_item = _rumps.MenuItem(
+                f"Souris : {mouse0 or '—'} {'✅' if mouse0 else '❌'}")
             self._count_item = _rumps.MenuItem("Basculements : 0")
             self._notify_item = _rumps.MenuItem("Notifications",
                                                 callback=self._toggle_notify)
@@ -678,7 +689,7 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
             # Notification CHANGE_HOST
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
                 target_host = raw[5]
-                last_switch_time = time.time()  # le clavier va se déconnecter qoi qu'il arrive
+                last_switch_time = time.time()  # le clavier va se déconnecter quoi qu'il arrive
                 log.info("")
                 log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
 

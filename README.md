@@ -231,6 +231,22 @@ Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un seul fichier P
 
 ---
 
+### ⚡ Performances
+
+SwiGi est extrêmement léger — conçu pour tourner 24h/24 en arrière-plan sans impact visible.
+
+| Ressource | Valeur typique                                                   |
+| --------- | ---------------------------------------------------------------- |
+| CPU       | < 0,5 % (boucle bloquée 80 ms sur 90 ms en attente kernel BT)    |
+| RAM       | ~10–15 Mo (Python + hidapi)                                      |
+| Disque    | 0 écriture en fonctionnement normal (logs uniquement si demandé) |
+| Réseau    | 0 octet (100 % Bluetooth local, aucune connexion internet)       |
+| Batterie  | Négligeable — équivalent à avoir le Bluetooth activé normalement |
+
+La boucle principale passe ~80 ms bloquée dans `hid_read_timeout` (appel système), puis dort 10 ms. Python ne s'exécute que quelques microsecondes par cycle. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
+
+---
+
 ### Appareils testés
 
 | Appareil                | OS              | Connexion |
@@ -336,6 +352,20 @@ python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation)
 4. Both devices switch to the same host
 
 Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python file, one dependency (hidapi).
+
+### ⚡ Performance
+
+SwiGi is extremely lightweight — designed to run 24/7 in the background with no visible impact.
+
+| Resource | Typical value                                                        |
+| -------- | -------------------------------------------------------------------- |
+| CPU      | < 0.5% (loop blocked 80ms out of 90ms waiting in kernel BT call)     |
+| RAM      | ~10–15 MB (Python + hidapi)                                          |
+| Disk     | 0 writes during normal operation (logs only if `--log-file` is used) |
+| Network  | 0 bytes (100% local Bluetooth, no internet connection)               |
+| Battery  | Negligible — equivalent to having Bluetooth enabled normally         |
+
+The main loop spends ~80ms blocked in `hid_read_timeout` (a kernel syscall), then sleeps for 10ms. Python only executes for a few microseconds per cycle. Comparable to a background SSH agent or the native Bluetooth daemon.
 
 ### Tested
 
