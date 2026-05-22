@@ -514,7 +514,8 @@ def _notify(message: str, subtitle: str = "") -> None:
 if _HAS_RUMPS:
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            super().__init__("⌨️", quit_button=None)
+            initial = "⌨️" if (state.get("kb") and state.get("mouse")) else "⌨"
+            super().__init__(initial, quit_button=None)
             self._state = state
             self._stop_event = stop_event
             self._kb_item = _rumps.MenuItem("Clavier : —")
@@ -543,7 +544,7 @@ if _HAS_RUMPS:
             self._kb_item.title = f"Clavier : {kb or '—'} {'✅' if kb else '❌'}"
             self._mouse_item.title = f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
             self._count_item.title = f"Basculements : {switches}"
-            self.title = "⌨️" if (kb and mouse) else "⌨️⚠"
+            self.title = "⌨️" if (kb and mouse) else "⌨"
 
         def _toggle_notify(self, sender):
             enabled = not bool(sender.state)
@@ -575,6 +576,7 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
 
     total_switches = 0
     last_response = time.time()
+    last_switch_time = 0.0  # timestamp du dernier CHANGE_HOST réussi
     WATCHDOG_TIMEOUT = 10.0
 
     while not stop_event.is_set():
@@ -604,7 +606,8 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
             kb.transport.write(_PING_MSG)
         except (TransportError, OSError):
             log.info("Clavier déconnecté, attente du retour...")
-            _notify(f"{kb.name} déconnecté", "Clavier")
+            if time.time() - last_switch_time > 3.0:
+                _notify(f"{kb.name} déconnecté", "Clavier")
             kb.close()
             state["kb"] = None
 
@@ -683,6 +686,7 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                     log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
                     total_switches += 1
                     state["switches"] = total_switches
+                    last_switch_time = time.time()
                 except (TransportError, OSError):
                     log.warning("CHANGE_HOST souris échoué, reconnexion...")
                     mouse.close()
