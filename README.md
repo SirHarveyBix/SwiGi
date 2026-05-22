@@ -2,301 +2,301 @@
 
 **Switch your keyboard. Mouse follows. Done.**
 
-SwiGi syncs Easy-Switch between Logitech keyboard and mouse over Bluetooth — no receiver, no Logi Options+, no same-network requirement.
+SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech via Bluetooth — sans dongle USB, sans Logi Options+, sans contrainte réseau.
 
-Press Easy-Switch on keyboard → mouse automatically switches to the same host.
-
-> *Made for people. Enjoy it and stop being a slave to buttons.* ✌️
+> _Made for people. Enjoy it and stop being a slave to buttons._
 
 <p align="center">
-  <i>Did it save you time and frustration?</i><br><br>
-  <a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
+  <i>Ça t'a fait gagner du temps ?</i><br><br>
+  <a href="https://github.com/sponsors/SirHarveyBix" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
 </p>
 
-🇬🇧 **English** — you're reading it | 🇨🇿 [Česky](#-česky) — scroll down
+🇫🇷 **Français** — tu lis ça | 🇬🇧 [English](#-english) — scroll down
+
+---
+
+## 🇫🇷 Français
+
+### Requirements
+
+- Un clavier **et** une souris Logitech avec Easy-Switch et Bluetooth (série MX, série Ergo, etc.)
+- **pas besoin de savoir coder.**
+
+---
+
+### 🍎 Installation macOS
+
+**Méthode la plus simple — script automatique (recommandé)**
+
+1. Ouvre le Terminal (`Cmd+Espace`)
+2. Colle cette commande et appuie sur Entrée :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+```
+
+C'est tout. SwiGi démarre et se relancera automatiquement à chaque démarrage de ton Mac.
+
+---
+
+**Méthode manuelle (si tu préfères tout contrôler)**
+
+**Étape 1 — Installer Python** (si pas déjà installé)
+
+Va sur [python.org/downloads](https://www.python.org/downloads/) et télécharge Python 3. Lance l'installeur, clique « Continue » partout.
+
+**Étape 2 — Installer Homebrew** (si pas déjà installé)
+
+Ouvre le Terminal et colle :
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+**Étape 3 — Installer hidapi**
+
+```bash
+brew install hidapi
+```
+
+**Étape 4 — Télécharger SwiGi**
+
+```bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+```
+
+**Étape 5 — Lancer SwiGi**
+
+```bash
+cd swigi
+python3 swigi.py
+```
+
+---
+
+#### ⚙️ Démarrage automatique macOS
+
+Lance le script d'installation automatique (voir ci-dessus) **ou** fais-le manuellement :
+
+```bash
+# Dans le dossier SwiGi :
+bash install_mac.sh
+```
+
+Pour **désactiver** le démarrage automatique :
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.swigi.plist
+```
+
+---
+
+#### 🔐 Permission requise sur macOS
+
+> ⚠️ **Important — à faire une seule fois**
+
+macOS bloque par défaut l'accès aux périphériques d'entrée. Tu dois autoriser SwiGi :
+
+1. Ouvre **Réglages Système** → **Confidentialité et sécurité** → **Surveillance des entrées**
+2. Clique sur le **+** et ajoute **Terminal** (ou **SwiGi** si tu utilises le build portable)
+3. Redémarre SwiGi
+
+> ⚠️ **Après chaque rebuild** (build portable PyInstaller), macOS ne reconnaît plus le binaire. Supprime l'ancien SwiGi dans Surveillance des entrées et rajoute le nouveau.
+
+---
+
+### 🪟 Installation Windows
+
+**Tu n'as pas besoin d'installer Python.**
+
+**Étape 1 — Télécharger les fichiers**
+
+Télécharge et place dans un même dossier (ex. `C:\SwiGi\`) :
+
+- `swigi.py` (depuis cette page — bouton vert **Code** → **Download ZIP**)
+- `hidapi.dll` depuis [github.com/libusb/hidapi/releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → dossier `x64` → `hidapi.dll`
+- Python embeddable depuis [python.org/downloads/windows](https://www.python.org/downloads/windows/) → « Windows embeddable package (64-bit) » → dézippe dans un sous-dossier `python-3\`
+- `setup_win.bat` (inclus dans le ZIP SwiGi)
+
+**Étape 2 — Lancer le setup**
+
+Double-clique sur **`setup_win.bat`**.
+
+Ce script :
+
+- Copie tout au bon endroit
+- Crée un raccourci de démarrage
+- **Configure le démarrage automatique** au login Windows
+- Ouvre le dossier final
+
+**Étape 3 — Lancer SwiGi**
+
+Double-clique sur **`start.bat`** dans `%USERPROFILE%\SwiGi\`.
+
+---
+
+### 🐧 Installation Linux
+
+**Étape 1 — Installer les dépendances**
+
+```bash
+sudo apt install python3 libhidapi-hidraw0
+```
+
+**Étape 2 — Règle udev** (accès HID sans root)
+
+```bash
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0666"' | \
+  sudo tee /etc/udev/rules.d/42-logitech-hid.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**Étape 3 — Lancer SwiGi**
+
+```bash
+python3 swigi.py
+```
+
+**Étape 4 — Démarrage automatique (systemd)**
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/swigi.service << EOF
+[Unit]
+Description=SwiGi — synchronisation Easy-Switch Logitech
+
+[Service]
+ExecStart=$(command -v python3) $(pwd)/swigi.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user enable --now swigi
+```
+
+---
+
+### ❓ Problèmes fréquents
+
+| Problème                         | Solution                                                         |
+| -------------------------------- | ---------------------------------------------------------------- |
+| « Clavier introuvable »          | Vérifie que le clavier est connecté en Bluetooth (pas en USB)    |
+| « Souris introuvable »           | Idem pour la souris                                              |
+| Rien ne se passe sur macOS       | Ajoute Terminal dans Surveillance des entrées (voir ci-dessus)   |
+| `hidapi introuvable` sur macOS   | Lance `brew install hidapi`                                      |
+| `hidapi introuvable` sur Windows | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py` |
+| SwiGi se lance mais ne fait rien | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`     |
+
+---
+
+### ⚙️ Options
+
+```bash
+python3 swigi.py       # mode normal
+python3 swigi.py -v    # mode verbose (logs détaillés)
+```
+
+---
+
+### Comment ça marche
+
+1. SwiGi envoie un « ping » régulier au clavier via Bluetooth (~100ms)
+2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST`
+3. SwiGi la capture et envoie la même commande à la souris
+4. Les deux périphériques basculent sur le même hôte
+
+Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un seul fichier Python, aucune dépendance sauf hidapi.
+
+---
+
+### Appareils testés
+
+| Appareil                | OS              | Connexion |
+| ----------------------- | --------------- | --------- |
+| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth |
+| MX Keys S + MX Vertical | Windows 11      | Bluetooth |
+
+Devrait fonctionner avec toute combinaison d'appareils Logitech supportant HID++ 2.0 et CHANGE_HOST.
 
 ---
 
 ## 🇬🇧 English
 
-### Why?
+**Press Easy-Switch. Mouse follows. Done.**
 
-Since 2019, Logitech has been saying that synchronized keyboard-mouse switching "can't be done" without Flow (which requires the same network). Thousands of people have been begging for it on forums. Well, here it is.
+SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth — no USB receiver, no Logi Options+, no same-network requirement.
 
 ### Requirements
 
 - Logitech keyboard + mouse with Easy-Switch and Bluetooth (MX series, Ergo series, etc.)
-- Python 3.10+ (or portable build without Python)
-- hidapi library
+- **No coding knowledge required.** Just follow the steps below.
 
-### Quick Start
+### 🍎 macOS
 
-**macOS:**
+**Automatic install (recommended):**
+
 ```bash
-brew install hidapi
+curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+```
+
+This installs hidapi, starts SwiGi, and sets it to launch automatically at login.
+
+**Manual install:**
+
+1. Install [Python 3](https://www.python.org/downloads/)
+2. Install [Homebrew](https://brew.sh/) then run `brew install hidapi`
+3. Download this repo (green **Code** button → **Download ZIP**), unzip it
+4. In Terminal: `python3 swigi.py`
+
+**macOS Permission (required once):**
+System Settings → Privacy & Security → Input Monitoring → add Terminal (or SwiGi)
+
+> ⚠️ After every PyInstaller rebuild, remove the old SwiGi entry and re-add the new binary.
+
+### 🪟 Windows
+
+1. Download `hidapi.dll` from [libusb/hidapi releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → `x64/hidapi.dll`
+2. Download the [Python embeddable package](https://www.python.org/downloads/windows/) (64-bit ZIP) → extract to `python-3\`
+3. Put `swigi.py`, `hidapi.dll`, `python-3\`, `setup_win.bat` in one folder
+4. Run **`setup_win.bat`** — installs, configures autostart, opens the folder
+5. Run **`start.bat`** to launch SwiGi
+
+### 🐧 Linux
+
+```bash
+sudo apt install python3 libhidapi-hidraw0
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0666"' | \
+  sudo tee /etc/udev/rules.d/42-logitech-hid.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
 python3 swigi.py
 ```
-
-**Windows:**
-1. Download `hidapi.dll` from [github.com/libusb/hidapi/releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → `x64/hidapi.dll`
-2. Place `hidapi.dll` next to `swigi.py`
-```
-python swigi.py
-```
-
-**Linux:**
-```bash
-sudo apt install libhidapi-hidraw0
-python3 swigi.py
-```
-
-### Portable (no Python installation needed)
-
-#### macOS
-```bash
-brew install hidapi pyinstaller
-./build_mac.sh
-# Output: dist/SwiGi/ — copy anywhere
-```
-
-#### Windows (no admin rights needed)
-1. Download [Python embeddable](https://www.python.org/downloads/windows/) (ZIP, not installer) → extract to `python-3/`
-2. Download `hidapi.dll` (see above)
-3. Put `swigi.py`, `hidapi.dll`, `python-3/`, `setup_win.bat` in one folder
-4. Run `setup_win.bat`
-
-### Autostart
-
-#### macOS (launchd)
-```bash
-cat > ~/Library/LaunchAgents/com.swigi.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.swigi</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>PATH/TO/dist/SwiGi/SwiGi</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>PATH/TO/swigi.log</string>
-    <key>StandardErrorPath</key>
-    <string>PATH/TO/swigi.log</string>
-</dict>
-</plist>
-EOF
-launchctl load ~/Library/LaunchAgents/com.swigi.plist
-```
-
-#### Windows (Startup folder)
-1. `Win+R` → `shell:startup`
-2. New shortcut → `PATH\python\pythonw.exe PATH\swigi.py`
-3. Runs in background, no window
-
-#### Linux (systemd)
-```bash
-cat > ~/.config/systemd/user/swigi.service << 'EOF'
-[Unit]
-Description=SwiGi
-
-[Service]
-ExecStart=/path/to/python3 /path/to/swigi.py
-Restart=always
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user enable --now swigi
-```
-
-### Permissions
-
-- **macOS:** Settings → Privacy & Security → Input Monitoring → allow Terminal / SwiGi
-  > ⚠️ **After every rebuild** (PyInstaller), macOS no longer recognizes the binary. You must remove the old SwiGi entry from Input Monitoring and re-add the new one.
-- **Windows:** May require HID access confirmation on first run
-- **Linux:** Udev rule:
-  ```bash
-  echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0666"' | \
-    sudo tee /etc/udev/rules.d/42-logitech-hid.rules
-  sudo udevadm control --reload-rules && sudo udevadm trigger
-  ```
-
-### How It Works
-
-1. Daemon periodically sends HID++ ping to keyboard (~250ms interval)
-2. Keyboard sends CHANGE_HOST notification when Easy-Switch is pressed
-3. Daemon catches it and sends the same command to the mouse
-4. Both switch to the same host
-
-Uses HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python file, no external dependencies besides hidapi.
 
 ### Tested
 
-| Device | OS | Connection |
-|--------|-----|------------|
-| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth |
-| MX Keys S + MX Vertical | Windows 11 | Bluetooth |
+| Device                  | OS              | Connection |
+| ----------------------- | --------------- | ---------- |
+| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth  |
+| MX Keys S + MX Vertical | Windows 11      | Bluetooth  |
 
-Should work with any Logitech device combo that supports HID++ 2.0 and CHANGE_HOST.
-
----
-
-## 🇨🇿 Česky
-
-🇬🇧 [English](#-english) — above | 🇨🇿 **Česky** — čteš právě toto
-
-**Přepni klávesnici. Myš následuje. Hotovo.**
-
-SwiGi synchronizuje Easy-Switch mezi Logitech klávesnicí a myší přes Bluetooth — bez receiveru, bez Logi Options+, bez nutnosti být na stejné síti.
-
-> *Děláno pro lidi. Užij si to a nebuď otrok tlačítek.* ✌️
-
-### Proč?
-
-Logitech od roku 2019 tvrdí, že synchronizované přepínání klávesnice a myši "nejde" bez Flow (a Flow vyžaduje stejnou síť). Tisíce lidí to na fórech prosí. Tak tady to je.
-
-### Co potřebuješ
-
-- Logitech klávesnice + myš s Easy-Switch a Bluetooth (MX řada, Ergo řada, aj.)
-- Python 3.10+ (nebo portable build bez Pythonu)
-- hidapi knihovna
-
-### Rychlý start
-
-**macOS:**
-```bash
-brew install hidapi
-python3 swigi.py
-```
-
-**Windows:**
-1. Stáhni `hidapi.dll` z [github.com/libusb/hidapi/releases](https://github.com/libusb/hidapi/releases) → Assets → `hidapi-win.zip` → `x64/hidapi.dll`
-2. Dej `hidapi.dll` do stejné složky jako `swigi.py`
-```
-python swigi.py
-```
-
-**Linux:**
-```bash
-sudo apt install libhidapi-hidraw0
-python3 swigi.py
-```
-
-### Portable (bez instalace Pythonu)
-
-#### macOS
-```bash
-brew install hidapi pyinstaller
-./build_mac.sh
-# Výstup: dist/SwiGi/ — zkopíruj kamkoli
-```
-
-#### Windows (bez admin práv)
-1. Stáhni [Python embeddable](https://www.python.org/downloads/windows/) (ZIP, ne instalátor) → rozbal do `python-3/`
-2. Stáhni `hidapi.dll` (viz výše)
-3. Dej `swigi.py`, `hidapi.dll`, `python-3/`, `setup_win.bat` do jedné složky
-4. Spusť `setup_win.bat`
-
-### Autostart
-
-#### macOS (launchd)
-```bash
-cat > ~/Library/LaunchAgents/com.swigi.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.swigi</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>CESTA/K/dist/SwiGi/SwiGi</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>CESTA/K/swigi.log</string>
-    <key>StandardErrorPath</key>
-    <string>CESTA/K/swigi.log</string>
-</dict>
-</plist>
-EOF
-launchctl load ~/Library/LaunchAgents/com.swigi.plist
-```
-
-#### Windows (Startup)
-1. `Win+R` → `shell:startup`
-2. Nový zástupce → `CESTA\python\pythonw.exe CESTA\swigi.py`
-3. Běží na pozadí, žádné okno
-
-#### Linux (systemd)
-```bash
-cat > ~/.config/systemd/user/swigi.service << 'EOF'
-[Unit]
-Description=SwiGi
-
-[Service]
-ExecStart=/cesta/k/python3 /cesta/k/swigi.py
-Restart=always
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user enable --now swigi
-```
-
-### Oprávnění
-
-- **macOS:** Nastavení → Soukromí a zabezpečení → Sledování vstupu → povol Terminal / SwiGi
-  > ⚠️ **Po každém rebuildu** (PyInstaller) macOS binárku přestane uznávat. Musíš smazat starý záznam SwiGi ve Sledování vstupu a znovu ho přidat.
-- **Windows:** Může vyžadovat potvrzení přístupu k HID (první spuštění)
-- **Linux:** Udev pravidlo:
-  ```bash
-  echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0666"' | \
-    sudo tee /etc/udev/rules.d/42-logitech-hid.rules
-  sudo udevadm control --reload-rules && sudo udevadm trigger
-  ```
-
-### Jak to funguje
-
-1. Daemon periodicky posílá HID++ ping na klávesnici (každých ~250ms)
-2. Klávesnice při stisku Easy-Switch pošle CHANGE_HOST notifikaci
-3. Daemon ji zachytí a pošle stejný příkaz myši
-4. Oba se přepnou na stejný host
-
-Využívá HID++ 2.0 protokol (feature CHANGE_HOST `0x1814`). Jeden Python soubor, žádné externí závislosti kromě hidapi.
-
-### Testováno
-
-| Zařízení | OS | Připojení |
-|----------|-----|-----------|
-| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth |
-| MX Keys S + MX Vertical | Windows 11 | Bluetooth |
-
-Mělo by fungovat s libovolnou kombinací Logitech zařízení s HID++ 2.0 a CHANGE_HOST.
+Should work with any Logitech device combo supporting HID++ 2.0 and CHANGE_HOST.
 
 ---
 
-## 🤝 Support / Podpora
+## 🤝 Support
 
-If SwiGi saves you time and frustration / Pokud ti SwiGi ušetří čas a nervy:
+If SwiGi saves you time / Si SwiGi t'économise du temps :
 
-<a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
+<a href="https://github.com/sponsors/SirHarveyBix" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
 
 ---
 
-## 📜 License / Licence
+## 📜 Licence / License
 
-MIT — do whatever you want with it / dělej si s tím co chceš.
+MIT — fais-en ce que tu veux / do whatever you want with it.
 
-## 🙏 Credits / Poděkování
+## 🙏 Crédits / Credits
 
-Inspired by [CleverSwitch](https://github.com/MikalaiBarysevich/CleverSwitch) by MikalaiBarysevich and protocol docs from [Solaar](https://github.com/pwr-Solaar/Solaar).
+Inspiré par [CleverSwitch](https://github.com/MikalaiBarysevich/CleverSwitch) de MikalaiBarysevich et la doc protocole de [Solaar](https://github.com/pwr-Solaar/Solaar).

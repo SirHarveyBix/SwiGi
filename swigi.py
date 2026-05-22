@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""SwiGi — synchronizace Easy-Switch přes Bluetooth.
+"""SwiGi — synchronisation Easy-Switch via Bluetooth.
 
-Při stisku Easy-Switch na Logitech klávesnici zachytí CHANGE_HOST notifikaci
-a pošle stejný příkaz myši. Oba se přepnou na stejný host.
+Quand Easy-Switch est pressé sur le clavier Logitech, capture la notification
+CHANGE_HOST et envoie la même commande à la souris. Les deux basculent sur le même hôte.
 
-Self-contained: veškerý HID++ kód je uvnitř. Jediná závislost = hidapi knihovna.
+Autonome : tout le code HID++ est inclus. Seule dépendance = bibliothèque hidapi.
 
-macOS:  brew install hidapi  (nebo libhidapi.dylib ve složce s tímto souborem)
-Windows: hidapi.dll ve složce s tímto souborem (stáhni z github.com/libusb/hidapi/releases)
+macOS:  brew install hidapi  (ou libhidapi.dylib dans le dossier de ce fichier)
+Windows: hidapi.dll dans le dossier de ce fichier (télécharger depuis github.com/libusb/hidapi/releases)
 Linux:  sudo apt install libhidapi-hidraw0
 
-Spuštění:
-  python swigi.py        # normální režim
+Démarrage :
+  python swigi.py        # mode normal
   python swigi.py -v     # verbose
 """
 from __future__ import annotations
@@ -25,13 +25,27 @@ import os
 import platform
 import signal
 import struct
+import subprocess
 import sys
 import time
 
 log = logging.getLogger("swigi")
 
+
+def _notify(message: str, subtitle: str = "") -> None:
+    """Notification macOS via osascript. Silencieux sur autres plateformes."""
+    if _SYSTEM != "Darwin":
+        return
+    script = f'display notification "{message}" with title "SwiGi"'
+    if subtitle:
+        script += f' subtitle "{subtitle}"'
+    try:
+        subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HID++ Constants
+#  Constantes HID++
 # ═══════════════════════════════════════════════════════════════════════════════
 
 LOGITECH_VID = 0x046D
@@ -56,20 +70,20 @@ DEVICE_TYPE_TRACKPAD = 4
 DEVICE_TYPE_TRACKBALL = 5
 
 DEVNUMBER_DIRECT = 0xFF
-SW_ID = 0x0A  # SwiGi identifier (CleverSwitch uses 0x08)
+SW_ID = 0x0A  # identifiant SwiGi (CleverSwitch utilise 0x08)
 CHANGE_HOST_FN_SET = 0x10
 
 _MSG_LENGTHS = {REPORT_SHORT: MSG_SHORT_LEN, REPORT_LONG: MSG_LONG_LEN}
 
-# Usage pairs: HID++ vendor + Generic Desktop (macOS BT only shows Generic Desktop)
+# Paires Usage : HID++ fabricant + Generic Desktop (macOS BT n'expose que Generic Desktop)
 DIRECT_USAGE_PAIRS = [
     (0xFF00, 0x0002), (0xFF43, 0x0202), (0xFF0C, 0x0001),
-    (0x0001, 0x0006),  # Keyboard
-    (0x0001, 0x0002),  # Mouse
+    (0x0001, 0x0006),  # Clavier
+    (0x0001, 0x0002),  # Souris
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  hidapi loading
+#  Chargement hidapi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _SYSTEM = platform.system()
@@ -80,8 +94,8 @@ class TransportError(Exception):
 
 
 def _load_hidapi() -> ctypes.CDLL:
-    """Load hidapi library. Search order: app directory, PyInstaller bundle, system."""
-    # App directory (portable: hidapi next to this script)
+    """Charge hidapi. Ordre de recherche : répertoire app, bundle PyInstaller, système."""
+    # Répertoire app (portable : hidapi à côté de ce script)
     app_dir = os.path.dirname(os.path.abspath(__file__))
     meipass = getattr(sys, "_MEIPASS", None)  # PyInstaller
 
@@ -89,7 +103,7 @@ def _load_hidapi() -> ctypes.CDLL:
     if meipass:
         search_dirs.append(meipass)
 
-    # Platform-specific names
+    # Noms spécifiques à la plateforme
     if _SYSTEM == "Darwin":
         local_names = ["libhidapi.dylib"]
         system_names = [
@@ -100,7 +114,7 @@ def _load_hidapi() -> ctypes.CDLL:
     elif _SYSTEM == "Windows":
         local_names = ["hidapi.dll", "libhidapi-0.dll"]
         system_names = ["hidapi.dll", "libhidapi-0.dll"]
-        # Windows DLL search paths
+        # Chemins de recherche DLL Windows
         for d in search_dirs:
             if os.path.isdir(d):
                 try:
@@ -119,43 +133,43 @@ def _load_hidapi() -> ctypes.CDLL:
             "libhidapi-libusb.so.0", "libhidapi-libusb.so",
         ]
 
-    # Try local (portable) first
+    # Essayer local (portable) d'abord
     for d in search_dirs:
         for name in local_names:
             path = os.path.join(d, name)
             if os.path.isfile(path):
                 try:
                     lib = ctypes.CDLL(path)
-                    log.debug("hidapi: loaded %s (local)", path)
+                    log.debug("hidapi: chargé %s (local)", path)
                     return lib
                 except OSError:
                     continue
 
-    # Try system
+    # Essayer système
     for name in system_names:
         try:
             lib = ctypes.CDLL(name)
-            log.debug("hidapi: loaded %s (system)", name)
+            log.debug("hidapi: chargé %s (système)", name)
             return lib
         except OSError:
             continue
 
     hints = {
-        "Darwin": "brew install hidapi  NEBO  zkopíruj libhidapi.dylib do složky s tímto souborem",
-        "Windows": "Stáhni hidapi.dll z github.com/libusb/hidapi/releases a dej do složky s tímto souborem",
+        "Darwin": "brew install hidapi  OU  copier libhidapi.dylib dans le dossier de ce fichier",
+        "Windows": "Télécharger hidapi.dll depuis github.com/libusb/hidapi/releases et le placer dans le dossier de ce fichier",
         "Linux": "sudo apt install libhidapi-hidraw0",
     }
-    raise ImportError(f"hidapi nenalezena — {hints.get(_SYSTEM, 'nainstaluj hidapi')}")
+    raise ImportError(f"hidapi introuvable — {hints.get(_SYSTEM, 'installer hidapi')}")
 
 
 _lib = _load_hidapi()
 
-# Init
+# Initialisation
 _lib.hid_init.restype = ctypes.c_int
 _lib.hid_init.argtypes = []
 _lib.hid_init()
 
-# macOS: non-exclusive (coexist with Logi Options+)
+# macOS : non-exclusif (coexiste avec Logi Options+)
 if _SYSTEM == "Darwin":
     _fn = getattr(_lib, "hid_darwin_set_open_exclusive", None)
     if _fn:
@@ -164,7 +178,7 @@ if _SYSTEM == "Darwin":
         _fn(0)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  hidapi bindings
+#  Liaisons hidapi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -204,7 +218,7 @@ _lib.hid_error.argtypes = [ctypes.c_void_p]
 
 def _hid_err(dev=None):
     msg = _lib.hid_error(dev)
-    return msg if msg else "unknown hidapi error"
+    return msg if msg else "erreur hidapi inconnue"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -218,27 +232,31 @@ class HIDTransport:
         self.pid = pid
         self._dev = _lib.hid_open_path(path)
         if not self._dev:
-            raise OSError(f"hid_open_path failed: {_hid_err()}")
+            raise OSError(f"hid_open_path échoué : {_hid_err()}")
+
+    @property
+    def is_open(self) -> bool:
+        return self._dev is not None
 
     def read(self, timeout: int = 500) -> bytes | None:
         if self._dev is None:
-            raise TransportError("read on closed transport")
+            raise TransportError("lecture sur transport fermé")
         buf = (ctypes.c_ubyte * MAX_READ_SIZE)()
         n = _lib.hid_read_timeout(self._dev, buf, MAX_READ_SIZE, timeout)
         if n < 0:
             err = _hid_err(self._dev) or ""
             if "success" in err.lower() or err == "":
-                return None  # macOS BT quirk
-            raise TransportError(f"hid_read failed: {err}")
+                return None  # quirk BT macOS
+            raise TransportError(f"hid_read échoué : {err}")
         return bytes(buf[:n]) if n > 0 else None
 
     def write(self, msg: bytes) -> None:
         if self._dev is None:
-            raise TransportError("write on closed transport")
+            raise TransportError("écriture sur transport fermé")
         buf = (ctypes.c_ubyte * len(msg))(*msg)
         n = _lib.hid_write(self._dev, buf, len(msg))
         if n < 0:
-            raise TransportError(f"hid_write failed: {_hid_err(self._dev)}")
+            raise TransportError(f"hid_write échoué : {_hid_err(self._dev)}")
 
     def close(self):
         if self._dev is not None:
@@ -247,7 +265,7 @@ class HIDTransport:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HID++ Protocol
+#  Protocole HID++
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -267,7 +285,7 @@ def _pack_params(params):
 
 
 def hidpp_request(transport, devnumber, request_id, *params, timeout=500):
-    """Send HID++ request and return reply payload, or None."""
+    """Envoie une requête HID++ et retourne le contenu de la réponse, ou None."""
     request_id = (request_id & 0xFFF0) | SW_ID
     params_bytes = _pack_params(params) if params else b""
     request_data = struct.pack("!H", request_id) + params_bytes
@@ -277,7 +295,9 @@ def hidpp_request(transport, devnumber, request_id, *params, timeout=500):
 
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
-        raw = transport.read(timeout)
+        # Timeout par lecture borné par le temps restant pour respecter la deadline
+        remaining_ms = max(1, int((deadline - time.time()) * 1000))
+        raw = transport.read(min(timeout, remaining_ms))
         if not raw or len(raw) < 4:
             continue
         if raw[0] not in _MSG_LENGTHS or len(raw) != _MSG_LENGTHS[raw[0]]:
@@ -289,13 +309,13 @@ def hidpp_request(transport, devnumber, request_id, *params, timeout=500):
 
         rdata = raw[2:]
 
-        # HID++ 1.0 error
+        # Erreur HID++ 1.0
         if raw[0] == REPORT_SHORT and rdata[0:1] == b"\x8f" and rdata[1:3] == request_data[:2]:
             return None
-        # HID++ 2.0 error
+        # Erreur HID++ 2.0
         if rdata[0:1] == b"\xff" and rdata[1:3] == request_data[:2]:
             return None
-        # Success
+        # Succès
         if rdata[:2] == request_data[:2]:
             return rdata[2:]
 
@@ -303,7 +323,7 @@ def hidpp_request(transport, devnumber, request_id, *params, timeout=500):
 
 
 def resolve_feature(transport, devnumber, feature_code):
-    """Look up feature index. Returns index or None."""
+    """Recherche l'index de feature. Retourne l'index ou None."""
     request_id = (FEATURE_ROOT << 8) | 0x00
     reply = hidpp_request(transport, devnumber, request_id,
                           feature_code >> 8, feature_code & 0xFF, 0x00, timeout=500)
@@ -321,7 +341,7 @@ def get_device_name(transport, devnumber, feat_idx):
     reply = hidpp_request(transport, devnumber, (feat_idx << 8) | 0x00, timeout=500)
     if not reply:
         return None
-    name_len = reply[0]
+    name_len = min(reply[0], 64)  # limite à 64 pour éviter une boucle infinie si valeur erronée
     if name_len == 0:
         return None
     chars = []
@@ -334,7 +354,7 @@ def get_device_name(transport, devnumber, feat_idx):
 
 
 def send_change_host(transport, devnumber, feat_idx, target_host):
-    """Fire-and-forget: switch device to target_host (0-based)."""
+    """Fire-and-forget : bascule le périphérique vers target_host (base 0)."""
     request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     params = struct.pack("B", target_host)
     msg = _build_msg(devnumber, request_id, params)
@@ -342,7 +362,7 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
 
 
 def get_current_host(transport, devnumber, feat_idx):
-    """Query CHANGE_HOST getHostInfo (fn 0). Returns current host (0-based) or None."""
+    """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
     reply = hidpp_request(transport, devnumber, (feat_idx << 8) | 0x00, timeout=500)
     if reply and len(reply) >= 2:
         # reply[0] = numHosts, reply[1] = currentHost
@@ -351,7 +371,7 @@ def get_current_host(transport, devnumber, feat_idx):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Device Discovery
+#  Découverte des périphériques
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -370,7 +390,7 @@ class DeviceInfo:
 
 
 def find_device(device_type_wanted: int) -> DeviceInfo | None:
-    """Find Logitech BT device. 0=keyboard, 3=mouse, 4=trackpad, 5=trackball."""
+    """Cherche périphérique Logitech BT. 0=clavier, 3=souris, 4=trackpad, 5=trackball."""
     head = _lib.hid_enumerate(LOGITECH_VID, 0)
     candidates = []
     node = head
@@ -384,24 +404,24 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
             continue
         if (up, usage) not in DIRECT_USAGE_PAIRS:
             continue
-        # Score: vendor HID++ interfaces first (Windows blocks Generic Desktop)
+        # Score : interfaces HID++ fabricant en premier (Windows bloque Generic Desktop)
         if up in (0xFF00, 0xFF43, 0xFF0C):
             score = 100
         else:
             score = 0
         candidates.append((score, info.path, pid, up, usage))
     _lib.hid_free_enumeration(head)
-    # Sort: vendor HID++ first, then Generic Desktop
+    # Tri : HID++ fabricant d'abord, puis Generic Desktop
     candidates.sort(key=lambda x: -x[0])
 
     found_pids = set()
     for score, path, pid, up, usage in candidates:
         if pid in found_pids:
-            continue  # already found this device
+            continue  # périphérique déjà trouvé
         try:
             t = HIDTransport(path, pid)
         except OSError:
-            log.debug("Open failed pid=0x%04X up=0x%04X u=0x%04X", pid, up, usage)
+            log.debug("Ouverture échouée pid=0x%04X up=0x%04X u=0x%04X", pid, up, usage)
             continue
         try:
             feat = resolve_feature(t, DEVNUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME)
@@ -410,7 +430,7 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
                 continue
             dt = get_device_type(t, DEVNUMBER_DIRECT, feat)
             name = get_device_name(t, DEVNUMBER_DIRECT, feat) or f"Logitech-0x{pid:04X}"
-            # Mouse types: 3 (mouse), 4 (trackpad), 5 (trackball)
+            # Types souris : 3 (souris), 4 (trackpad), 5 (trackball)
             is_mouse = dt in (DEVICE_TYPE_MOUSE, DEVICE_TYPE_TRACKPAD, DEVICE_TYPE_TRACKBALL)
             if device_type_wanted == DEVICE_TYPE_KEYBOARD and dt != DEVICE_TYPE_KEYBOARD:
                 t.close()
@@ -431,7 +451,7 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Ping message
+#  Message ping
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _PING_REQUEST_ID = (FEATURE_ROOT << 8) | 0x00 | SW_ID
@@ -440,14 +460,14 @@ _PING_MSG = struct.pack("!BB18s", REPORT_LONG, DEVNUMBER_DIRECT,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Main daemon loop
+#  Boucle principale (daemon)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="SwiGi — synchronizace Easy-Switch přes Bluetooth")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Podrobné logování")
+        description="SwiGi — synchronisation Easy-Switch via Bluetooth")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Journalisation détaillée")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -456,24 +476,26 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    log.info("SwiGi — hledám zařízení...")
+    log.info("SwiGi — recherche des périphériques...")
 
     kb = find_device(DEVICE_TYPE_KEYBOARD)
     if kb is None:
-        log.error("Klávesnice nenalezena! Zkontroluj BT připojení.")
+        log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
         return 1
-    log.info("Klávesnice: %s (CHANGE_HOST idx=%d)", kb.name, kb.change_host_idx)
+    log.info("Clavier : %s (CHANGE_HOST idx=%d)", kb.name, kb.change_host_idx)
+    _notify(f"{kb.name} connecté", "Clavier")
 
     mouse = find_device(DEVICE_TYPE_MOUSE)
     if mouse is None:
-        log.error("Myš nenalezena! Zkontroluj BT připojení.")
+        log.error("Souris introuvable ! Vérifie la connexion Bluetooth.")
         kb.close()
         return 1
-    log.info("Myš:        %s (CHANGE_HOST idx=%d)", mouse.name, mouse.change_host_idx)
+    log.info("Souris :  %s (CHANGE_HOST idx=%d)", mouse.name, mouse.change_host_idx)
+    _notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
-    log.info("Připraveno. Stiskni Easy-Switch na %s.", kb.name)
-    log.info("Ctrl+C pro ukončení.")
+    log.info("Prêt. Appuie sur Easy-Switch sur %s.", kb.name)
+    log.info("Ctrl+C pour quitter.")
 
     running = True
 
@@ -481,60 +503,78 @@ def main():
         nonlocal running
         running = False
 
+    def on_sigterm(sig, frame):
+        nonlocal running
+        running = False
+
     signal.signal(signal.SIGINT, on_sigint)
+    signal.signal(signal.SIGTERM, on_sigterm)
 
     total_switches = 0
-    last_response = time.time()  # watchdog: last time we got any HID++ response
-    WATCHDOG_TIMEOUT = 10.0      # force reconnect after this many seconds without response
+    last_response = time.time()  # watchdog : dernière réponse HID++ reçue
+    WATCHDOG_TIMEOUT = 10.0      # forcer reconnexion après N secondes sans réponse
 
     while running:
-        # ── Watchdog: force reconnect if no response for too long ──
+        # ── Watchdog : reconnexion forcée si aucune réponse trop longtemps ──
         if time.time() - last_response > WATCHDOG_TIMEOUT:
-            log.info("Watchdog: žádná odpověď %ds, reconnect...", int(WATCHDOG_TIMEOUT))
+            log.info("Watchdog : aucune réponse depuis %ds, reconnexion...", int(WATCHDOG_TIMEOUT))
             kb.close()
             mouse.close()
             time.sleep(1.0)
             kb_new = find_device(DEVICE_TYPE_KEYBOARD)
             if kb_new:
                 kb = kb_new
-                log.info("Watchdog reconnect: %s", kb.name)
-            last_response = time.time()  # reset timer regardless
+                log.info("Watchdog reconnexion clavier : %s", kb.name)
+            mouse_new = find_device(DEVICE_TYPE_MOUSE)
+            if mouse_new:
+                mouse = mouse_new
+                log.info("Watchdog reconnexion souris : %s", mouse.name)
+            last_response = time.time()  # réinitialiser le compteur dans tous les cas
             continue
 
-        # ── Send ping ──
+        # ── Envoi ping ──
         try:
             kb.transport.write(_PING_MSG)
         except (TransportError, OSError):
-            log.info("Klávesnice se odpojila, čekám na návrat...")
+            log.info("Clavier déconnecté, attente du retour...")
+            _notify(f"{kb.name} déconnecté", "Clavier")
             kb.close()
 
-            # Reconnect loop
+            # Polling rapide à 100ms (600 itérations = 60s) pour reconnexion rapide
             kb_new = None
-            for attempt in range(120):
+            for attempt in range(600):
                 if not running:
                     break
-                time.sleep(0.5)
+                time.sleep(0.1)
                 kb_new = find_device(DEVICE_TYPE_KEYBOARD)
                 if kb_new is not None:
                     break
-                if attempt % 20 == 19:
-                    log.debug("Reconnect: pokus %d/120...", attempt + 1)
+                if attempt % 100 == 99:
+                    log.debug("Reconnexion : tentative %d/600...", attempt + 1)
 
             if kb_new is None:
                 if running:
-                    log.warning("Klávesnice se nevrátila, zkouším dál...")
+                    log.warning("Le clavier n'est pas revenu, nouvelle tentative...")
                 continue
             kb = kb_new
-            log.info("Klávesnice reconnect: %s", kb.name)
-            last_response = time.time()  # reset watchdog
+            log.info("Reconnexion clavier : %s", kb.name)
+            _notify(f"{kb.name} reconnecté", "Clavier")
+            last_response = time.time()  # réinitialiser le watchdog
 
-            # Just close stale mouse transport — reconnect at next event
+            # Reconnexion proactive de la souris pour libérer le chemin critique du switch
             mouse.close()
-            log.debug("Starý mouse transport zavřen, reconnect při dalším eventu")
+            log.debug("Reconnexion proactive de la souris...")
+            new_mouse = find_device(DEVICE_TYPE_MOUSE)
+            if new_mouse:
+                mouse = new_mouse
+                log.debug("Souris prête en avance : %s", mouse.name)
+                _notify(f"{mouse.name} reconnectée", "Souris")
+            else:
+                log.debug("Souris introuvable lors de la reconnexion, nouvelle tentative au prochain événement")
 
             continue
 
-        # ── Read responses (200ms window) ──
+        # ── Lecture réponses (fenêtre 80ms) ──
         deadline = time.time() + 0.08
         while time.time() < deadline and running:
             try:
@@ -553,60 +593,60 @@ def main():
             feat = raw[2]
             func = raw[3]
             sw_id = func & 0x0F
-            last_response = time.time()  # watchdog: got valid response
+            last_response = time.time()  # watchdog : réponse valide reçue
 
-            # CHANGE_HOST notification: feat matches, sw_id == 0 (notification)
+            # Notification CHANGE_HOST : feat correspond, sw_id == 0 (notification)
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
                 target_host = raw[5]
                 log.info("")
-                log.info("★ Easy-Switch: %s → host %d", kb.name, target_host)
+                log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
 
-                # Send CHANGE_HOST to mouse — reconnect if transport is stale
-                if mouse.transport._dev is None:
-                    log.debug("Mouse transport stale, reconnecting...")
+                # Envoi CHANGE_HOST à la souris — vérification état transport
+                if not mouse.transport.is_open:
+                    log.debug("Transport souris fermé, reconnexion...")
                     new_mouse = find_device(DEVICE_TYPE_MOUSE)
                     if new_mouse:
                         mouse = new_mouse
                     else:
-                        log.info("Myš zatím nedostupná — přepne se při dalším Easy-Switch")
+                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
                         break
 
                 try:
                     send_change_host(mouse.transport, DEVNUMBER_DIRECT,
                                      mouse.change_host_idx, target_host)
-                    log.info("★ CHANGE_HOST → %s → host %d", mouse.name, target_host)
+                    log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
                     total_switches += 1
                 except (TransportError, OSError):
-                    log.warning("CHANGE_HOST na myš selhal, zkouším reconnect myši...")
+                    log.warning("CHANGE_HOST vers la souris a échoué, reconnexion souris...")
                     mouse.close()
-                    time.sleep(1.0)  # let BT stack settle
+                    time.sleep(0.5)
                     new_mouse = find_device(DEVICE_TYPE_MOUSE)
                     if new_mouse:
                         mouse = new_mouse
                         try:
                             send_change_host(mouse.transport, DEVNUMBER_DIRECT,
                                              mouse.change_host_idx, target_host)
-                            log.info("★ CHANGE_HOST → %s → host %d (po reconnectu)",
+                            log.info("★ CHANGE_HOST → %s → hôte %d (après reconnexion)",
                                      mouse.name, target_host)
                             total_switches += 1
                         except (TransportError, OSError) as e:
-                            log.warning("CHANGE_HOST retry selhal: %s — myš se přepne příště", e)
+                            log.warning("Nouvelle tentative CHANGE_HOST échouée : %s — la souris basculera la prochaine fois", e)
                     else:
-                        log.info("Myš zatím nedostupná — přepne se při dalším Easy-Switch")
+                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
 
-                break  # keyboard will disconnect
+                break  # le clavier va se déconnecter
 
-            # Log other notifications
+            # Journaliser autres notifications
             if sw_id == 0:
-                log.debug("Notifikace: feat=0x%02X [%s]", feat, raw[:10].hex())
+                log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
 
-        time.sleep(0.02)
+        # Fréquence d'échantillonnage : 10ms pour réactivité optimale
+        time.sleep(0.01)
 
-    log.info("Ukončuji. Celkem %d přepnutí.", total_switches)
+    log.info("Arrêt. Total : %d basculements.", total_switches)
     kb.close()
     mouse.close()
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main() or 0)
