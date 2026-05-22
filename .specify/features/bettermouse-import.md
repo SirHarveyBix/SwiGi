@@ -1,249 +1,400 @@
-# Spec : Import profil BetterMouse
+# Spec : Profils BetterMouse par hôte
 
-**Version :** 0.1.0 (brouillon)
+**Version :** 0.2.0
 **Date :** 2026-05-23
-**Statut :** Étude — non implémenté
+**Statut :** Étude validée — à implémenter
 
 ---
 
-## 1. Contexte
+## 1. Vision
 
-BetterMouse est un outil macOS de personnalisation avancée de souris (accélération, DPI, scroll, remapping boutons). Il stocke sa configuration dans un plist binaire accessible sans permission particulière. SwiGi et BetterMouse opèrent sur la même souris physique mais à des couches différentes :
+Chaque Mac a SwiGi + BetterMouse qui tournent indépendamment. Quand la souris arrive sur un Mac (après Easy-Switch), ce Mac peut appliquer automatiquement un profil BetterMouse spécifique.
 
-| Outil       | Couche              | Protocole     |
-|-------------|---------------------|---------------|
-| SwiGi       | Easy-Switch (hôte)  | HID++ BT      |
-| BetterMouse | Comportement souris | IOKit / HIDManager |
+**Exemple concret :**
 
-L'idée : offrir dans le menu bar SwiGi une action **"Importer depuis BetterMouse"** qui lit la config de la souris détectée et permet à terme d'appliquer un profil différent selon l'hôte cible.
+| Machine | Hôte | Profil actif |
+|---------|------|-------------|
+| Mac bureau | 0 | config-bureau.json (sensibilité haute, ratchet ON) |
+| MacBook | 1 | config-laptop.json (sensibilité basse, hi-res scroll) |
+| Mac mini | 2 | config-bureau.json (même profil que le bureau) |
 
----
-
-## 2. Emplacement et format de la config BetterMouse
-
-### Fichier principal
-```
-~/Library/Preferences/com.naotanhaocan.BetterMouse.plist
-```
-Format : plist binaire (Apple binary property list), lisible via `plistlib` (stdlib Python).
-
-### Structure des clés pertinentes
-
-```
-config        → blob plist : config globale (accélération curseur, longPressPeriod…)
-mice          → blob plist : liste des souris connues
-  └─ mice[0]
-       ├─ name.product      = "MX Master 4"
-       ├─ name.vendor       = "Logitech"
-       ├─ dpiEn             = bool
-       ├─ dpiIndex          = int
-       ├─ ratchetMode       = bool
-       ├─ disengagePoint    = int  (point de décrochage molette)
-       ├─ torque            = int
-       ├─ hiResWheel        = bool
-       ├─ pressure          = int
-       ├─ rpRate            = int  (polling rate index)
-       ├─ rpRateList        = int  (polling rates disponibles, bitmask)
-       └─ featureMap        = dict (feature HID++ index → BetterMouse feature id)
-
-appitems      → blob plist : profil par application
-  └─ apps[0]   (entrée globale, url = './')
-       ├─ scl   → paramètres scroll (speed, acc, inversion, durée, brake…)
-       └─ btn   → remapping boutons (par bouton, par geste, par app)
-
-logikeys      → blob plist : claviers Logitech connus
-  └─ logiKeybs[0]
-       ├─ name.product    = "MX Keys" / "MX Keys Mini"
-       ├─ platformList    → mappage hôte BetterMouse (index=0,1,2 ↔ desc=0,1,2)
-       ├─ backLight       = int
-       ├─ fnInversion     = bool
-       └─ featureMap      = dict
-```
-
-### Clé `logikeys.logiKeybs[i].platformList`
-C'est la plus utile pour SwiGi. Chaque entrée :
-```
-{ index: 0, desc: 0, osMask: 1 }   → hôte 0 = macOS
-{ index: 1, desc: 1, osMask: 32 }  → hôte 1 = Windows
-{ index: 2, desc: 2, osMask: 64 }  → hôte 2 = Linux
-```
-`osMask` : 1=macOS, 32=Windows, 64=Linux, 4=iPadOS, 128=Android.
+Mac mini **choisit** d'utiliser le profil exporté depuis Mac bureau — pas le sien propre.
 
 ---
 
-## 3. Ce qu'on peut lire sans permission supplémentaire
+## 2. Architecture
 
-| Info                      | Clé plist                          | Utilité SwiGi                         |
-|---------------------------|------------------------------------|---------------------------------------|
-| Nom de la souris          | `mice[0].name.product`             | Confirmer que c'est la même souris    |
-| Polling rate actuel       | `mice[0].rpRate`                   | Affichage info dans menu bar          |
-| Ratchet / Hi-res wheel    | `mice[0].ratchetMode`, `hiResWheel`| Affichage info                        |
-| DPI activé + index        | `mice[0].dpiEn`, `dpiIndex`        | Affichage info                        |
-| Profil scroll global      | `appitems.apps[0].scl`             | Export vers config SwiGi              |
-| Profil boutons global     | `appitems.apps[0].btn`             | Affichage info (remapping)            |
-| Profil hôte clavier       | `logikeys[0].platformList`         | Déduire OS par hôte                   |
+```
+[Mac 1 — bureau]                    [Mac 2 — laptop]
+  SwiGi menu bar                      SwiGi menu bar
+    → "Exporter config actuelle"         → "Profil au connect: config-bureau"
+    → sauve config-bureau.json           → l'utilisateur a copié config-bureau.json
+                                         → au connect souris : applique le profil
+```
+
+Chaque Mac stocke localement :
+```
+~/.swigi_profiles/
+    config-bureau.json   ← snapshot BetterMouse exporté
+    config-laptop.json
+~/.swigi_prefs.json      ← "bm_profile": "config-bureau", "bm_auto_apply": true
+```
+
+Le partage entre Macs est **manuel** (AirDrop, iCloud Drive, etc.) ou via un dossier partagé configurable. SwiGi ne crée pas de réseau entre les machines.
 
 ---
 
-## 4. Ce qu'on NE peut PAS faire
+## 3. Ce que contient un profil exporté
 
-- **Modifier** la config BetterMouse sans passer par ses APIs privées (pas documentées).
-- **Appliquer** un profil BetterMouse par hôte au moment du switch : BetterMouse ne s'active pas via plist seul (daemon en cours + IOKit). Il faudrait le notifier via AppleScript ou XPC — non documenté.
-- **Créer** des profils par hôte dans BetterMouse via SwiGi : BetterMouse ne supporte pas ce concept nativement.
+Lecture depuis `~/Library/Preferences/com.naotanhaocan.BetterMouse.plist` :
+
+```json
+{
+  "meta": {
+    "name": "config-bureau",
+    "bm_version": "8830",
+    "mouse": "MX Master 4",
+    "exported_at": "2026-05-23T10:00:00"
+  },
+  "scroll": {
+    "smooth_en": true,
+    "speed": [...],
+    "acceleration": [...],
+    "duration": 10,
+    "brake": 10,
+    "vert_inv": true,
+    "hori_inv": false,
+    "hori_speed": 8.0,
+    "hireswheel": true,
+    "ratchet": true,
+    "disengage_point": 14,
+    "torque": 70
+  },
+  "cursor": {
+    "en": false,
+    "acceleration": [...],
+    "resolution": [...]
+  },
+  "buttons": { ... },
+  "polling_rate_index": 0
+}
+```
+
+Format JSON lisible, copiable, partageable. Pas de données sensibles (clé de licence `Paddle-*` exclue).
 
 ---
 
-## 5. Cas d'usage réaliste
+## 4. Menu bar — actions proposées
 
-### 5.1 Auto-détection souris depuis BetterMouse (utilité immédiate)
-SwiGi peut confirmer que la souris connectée en HID++ correspond à celle configurée dans BetterMouse :
+```
+Clavier : MX Keys ✅
+Souris  : MX Master 4 ✅
+Basculements : 12
+────────────────────────
+Profil souris
+  ├─ Exporter config actuelle…
+  ├─ Profil au connect : [aucun] ▸ config-bureau ▸ config-laptop
+  └─ Appliquer auto au connect : ✅
+────────────────────────
+Notifications : ✅
+Masquer l'icône
+Quitter
+```
+
+**"Exporter config actuelle…"** → lit BetterMouse plist → enregistre `~/.swigi_profiles/<nom>.json` → dialogue nom (via rumps.Window ou nom auto horodaté).
+
+**"Profil au connect"** → sous-menu avec les `.json` trouvés dans `~/.swigi_profiles/` → sélection stockée dans `~/.swigi_prefs.json`.
+
+**"Appliquer auto au connect"** → toggle. Si ON : quand la souris arrive sur ce Mac (sonde périodique ou proactif), le profil sélectionné est appliqué.
+
+---
+
+## 5. Application du profil — contrainte technique
+
+BetterMouse n'a pas d'API publique (pas d'AppleScript dictionary, pas d'URL scheme documenté). Deux approches possibles :
+
+### Option A — Écriture plist + redémarrage BetterMouse (brute force)
 ```python
-bm_mouse_name = read_bettermouse_mouse_name()  # "MX Master 4"
-swigi_mouse_name = mouse.name                  # "MX Master 4" (depuis HID++)
-if bm_mouse_name == swigi_mouse_name:
-    log.info("Souris SwiGi ↔ BetterMouse confirmée : %s", bm_mouse_name)
+import subprocess, shutil, plistlib
+
+# 1. Backup
+shutil.copy(BM_PLIST, BM_PLIST + ".bak")
+# 2. Lire plist actuel
+with open(BM_PLIST, "rb") as f:
+    root = plistlib.load(f)
+# 3. Patcher les clés (scroll, cursor…) depuis le profil JSON
+root["mice"] = _patch_mice(root["mice"], profile)
+# 4. Écrire
+with open(BM_PLIST, "wb") as f:
+    plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
+# 5. Relancer BetterMouse
+subprocess.run(["killall", "BetterMouse"], check=False)
+subprocess.Popen(["open", "-a", "BetterMouse"])
 ```
 
-### 5.2 Affichage infos souris dans le menu bar
-Enrichir le menu SwiGi avec des infos lues depuis BetterMouse :
-```
-Souris : MX Master 4 ✅
-  ├─ Polling : 1000 Hz
-  ├─ Molette : Hi-Res ✅  Ratchet ✅
-  └─ DPI     : désactivé
-```
+**Avantages :** Fonctionne avec toute version BetterMouse. Aucune permission spéciale.
 
-### 5.3 Déduction de l'OS par hôte (feature future)
-Depuis `logikeys[i].platformList`, SwiGi peut savoir que :
-- Hôte 0 = macOS (osMask=1)
-- Hôte 1 = Windows (osMask=32)
-- Hôte 2 = Linux (osMask=64)
+**Risques :**
+- Changements non sauvegardés dans BetterMouse perdus (mitigé par backup auto)
+- Si la structure plist change entre versions → patcher échoue silencieusement (try/except + fallback backup restore)
+- Délai ~1s le temps que BetterMouse redémarre
 
-Et afficher dans le menu : `★ Easy-Switch → Windows` au lieu de `→ hôte 1`.
+### Option B — Lecture seule + notification utilisateur
+Si l'écriture plist est jugée trop risquée : SwiGi lit le profil et notifie "Profil config-bureau chargé — applique dans BetterMouse si besoin". Moins puissant mais zéro risque.
+
+**Recommandation : implémenter Option A avec backup automatique et rollback sur erreur.**
 
 ---
 
-## 6. Implémentation proposée
+## 6. Flux complet au switch
 
-### 6.1 Nouveau module `swigi/bettermouse.py`
+```
+Easy-Switch pressé (hôte 0 → hôte 1)
+  → SwiGi envoie CHANGE_HOST souris
+  → souris arrive sur hôte 1 (MacBook)
+  → SwiGi MacBook : sonde détecte souris
+  → state["pending_host"] vérifié (Phase 2)
+  → si bm_auto_apply == true ET bm_profile configuré :
+      → lire ~/.swigi_profiles/config-laptop.json
+      → patch plist BetterMouse
+      → killall BetterMouse && open -a BetterMouse
+      → notify "Profil config-laptop appliqué"
+```
+
+---
+
+## 7. Nouveau module `swigi/bettermouse.py`
 
 ```python
+import json
+import logging
 import os
 import plistlib
-import logging
+import shutil
+import subprocess
+from datetime import datetime
 
 log = logging.getLogger("swigi.bettermouse")
-_PLIST = os.path.expanduser("~/Library/Preferences/com.naotanhaocan.BetterMouse.plist")
+
+BM_PLIST = os.path.expanduser(
+    "~/Library/Preferences/com.naotanhaocan.BetterMouse.plist"
+)
+PROFILES_DIR = os.path.expanduser("~/.swigi_profiles")
+
 
 def is_available() -> bool:
-    return os.path.isfile(_PLIST)
+    return os.path.isfile(BM_PLIST)
 
-def read_profile() -> dict | None:
-    """Lit et décode le profil BetterMouse. Retourne None si indisponible."""
+
+def list_profiles() -> list[str]:
+    """Retourne les noms de profils disponibles (sans extension)."""
+    os.makedirs(PROFILES_DIR, exist_ok=True)
+    return [f[:-5] for f in os.listdir(PROFILES_DIR) if f.endswith(".json")]
+
+
+def export_current(name: str | None = None) -> str:
+    """Lit BetterMouse, sauve un snapshot JSON. Retourne le chemin."""
     if not is_available():
-        return None
+        raise FileNotFoundError("BetterMouse plist introuvable")
+
+    with open(BM_PLIST, "rb") as f:
+        root = plistlib.load(f)
+
+    mice = plistlib.loads(root["mice"]).get("mice", [])
+    cfg = plistlib.loads(root["config"])
+    appitems = plistlib.loads(root["appitems"]).get("apps", {})
+
+    mouse_data = next(
+        (m for m in mice if m.get("name", {}).get("vendor", "").lower() == "logitech"),
+        {},
+    )
+    global_scl = list(appitems.values())[0].get("scl", {}) if appitems else {}
+
+    profile = {
+        "meta": {
+            "name": name or datetime.now().strftime("profil-%Y%m%d-%H%M"),
+            "bm_version": root.get("version", "?"),
+            "mouse": mouse_data.get("name", {}).get("product", "?"),
+            "exported_at": datetime.now().isoformat(),
+        },
+        "scroll": {
+            "smooth_en":      global_scl.get("smoothEn", True),
+            "duration":       global_scl.get("duration", 10),
+            "brake":          global_scl.get("brake", 10),
+            "vert_inv":       global_scl.get("vertInvEn", False),
+            "hori_inv":       global_scl.get("horiInvEn", False),
+            "hori_speed":     global_scl.get("horiSpeed", 8.0),
+        },
+        "mouse_hw": {
+            "ratchet":        mouse_data.get("ratchetMode", True),
+            "hireswheel":     mouse_data.get("hiResWheel", True),
+            "disengage_point":mouse_data.get("disengagePoint", 14),
+            "torque":         mouse_data.get("torque", 70),
+            "dpi_en":         mouse_data.get("dpiEn", False),
+            "dpi_index":      mouse_data.get("dpiIndex", 0),
+            "polling_rate":   mouse_data.get("rpRate", 0),
+        },
+    }
+
+    os.makedirs(PROFILES_DIR, exist_ok=True)
+    path = os.path.join(PROFILES_DIR, f"{profile['meta']['name']}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(profile, f, indent=2, ensure_ascii=False)
+    log.info("Profil exporté : %s", path)
+    return path
+
+
+def apply_profile(name: str) -> None:
+    """Applique un profil JSON à BetterMouse (plist patch + redémarrage)."""
+    path = os.path.join(PROFILES_DIR, f"{name}.json")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Profil introuvable : {path}")
+    if not is_available():
+        raise FileNotFoundError("BetterMouse plist introuvable")
+
+    with open(path, encoding="utf-8") as f:
+        profile = json.load(f)
+
+    # Backup avant modification
+    backup = BM_PLIST + ".swigi_bak"
+    shutil.copy2(BM_PLIST, backup)
+
     try:
-        with open(_PLIST, "rb") as f:
+        with open(BM_PLIST, "rb") as f:
             root = plistlib.load(f)
 
-        mice = plistlib.loads(root["mice"]).get("mice", [])
-        logikeys = plistlib.loads(root["logikeys"]).get("logiKeybs", [])
-        appitems = plistlib.loads(root["appitems"]).get("apps", {})
+        # Patch appitems (scroll global)
+        appitems_raw = plistlib.loads(root["appitems"])
+        apps = appitems_raw.get("apps", {})
+        global_key = next((k for k in apps if apps[k].get("url", {}).get("relative") == "./"), None)
+        if global_key and "scroll" in profile:
+            scl = apps[global_key].setdefault("scl", {})
+            s = profile["scroll"]
+            scl.update({
+                "smoothEn":  s.get("smooth_en", scl.get("smoothEn", True)),
+                "duration":  s.get("duration",  scl.get("duration",  10)),
+                "brake":     s.get("brake",      scl.get("brake",     10)),
+                "vertInvEn": s.get("vert_inv",   scl.get("vertInvEn", False)),
+                "horiInvEn": s.get("hori_inv",   scl.get("horiInvEn", False)),
+                "horiSpeed": s.get("hori_speed", scl.get("horiSpeed", 8.0)),
+            })
+        root["appitems"] = plistlib.dumps(appitems_raw, fmt=plistlib.FMT_BINARY)
 
-        # Profil souris (1ère souris Logitech trouvée)
-        mouse_profile = None
+        # Patch mice (hardware souris)
+        mice_raw = plistlib.loads(root["mice"])
+        mice = mice_raw.get("mice", [])
+        hw = profile.get("mouse_hw", {})
         for m in mice:
             if m.get("name", {}).get("vendor", "").lower() == "logitech":
-                mouse_profile = {
-                    "name":       m["name"].get("product", "?"),
-                    "vendor":     m["name"].get("vendor", "?"),
-                    "dpi_en":     m.get("dpiEn", False),
-                    "dpi_index":  m.get("dpiIndex", 0),
-                    "ratchet":    m.get("ratchetMode", False),
-                    "hireswheel": m.get("hiResWheel", False),
-                    "polling_rate_list": m.get("rpRateList", 0),
-                }
+                m.update({k: v for k, v in {
+                    "ratchetMode":    hw.get("ratchet"),
+                    "hiResWheel":     hw.get("hireswheel"),
+                    "disengagePoint": hw.get("disengage_point"),
+                    "torque":         hw.get("torque"),
+                    "dpiEn":          hw.get("dpi_en"),
+                    "dpiIndex":       hw.get("dpi_index"),
+                }.items() if v is not None})
                 break
+        root["mice"] = plistlib.dumps(mice_raw, fmt=plistlib.FMT_BINARY)
 
-        # Mapping hôte → OS (depuis 1er clavier Logitech)
-        host_os_map = {}
-        _os_names = {1: "macOS", 4: "iPadOS", 32: "Windows", 64: "Linux", 128: "Android"}
-        for kb in logikeys:
-            pl = kb.get("platformList", [])
-            if pl:
-                for entry in pl:
-                    host_os_map[entry["index"]] = _os_names.get(entry.get("osMask", 0), "?")
-                break
+        with open(BM_PLIST, "wb") as f:
+            plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
 
-        return {
-            "mouse": mouse_profile,
-            "host_os_map": host_os_map,
-        }
+        log.info("Profil '%s' appliqué à BetterMouse", name)
+
     except Exception as e:
-        log.debug("Lecture BetterMouse échouée : %s", e)
-        return None
-```
+        log.error("Échec patch BetterMouse, restauration backup : %s", e)
+        shutil.copy2(backup, BM_PLIST)
+        raise
 
-### 6.2 Intégration menu bar (`swigi/gui.py`)
-
-Nouveau bouton dans `SwiGiMenuBar.menu` :
-```python
-_rumps.MenuItem("Importer depuis BetterMouse", callback=self._import_bettermouse),
-```
-
-Callback :
-```python
-def _import_bettermouse(self, _):
-    from swigi.bettermouse import is_available, read_profile
-    if not is_available():
-        notify("BetterMouse non installé ou jamais lancé", "SwiGi")
-        return
-    profile = read_profile()
-    if not profile or not profile.get("mouse"):
-        notify("Aucune souris Logitech trouvée dans BetterMouse", "SwiGi")
-        return
-    m = profile["mouse"]
-    host_map = profile.get("host_os_map", {})
-    # Mettre à jour les items de menu
-    self._bm_item.title = f"BetterMouse : {m['name']}"
-    # Afficher les hôtes OS si disponibles
-    if host_map:
-        hosts_str = "  ".join(f"H{k}={v}" for k,v in sorted(host_map.items()))
-        self._bm_hosts_item.title = f"Hôtes : {hosts_str}"
-    notify(f"Profil importé : {m['name']}", "BetterMouse")
+    finally:
+        # Redémarrer BetterMouse pour prendre en compte les changements
+        subprocess.run(["killall", "BetterMouse"], check=False)
+        subprocess.Popen(["open", "-a", "BetterMouse"])
 ```
 
 ---
 
-## 7. Risques et limites
+## 8. Intégration `swigi/gui.py`
+
+```python
+# Dans SwiGiMenuBar.menu :
+_rumps.MenuItem("Exporter config BetterMouse…", callback=self._bm_export),
+_rumps.MenuItem("Profil au connect", callback=None),   # sous-menu dynamique
+_rumps.MenuItem("Auto-appliquer au connect", callback=self._bm_toggle_auto),
+```
+
+```python
+def _bm_export(self, _):
+    from swigi.bettermouse import export_current, is_available
+    if not is_available():
+        notify("BetterMouse introuvable", "SwiGi")
+        return
+    try:
+        path = export_current()
+        name = os.path.basename(path)
+        notify(f"Exporté : {name}", "BetterMouse")
+        self._rebuild_profile_menu()
+    except Exception as e:
+        notify(f"Export échoué : {e}", "Erreur")
+
+def _bm_toggle_auto(self, sender):
+    prefs["bm_auto_apply"] = not prefs.get("bm_auto_apply", False)
+    save_prefs(prefs)
+    sender.state = prefs["bm_auto_apply"]
+
+def _rebuild_profile_menu(self):
+    from swigi.bettermouse import list_profiles
+    # Reconstruire le sous-menu "Profil au connect"
+    ...
+```
+
+```python
+# Dans run_daemon / sonde périodique, après reconnexion souris :
+if prefs.get("bm_auto_apply") and prefs.get("bm_profile"):
+    from swigi.bettermouse import apply_profile
+    try:
+        apply_profile(prefs["bm_profile"])
+        notify(f"Profil {prefs['bm_profile']} appliqué", "BetterMouse")
+    except Exception as e:
+        log.warning("Profil BetterMouse non appliqué : %s", e)
+```
+
+---
+
+## 9. Risques et mitigations
 
 | Risque | Probabilité | Mitigation |
 |--------|-------------|------------|
-| Structure plist change entre versions BetterMouse | Moyen | Try/except sur chaque accès, fallback gracieux |
-| Plusieurs souris Logitech configurées | Possible | Matcher sur `mice[i].name.product == swigi_mouse.name` |
-| BetterMouse jamais lancé → plist absent | Probable | `is_available()` check avant tout accès |
-| Données sensibles dans le plist | Non (QR codes licence) | Ne pas loguer le champ `Paddle-BetterMouse-*` |
+| Structure plist change entre versions BM | Moyen | try/except + rollback backup automatique |
+| BetterMouse relancé pendant une session active | Faible | Délai ~1s acceptable, même comportement qu'un redémarrage manuel |
+| Plusieurs souris Logitech → mauvaise cible | Possible | Matcher `mice[i].name.product == swigi_mouse.name` |
+| Profil d'une autre souris appliqué | Possible | Vérifier `profile.meta.mouse == swigi_mouse.name` avant apply |
+| BetterMouse absent sur ce Mac | Certain (Windows/Linux) | Guard `if SYSTEM == "Darwin" and is_available()` |
+| Clé de licence dans plist | Oui (Paddle-*) | Jamais incluse dans l'export JSON |
 
 ---
 
-## 8. Conformité constitution
+## 10. Conformité constitution
 
-| Principe        | Impact         | Mesure                                              |
-|-----------------|----------------|-----------------------------------------------------|
-| Simplicité      | ✅ Opt-in     | Module séparé, importé uniquement si BetterMouse présent |
-| Portabilité     | ⚠️ macOS-only | Guard `if SYSTEM == "Darwin"` — no-op sur autres OS |
-| Robustesse      | ✅             | Tous les accès plist dans try/except                |
-| Non-intrusivité | ✅             | Lecture seule, aucune modification de la config BM  |
-| Réactivité      | ✅ Neutre      | Import à la demande (clic menu), pas en background  |
+| Principe        | Impact | Mesure |
+|-----------------|--------|--------|
+| Simplicité      | ✅ | Module opt-in, chargé uniquement si BetterMouse présent |
+| Portabilité     | ⚠️ macOS-only | Guard `SYSTEM == "Darwin"` — no-op Windows/Linux |
+| Robustesse      | ✅ | Backup avant écriture plist, rollback sur erreur |
+| Non-intrusivité | ⚠️ | Écriture plist + redémarrage BetterMouse — opt-in explicite (toggle OFF par défaut) |
+| Réactivité      | ✅ | Apply ~1s (BetterMouse restart), acceptable post-switch |
 
 ---
 
-## 9. Priorité
+## 11. Phases d'implémentation
 
-**Phase 1 (utile maintenant)** — `read_profile()` + affichage dans menu bar :
-- Nom souris BetterMouse vs SwiGi (confirmation)
-- Mapping hôte → OS (labels `H0=macOS H1=Windows`)
+**Phase 1 — Export + menu bar** (pas d'application automatique)
+- `bettermouse.py` : `is_available()`, `export_current()`, `list_profiles()`
+- `gui.py` : bouton export, sous-menu sélection profil (stocké dans prefs)
+- Toggle auto-apply = OFF par défaut
 
-**Phase 2 (feature future)** — Profil par hôte :
-- Stocker dans `~/.swigi_prefs.json` les préférences par hôte
-- Au switch, appliquer un réglage différent (nécessite API BetterMouse non documentée ou AppleScript)
+**Phase 2 — Application automatique**
+- `bettermouse.py` : `apply_profile()`
+- `daemon.py` / `gui.py` : déclenchement post-reconnect souris
+- Test sur machine réelle requis avant activation par défaut
