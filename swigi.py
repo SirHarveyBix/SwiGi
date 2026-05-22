@@ -343,14 +343,29 @@ def get_device_name(transport, devnumber, feat_idx):
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
+def _drain_transport(transport: HIDTransport, max_reads: int = 8) -> None:
+    """Vide le buffer d'entrée HID (non-bloquant) avant d'écrire une commande.
+
+    Quand la souris envoie beaucoup de rapports de mouvement, ces données
+    saturent la file BT et retardent le traitement des commandes sortantes.
+    Vider le buffer libère la voie avant l'envoi de CHANGE_HOST.
+    """
+    for _ in range(max_reads):
+        try:
+            if transport.read(timeout=0) is None:
+                break
+        except (TransportError, OSError):
+            break
+
+
 def send_change_host(transport, devnumber, feat_idx, target_host):
     """Bascule le périphérique vers target_host (base 0).
 
-    Réessaie jusqu'à 3 fois avec 50ms entre chaque tentative — les paquets BT
-    peuvent être perdus quand l'interface est saturée de données de mouvement.
+    Vide le buffer d'entrée puis envoie la commande 3× back-to-back sans délai.
     Exception sur 1er essai = erreur réelle (propagée).
     Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
     """
+    _drain_transport(transport)
     request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     params = struct.pack("B", target_host)
     msg = _build_msg(devnumber, request_id, params)
@@ -361,8 +376,6 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
             if attempt == 0:
                 raise  # 1er essai échoué = transport mort avant envoi
             return   # retry échoué = switch réussi, périphérique déconnecté
-        if attempt < 2:
-            time.sleep(0.05)
 
 
 def get_current_host(transport, devnumber, feat_idx):
