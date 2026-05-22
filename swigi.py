@@ -344,11 +344,25 @@ def get_device_name(transport, devnumber, feat_idx):
 
 
 def send_change_host(transport, devnumber, feat_idx, target_host):
-    """Fire-and-forget : bascule le périphérique vers target_host (base 0)."""
+    """Bascule le périphérique vers target_host (base 0).
+
+    Réessaie jusqu'à 3 fois avec 50ms entre chaque tentative — les paquets BT
+    peuvent être perdus quand l'interface est saturée de données de mouvement.
+    Exception sur 1er essai = erreur réelle (propagée).
+    Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
+    """
     request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     params = struct.pack("B", target_host)
     msg = _build_msg(devnumber, request_id, params)
-    transport.write(msg)
+    for attempt in range(3):
+        try:
+            transport.write(msg)
+        except (TransportError, OSError):
+            if attempt == 0:
+                raise  # 1er essai échoué = transport mort avant envoi
+            return   # retry échoué = switch réussi, périphérique déconnecté
+        if attempt < 2:
+            time.sleep(0.05)
 
 
 def get_current_host(transport, devnumber, feat_idx):
