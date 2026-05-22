@@ -22,6 +22,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | 🔀 **Sync Easy-Switch**        | Appuie une fois sur le clavier → la souris suit automatiquement       |
 | 🔵 **Bluetooth natif**         | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
 | 🔄 **Reconnexion automatique** | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
+| 🔗 **Sync garantie**           | Détecte et corrige automatiquement les désynchronisations (filets ×2) |
 | ⚡ **Faible latence**          | Polling 10ms, réponse < 300ms dans des conditions normales            |
 | 🖱️ **Souris en mouvement**     | Fonctionne même quand la souris bouge activement (drain BT + retries) |
 | 🍎 **Icône menu bar macOS**    | Statut clavier/souris visible en permanence, compteur de basculements |
@@ -271,6 +272,7 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 | 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically           |
 | 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required           |
 | 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop        |
+| 🔗 **Guaranteed sync**      | Auto-detects and fixes keyboard/mouse desync (two safety nets) |
 | ⚡ **Low latency**          | 10ms polling, < 300ms response under normal conditions         |
 | 🖱️ **Mouse in motion**      | Works even while mouse is actively moving (BT drain + retries) |
 | 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |

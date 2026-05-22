@@ -397,6 +397,36 @@ def get_current_host(transport, devnumber, feat_idx):
     return None
 
 
+def _verify_and_sync(kb: "DeviceInfo", mouse: "DeviceInfo", state: dict) -> None:
+    """Vérifie que clavier et souris sont sur le même hôte. Corrige si désynchronisé.
+
+    Appelé après reconnexion des deux périphériques. Si les hôtes diffèrent,
+    envoie CHANGE_HOST à la souris pour la ramener sur l'hôte du clavier.
+    """
+    kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
+    mouse_host = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
+
+    if kb_host is None or mouse_host is None:
+        return  # impossible de vérifier
+
+    if kb_host == mouse_host:
+        log.debug("Sync OK : clavier et souris sur hôte %d", kb_host)
+        return
+
+    log.warning("Désync détectée : clavier=hôte%d, souris=hôte%d → correction...",
+                kb_host, mouse_host)
+    _notify(f"Resynchronisation → hôte {kb_host + 1}", "SwiGi")
+    try:
+        send_change_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx, kb_host)
+        log.info("Correction appliquée : souris → hôte %d", kb_host)
+        mouse.close()
+        state["mouse"] = None  # souris va déconnecter après la correction
+    except (TransportError, OSError) as e:
+        log.warning("Correction sync échouée : %s", e)
+        mouse.close()
+        state["mouse"] = None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Découverte des périphériques
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -615,6 +645,8 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                 mouse = mouse_new
                 state["mouse"] = mouse.name
                 log.info("Watchdog reconnexion souris : %s", mouse.name)
+            if state.get("kb") and state.get("mouse"):
+                _verify_and_sync(kb, mouse, state)
             last_response = time.time()
             continue
 
@@ -661,8 +693,10 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
             if new_mouse:
                 mouse = new_mouse
                 state["mouse"] = mouse.name
-                log.debug("Souris prête en avance : %s", mouse.name)
-                _notify(f"{mouse.name} reconnectée", "Souris")
+                log.debug("Souris prête : %s — vérification sync hôtes...", mouse.name)
+                _verify_and_sync(kb, mouse, state)
+                if state["mouse"]:  # non None = sync OK ou pas de désync
+                    _notify(f"{mouse.name} reconnectée", "Souris")
             else:
                 log.debug("Souris introuvable, nouvelle tentative au prochain événement")
             continue
@@ -709,6 +743,41 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                     log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
                     total_switches += 1
                     state["switches"] = total_switches
+
+                    # ── Vérification : la souris doit déconnecter dans 300ms ──
+                    # Si elle répond encore au ping → elle n'a pas basculé → retry
+                    _t_verify = time.time() + 0.3
+                    while time.time() < _t_verify and not stop_event.is_set():
+                        time.sleep(0.02)
+                    mouse_confirmed = False
+                    try:
+                        mouse.transport.write(_PING_MSG)
+                        log.warning("Souris encore connectée après 300ms — retry switch...")
+                    except (TransportError, OSError):
+                        mouse_confirmed = True  # déconnectée = switch reçu
+
+                    if not mouse_confirmed:
+                        for _r in range(3):
+                            try:
+                                send_change_host(mouse.transport, DEVNUMBER_DIRECT,
+                                                 mouse.change_host_idx, target_host)
+                            except (TransportError, OSError):
+                                mouse_confirmed = True
+                                break
+                            _t_r = time.time() + 0.2
+                            while time.time() < _t_r and not stop_event.is_set():
+                                time.sleep(0.02)
+                            try:
+                                mouse.transport.write(_PING_MSG)
+                            except (TransportError, OSError):
+                                mouse_confirmed = True
+                                break
+                        if mouse_confirmed:
+                            log.info("Souris confirmée au retry")
+                        else:
+                            log.warning("Désync probable — sera corrigée au reconnect")
+                            _notify("Switch souris incertain — correction au reconnect", "SwiGi")
+
                 except (TransportError, OSError):
                     log.warning("CHANGE_HOST souris échoué, reconnexion...")
                     mouse.close()
@@ -746,8 +815,10 @@ def _run_daemon(kb: DeviceInfo, mouse: DeviceInfo,
                     mouse.close()
                 mouse = new_mouse
                 state["mouse"] = mouse.name
-                log.info("Souris reconnectée automatiquement : %s", mouse.name)
-                _notify(f"{mouse.name} reconnectée", "Souris")
+                log.info("Souris reconnectée automatiquement : %s — vérification sync...", mouse.name)
+                _verify_and_sync(kb, mouse, state)
+                if state["mouse"]:
+                    _notify(f"{mouse.name} reconnectée", "Souris")
 
     log.info("Arrêt. Total : %d basculements.", total_switches)
     kb.close()

@@ -77,7 +77,13 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
 
 **Pourquoi `last_switch_time` à la détection :** le clavier se déconnecte dès qu'il envoie la notification CHANGE_HOST, quelle que soit la réussite du send vers la souris. Stocker le timestamp dès la détection garantit que la déconnexion clavier post-switch est toujours reconnue comme telle, même si le send échoue.
 
-## 5. Conformité constitution
+## 5. Relation avec la synchronisation garantie
+
+Cette spec couvre uniquement la fiabilité de l'envoi de la commande `CHANGE_HOST` (couche transport). La détection et correction des désynchronisations post-switch (vérification 300ms + resync au reconnect) sont documentées dans [`host-sync.md`](host-sync.md).
+
+---
+
+## 6. Conformité constitution
 
 | Principe        | Impact     | Mesure                                             |
 | --------------- | ---------- | -------------------------------------------------- |
@@ -87,6 +93,6 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
 | Non-intrusivité | ✅ Positif | Pas de CGEventTap, pas de permission Accessibilité |
 | Réactivité      | ✅ Positif | Latence ajoutée ~5ms vs 100ms avant                |
 
-## 6. Validation
+## 7. Validation
 
 Confirmé fonctionnel par l'utilisateur sur MX Keys S + MX Vertical, macOS Sequoia, Bluetooth.
