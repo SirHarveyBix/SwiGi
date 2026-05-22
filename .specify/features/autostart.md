@@ -39,6 +39,7 @@ SwiGi doit être utile sans intervention après l'installation initiale. Un util
 
 - Détecte Python et hidapi, les installe si manquants (via Homebrew)
 - Crée `~/Library/LaunchAgents/com.swigi.plist` pointant vers `python3 swigi.py`
+- `python3 -m swigi` est aussi supporté comme alternative (même comportement)
 - `KeepAlive = true` → launchd redémarre si crash
 - Logs dans `~/Library/Logs/swigi.log`
 - `launchctl load` démarre immédiatement
@@ -47,7 +48,7 @@ Désactivation : `launchctl unload ~/Library/LaunchAgents/com.swigi.plist`
 
 ### Windows — `setup_win.bat`
 
-- Copie Python embeddable + hidapi.dll + swigi.py dans `%USERPROFILE%\SwiGi\`
+- Copie Python embeddable + hidapi.dll + `swigi.py` + dossier `swigi/` (récursivement) dans `%USERPROFILE%\SwiGi\`
 - Crée `%APPDATA%\...\Startup\SwiGi.vbs` qui lance `pythonw.exe swigi.py` sans fenêtre
 - VBScript exécuté à chaque login utilisateur
 

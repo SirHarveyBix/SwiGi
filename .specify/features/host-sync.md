@@ -1,141 +1,65 @@
-# Spec : Synchronisation garantie des hôtes
+# Spec : Fiabilité et synchronisation post-switch
 
-**Version :** 1.0.0
+**Version :** 1.1.0
 **Date :** 2026-05-22
-**Statut :** Implémenté
+**Statut :** Implémenté (Simplifié)
 
 ---
 
 ## 1. Contexte
 
-`send_change_host` est fire-and-forget : la commande est envoyée à la souris mais rien ne confirme qu'elle a été reçue et exécutée. En cas de perte BT partielle, le clavier peut basculer sur l'hôte X pendant que la souris reste sur l'hôte Y. L'utilisateur se retrouve avec les deux périphériques sur des hôtes différents sans aucun signal d'erreur.
-
-**Scénario typique :**
-
-1. Easy-Switch pressé → clavier passe sur hôte 2
-2. `send_change_host` envoyé à la souris → paquet perdu (BT saturé)
-3. Clavier déconnecté de Mac 1, souris reste sur Mac 1
-4. Utilisateur sur Mac 2 avec clavier mais sans souris
+La commande `CHANGE_HOST` envoyée à la souris via Bluetooth peut occasionnellement échouer en raison de congestions radio (reconnexions Bluetooth massives, drain d'événements, etc.). Pour garantir un basculement extrêmement fiable et synchrone sans introduire de lenteurs ou de bogues d'utilisation, SwiGi utilise un mécanisme robuste de burst et de réinitialisation proactive de l'état.
 
 ---
 
-## 2. Solution : deux filets de sécurité indépendants
+## 2. Solution : Fiabilisation par Burst & Fermeture Proactive
 
-### Filet 1 — Vérification immédiate post-switch (300ms)
+### Le Filet unique : Burst de transport et Fermeture immédiate
 
-Après `send_change_host` réussi (premier essai sans exception), SwiGi attend 300ms et tente un ping à la souris :
+Pour éviter tout blocage du thread principal du démon (ce qui dégraderait la réactivité), SwiGi n'attend pas de confirmation par ping actif (qui bloquait le thread principal pendant 300ms à 900ms). Il utilise les mesures de robustesse suivantes :
 
-- **Ping échoue** (TransportError/OSError) → souris déconnectée → switch confirmé ✅
-- **Ping réussit** → souris encore présente → switch non exécuté → retry × 3
-
-Chaque retry attend 200ms supplémentaires avant de repiquer. Si après 3 retries la souris n'a toujours pas basculé → notification utilisateur + filet 2 prend le relais.
-
-**Pourquoi ping = déconnexion = succès :** quand la souris reçoit `CHANGE_HOST`, elle bascule sur le nouveau hôte BT et coupe la connexion avec le Mac actuel. Une écriture HID vers un device BT déconnecté lève immédiatement `TransportError`. C'est la seule confirmation disponible sans channel de retour dédié.
-
-### Filet 2 — Resynchronisation au reconnect
-
-Appelée par `_verify_and_sync(kb, mouse, state)` dans 4 contextes :
-
-- Reconnexion clavier (handler post-switch)
-- Watchdog reconnect (après 10s sans réponse)
-- Sonde périodique souris (toutes les 5s si `state["mouse"] is None`)
-- (futur) tout contexte où les deux périphériques viennent d'être trouvés
-
-**Algorithme :**
-
-1. `get_current_host(kb)` → interroge feature `CHANGE_HOST` fn 0 (`getHostInfo`) → `reply[1]` = hôte actuel
-2. `get_current_host(mouse)` → idem
-3. Si `kb_host == mouse_host` → rien à faire
-4. Si différents → `send_change_host(mouse, kb_host)` → souris rejoint l'hôte du clavier
-5. `mouse.close()` + `state["mouse"] = None` → souris va déconnecter après la correction, sera redécouverte via sonde périodique
+1. **Double Drain et Rafale (Burst) :** La fonction `send_change_host` vide les buffers d'entrée HID deux fois avant d'émettre, puis envoie la commande `CHANGE_HOST` **5 fois de suite sans délai** au périphérique. Cette redondance au niveau de la couche transport élimine pratiquement tout risque de perte de paquet.
+2. **Fermeture Proactive du Transport :** Dès que le burst d'envoi a réussi sans exception initiale, SwiGi considère la bascule comme initiée. Il appelle immédiatement `mouse.close()` pour fermer proprement le descripteur de fichier USB/Bluetooth et réinitialise l'état local en mettant `state["mouse"] = None`.
+3. **Reconnexion Proactive :** Le démon libère instantanément son thread pour surveiller la déconnexion inévitable du clavier. Lorsque l'utilisateur bascule de nouveau sur cette machine, le démon redécouvrira les deux appareils proprement.
 
 ---
 
-## 3. Exigences fonctionnelles
+## 3. Pourquoi la resynchronisation au reconnect ("Filet 2") est obsolète
 
-| #   | Exigence                                                                                    | Priorité |
-| --- | ------------------------------------------------------------------------------------------- | -------- |
-| F1  | Si souris encore connectée 300ms après CHANGE_HOST → retry automatique × 3                  | MUST     |
-| F2  | Au reconnect des deux périphériques → vérifier hôtes et corriger si désync                  | MUST     |
-| F3  | `get_current_host` utilisé comme source de vérité (pas un état interne)                     | MUST     |
-| F4  | Si désync détectée → notification utilisateur                                               | SHOULD   |
-| F5  | Correction silencieuse si `get_current_host` retourne None (pas de crash)                   | MUST     |
-| F6  | Après correction sync → `state["mouse"] = None` + attente redécouverte via sonde périodique | MUST     |
+L'implémentation initiale de la resynchronisation au reconnect (`_verify_and_sync`) tentait de comparer le canal Easy-Switch actif du clavier (`kb_host`) et de la souris (`mouse_host`) lors de la reconnexion automatique ou du démarrage du démon. Ce concept s'est avéré logiquement défectueux pour les raisons suivantes :
+
+1. **Limitation physique Bluetooth :** Si le clavier est sur le Mac (Hôte A) et la souris est sur le PC (Hôte B), le démon du Mac ne peut pas s'ouvrir et dialoguer avec la souris. Ainsi, une réelle désynchronisation physique empêche l'obtention des informations de la souris et rend toute correction automatique à distance impossible sur Bluetooth direct.
+2. **Régression de boucle de déconnexion infinie :** Si l'utilisateur a connecté ses deux périphériques à la même machine mais sur des canaux Easy-Switch différents (ex. Clavier sur canal 1 et Souris sur canal 2), ils sont parfaitement synchronisés physiquement. Cependant, `_verify_and_sync` détectait une « désynchronisation » car les index bruts de canaux différaient (`0 != 1`). Le démon déconnectait alors continuellement la souris pour tenter de la forcer sur le canal du clavier, créant une boucle infinie de déconnexions toutes les 5 secondes.
+
+Par conséquent, **le Filet 2 a été complètement retiré du code**.
 
 ---
 
-## 4. Implémentation
+## 4. Exigences fonctionnelles
 
-### `get_current_host`
-
-```python
-def get_current_host(transport, devnumber, feat_idx):
-    reply = hidpp_request(transport, devnumber, (feat_idx << 8) | 0x00, timeout=500)
-    if reply and len(reply) >= 2:
-        return reply[1]  # reply[0] = numHosts, reply[1] = currentHost
-    return None
-```
-
-### `_verify_and_sync`
-
-```python
-def _verify_and_sync(kb, mouse, state):
-    kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
-    mouse_host = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
-    if kb_host is None or mouse_host is None:
-        return
-    if kb_host == mouse_host:
-        return
-    # Désync → corriger
-    send_change_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx, kb_host)
-    mouse.close()
-    state["mouse"] = None
-```
-
-### Vérification immédiate (dans `_run_daemon`)
-
-```python
-# Après send_change_host réussi :
-time.sleep(0.3)  # attendre déconnexion souris
-try:
-    mouse.transport.write(_PING_MSG)
-    # Ping réussi → souris encore là → retry × 3 (200ms entre chaque)
-except (TransportError, OSError):
-    pass  # Ping échoué → switch confirmé
-```
+| #   | Exigence                                                                                  | Priorité |
+| --- | ----------------------------------------------------------------------------------------- | -------- |
+| F1  | L'envoi de CHANGE_HOST doit utiliser un double drain et un burst redondant de 5 écritures | MUST     |
+| F2  | Après envoi réussi de la bascule, fermer immédiatement le transport de la souris sans lag | MUST     |
+| F3  | Réinitialiser `state["mouse"] = None` pour permettre une détection propre au retour       | MUST     |
+| F4  | Pas de blocage du thread principal par des pings d'attente actifs                         | MUST     |
 
 ---
 
 ## 5. Timings
 
-| Étape                               | Durée         | Impact perçu                                                |
-| ----------------------------------- | ------------- | ----------------------------------------------------------- |
-| Vérification post-switch (succès)   | +300ms        | Invisible (keyboard déjà déconnecté)                        |
-| Retry × 1 (si nécessaire)           | +200ms        | Invisible                                                   |
-| Retry × 2                           | +200ms        | Invisible                                                   |
-| Retry × 3                           | +200ms        | Invisible                                                   |
-| `get_current_host` × 2 au reconnect | ~1000ms total | Pendant la phase de reconnexion, pas sur le chemin critique |
-
-La vérification post-switch se déroule pendant la phase où le clavier se déconnecte. L'utilisateur ne perçoit pas ces 300ms car les deux périphériques sont de toute façon en transition.
+| Étape                             | Durée | Impact perçu                                 |
+| --------------------------------- | ----- | -------------------------------------------- |
+| Burst CHANGE_HOST et Close souris | < 5ms | Instantané, aucun blocage pour l'utilisateur |
 
 ---
 
-## 6. Points d'appel de `_verify_and_sync`
+## 6. Conformité constitution
 
-| Contexte                    | Condition déclencheur                      |
-| --------------------------- | ------------------------------------------ |
-| Reconnect handler (clavier) | Après trouver souris en proactif           |
-| Watchdog reconnect          | Après trouver kb + mouse                   |
-| Sonde périodique souris     | Après redécouverte souris (state was None) |
-
----
-
-## 7. Conformité constitution
-
-| Principe        | Impact     | Mesure                                                        |
-| --------------- | ---------- | ------------------------------------------------------------- |
-| Simplicité      | ✅ Neutre  | Stdlib pure, ~30 lignes pour les deux filets                  |
-| Portabilité     | ✅ Positif | `get_current_host` = HID++ 2.0 standard, 3 OS                 |
-| Robustesse      | ✅ Positif | Désync détectée et corrigée automatiquement                   |
-| Non-intrusivité | ✅ Neutre  | Pas de permission supplémentaire                              |
-| Réactivité      | ✅ Neutre  | Vérification pendant phase transition, chemin normal inchangé |
+| Principe        | Impact     | Mesure                                                       |
+| --------------- | ---------- | ------------------------------------------------------------ |
+| Simplicité      | ✅ Positif | Suppression de codes complexes de ping/sleep et de resync    |
+| Portabilité     | ✅ Neutre  | Standard HID++ 2.0 préservé                                  |
+| Robustesse      | ✅ Positif | Élimination des plantages ou boucles de déconnexion infinies |
+| Non-intrusivité | ✅ Neutre  | Aucune modification de permissions                           |
+| Réactivité      | ✅ Positif | Suppression des sleeps de 300-900ms, bascule instantanée     |

@@ -1,6 +1,20 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.1.0 → 1.2.0
+Type: MINOR — amendement P1 (passage au package modulaire)
+
+Principes modifiés:
+  P1 Simplicité → étendu : SwiGi est désormais un package Python (swigi/)
+    avec un point d'entrée de compatibilité (swigi.py) à la racine.
+    La seule dépendance requise reste hidapi. Les conditions existantes
+    sur les dépendances optionnelles restent inchangées.
+    Motivation : testabilité, maintenabilité, séparation des responsabilités.
+
+Specs ajoutées:
+  ✅ .specify/features/modular-architecture.md
+
+---
 Version change: 1.0.0 → 1.1.0
 Type: MINOR — amendement P1 (dépendances optionnelles platform-specific)
 
@@ -24,7 +38,7 @@ Follow-up TODOs:
 
 # Constitution du Projet SwiGi
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Date de ratification:** 2026-05-22
 **Dernière modification:** 2026-05-22
 **Mainteneur principal:** SirHarveyBix (gui.lefort.17@gmail.com)
@@ -33,7 +47,7 @@ Follow-up TODOs:
 
 ## 1. Objet et portée
 
-SwiGi est un daemon Python monofile qui synchronise la touche Easy-Switch entre un clavier et une souris Logitech via Bluetooth, sans receveur USB, sans Logi Options+ et sans contrainte réseau. Il implémente le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`) directement via la bibliothèque hidapi.
+SwiGi est un daemon Python qui synchronise la touche Easy-Switch entre un clavier et une souris Logitech via Bluetooth, sans receveur USB, sans Logi Options+ et sans contrainte réseau. Il implémente le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`) directement via la bibliothèque hidapi.
 
 Cette constitution définit les règles non-négociables qui gouvernent l'évolution du projet. Toute contribution, modification ou refactorisation DOIT respecter ces principes.
 
@@ -43,7 +57,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 
 ### Principe 1 — Simplicité
 
-**Règle :** SwiGi DOIT rester un fichier Python unique (`swigi.py`). La seule dépendance externe requise est `hidapi`. Les dépendances optionnelles installées automatiquement par les scripts platform-specific (`install_mac.sh`, `setup_win.bat`) sont autorisées si et seulement si :
+**Règle :** SwiGi est un package Python (`swigi/`) avec un point d'entrée de compatibilité (`swigi.py`) à la racine du projet. La seule dépendance externe requise est `hidapi`. Les dépendances optionnelles installées automatiquement par les scripts platform-specific (`install_mac.sh`, `setup_win.bat`) sont autorisées si et seulement si :
 
 - elles sont installées sans action manuelle de l'utilisateur,
 - l'absence de la dépendance déclenche un fallback silencieux (le core reste fonctionnel),
@@ -51,13 +65,13 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 
 Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être requis pour le fonctionnement de base.
 
-**Rationale :** La friction zéro à l'installation est la proposition de valeur principale. Les features optionnelles (ex. menu bar macOS) peuvent utiliser des dépendances légères si elles n'ajoutent aucun effort à l'utilisateur.
+**Rationale :** La friction zéro à l'installation est la proposition de valeur principale. Le passage au package modulaire améliore la testabilité et la maintenabilité sans ajouter de friction — `python swigi.py` et `python3 -m swigi` fonctionnent sans installation pip. Les features optionnelles (ex. menu bar macOS) peuvent utiliser des dépendances légères si elles n'ajoutent aucun effort à l'utilisateur.
 
 **Tests de conformité :**
 
-- `python swigi.py` fonctionne après `brew install hidapi` / placement de `hidapi.dll` sans aucune autre commande.
+- `python swigi.py` et `python3 -m swigi` fonctionnent après `brew install hidapi` / placement de `hidapi.dll` sans aucune autre commande.
 - Sans `rumps` : SwiGi démarre normalement, sans menu bar, sans erreur.
-- `wc -l swigi.py` reste à un niveau raisonnable (< 800 lignes).
+- Le nombre de modules dans `swigi/` reste raisonnable (< 15 fichiers `.py`). Aucune dépendance externe au-delà de `hidapi` n'est ajoutée.
 
 ### Principe 2 — Portabilité
 
@@ -126,7 +140,7 @@ Suit la sémantique suivante :
 
 ### 3.3 Révision de conformité
 
-Chaque Pull Request modifiant `swigi.py` DOIT inclure une vérification mentale des 5 principes. En cas de violation intentionnelle (nécessité technique documentée), une note explicite DOIT figurer dans le message de commit ou la PR description.
+Chaque Pull Request modifiant le package `swigi/` ou le wrapper `swigi.py` DOIT inclure une vérification mentale des 5 principes. En cas de violation intentionnelle (nécessité technique documentée), une note explicite DOIT figurer dans le message de commit ou la PR description.
 
 ### 3.4 Compatibilité avec les outils de spécification
 
@@ -141,15 +155,17 @@ Ce projet utilise le framework **SpecKit** pour la documentation technique :
 
 ## 4. Référence technique
 
-| Élément                   | Valeur             |
-| ------------------------- | ------------------ |
-| Protocole                 | HID++ 2.0          |
-| Feature CHANGE_HOST       | `0x1814`           |
-| SW_ID (identifiant SwiGi) | `0x0A`             |
-| VID Logitech              | `0x046D`           |
-| Bolt PID                  | `0xC548`           |
-| Unifying PIDs             | `0xC52B`, `0xC532` |
-| Intervalle polling        | 10ms               |
-| Fenêtre lecture           | 80ms               |
-| Timeout watchdog          | 10s                |
-| Python requis             | 3.10+              |
+| Élément                   | Valeur                           |
+| ------------------------- | -------------------------------- |
+| Structure                 | Package Python (`swigi/`)        |
+| Point d'entrée            | `swigi.py` ou `python3 -m swigi` |
+| Protocole                 | HID++ 2.0                        |
+| Feature CHANGE_HOST       | `0x1814`                         |
+| SW_ID (identifiant SwiGi) | `0x0A`                           |
+| VID Logitech              | `0x046D`                         |
+| Bolt PID                  | `0xC548`                         |
+| Unifying PIDs             | `0xC52B`, `0xC532`               |
+| Intervalle polling        | 10ms                             |
+| Fenêtre lecture           | 80ms                             |
+| Timeout watchdog          | 10s                              |
+| Python requis             | 3.10+                            |

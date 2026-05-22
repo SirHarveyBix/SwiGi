@@ -35,28 +35,41 @@ L'utilisateur ne voit les logs SwiGi que s'il a une fenêtre Terminal ouverte. Q
 | F3  | Échec osascript ne provoque pas de crash (try/except)                       | MUST     |
 | F4  | Titre fixe « SwiGi », sous-titre indique le type (« Clavier » / « Souris ») | SHOULD   |
 
-## 4. Implémentation
+## 4. Implémentation (dans `swigi/gui.py`)
 
 ```python
-def _notify(message: str, subtitle: str = "") -> None:
-    if _SYSTEM != "Darwin":
+def notify(message: str, subtitle: str = "") -> None:
+    """Notification macOS via osascript. No-op si désactivé ou hors Darwin."""
+    if SYSTEM != "Darwin" or not prefs.get("notifications", True):
         return
-    script = f'display notification "{message}" with title "SwiGi"'
+
+    def _esc(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f'display notification "{_esc(message)}" with title "SwiGi"'
     if subtitle:
-        script += f' subtitle "{subtitle}"'
+        script += f' subtitle "{_esc(subtitle)}"'
     try:
-        subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["osascript", "-e", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except Exception:
         pass
 ```
 
+La fonction vérifie les préférences utilisateur (`prefs.get('notifications', True)`) — désactivable via le menu bar macOS.
+
+`_esc` filtre les caractères d'échappement pour éviter l'injection dans la commande `osascript`.
+
 Événements déclencheurs :
 
-- `_notify(f"{kb.name} connecté", "Clavier")` — démarrage
-- `_notify(f"{mouse.name} connectée", "Souris")` — démarrage
-- `_notify(f"{kb.name} déconnecté", "Clavier")` — perte BT
-- `_notify(f"{kb.name} reconnecté", "Clavier")` — retour BT
-- `_notify(f"{mouse.name} reconnectée", "Souris")` — reconnexion proactive
+- `notify(f"{kb.name} connecté", "Clavier")` — démarrage
+- `notify(f"{mouse.name} connectée", "Souris")` — démarrage
+- `notify(f"{kb.name} déconnecté", "Clavier")` — perte BT
+- `notify(f"{kb.name} reconnecté", "Clavier")` — retour BT
+- `notify(f"{mouse.name} reconnectée", "Souris")` — reconnexion proactive
 
 ## 5. Conformité constitution
 

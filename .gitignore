@@ -9,3 +9,6 @@ Thumbs.db
 python-3/
 lib/
 *.egg-info/
+
+.claude
+.antigravitycli

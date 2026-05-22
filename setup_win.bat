@@ -47,6 +47,16 @@ if exist "%~dp0swigi.py" (
     exit /b 1
 )
 
+REM Copier le package swigi
+if exist "%~dp0swigi" (
+    xcopy /E /I /Y "%~dp0swigi" "%USERPROFILE%\SwiGi\swigi"
+    echo [OK] package swigi copie
+) else (
+    echo [ERREUR] dossier swigi introuvable dans %~dp0
+    pause
+    exit /b 1
+)
+
 REM Creer start.bat (avec fenetre — pour voir les logs)
 (
 echo @echo off
