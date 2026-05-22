@@ -16,12 +16,12 @@ Avec launchd (`KeepAlive = true`), SwiGi tourne indéfiniment. `StandardOutPath`
 
 ## 3. Exigences fonctionnelles
 
-| # | Exigence | Priorité |
-|---|----------|----------|
-| F1 | `--log-file FILE` active la rotation automatique | MUST |
-| F2 | Taille max totale ≤ 4 Mo (1 Mo × 3 backups + courant) | MUST |
-| F3 | Sans `--log-file` : logs stdout uniquement (comportement actuel) | MUST |
-| F4 | Console (stdout) et fichier actifs simultanément si `--log-file` fourni | SHOULD |
+| #   | Exigence                                                                | Priorité |
+| --- | ----------------------------------------------------------------------- | -------- |
+| F1  | `--log-file FILE` active la rotation automatique                        | MUST     |
+| F2  | Taille max totale ≤ 4 Mo (1 Mo × 3 backups + courant)                   | MUST     |
+| F3  | Sans `--log-file` : logs stdout uniquement (comportement actuel)        | MUST     |
+| F4  | Console (stdout) et fichier actifs simultanément si `--log-file` fourni | SHOULD   |
 
 ## 4. Implémentation
 
@@ -35,18 +35,20 @@ if args.log_file:
 ```
 
 `install_mac.sh` génère le plist avec :
+
 ```xml
 <string>--log-file</string>
 <string>~/Library/Logs/swigi.log</string>
 ```
+
 (remplace `StandardOutPath` qui n'a pas de rotation)
 
 ## 5. Conformité constitution
 
-| Principe | Impact | Mesure |
-|----------|--------|--------|
-| Simplicité | ✅ Neutre | `logging.handlers` stdlib, zéro dépendance |
-| Portabilité | ✅ Positif | Fonctionne sur les 3 OS |
-| Robustesse | ✅ Positif | Pas de disque plein après usage long terme |
-| Non-intrusivité | ✅ Neutre | Opt-in via flag CLI |
-| Réactivité | ✅ Neutre | Écriture asynchrone bufferisée par le OS |
+| Principe        | Impact     | Mesure                                     |
+| --------------- | ---------- | ------------------------------------------ |
+| Simplicité      | ✅ Neutre  | `logging.handlers` stdlib, zéro dépendance |
+| Portabilité     | ✅ Positif | Fonctionne sur les 3 OS                    |
+| Robustesse      | ✅ Positif | Pas de disque plein après usage long terme |
+| Non-intrusivité | ✅ Neutre  | Opt-in via flag CLI                        |
+| Réactivité      | ✅ Neutre  | Écriture asynchrone bufferisée par le OS   |

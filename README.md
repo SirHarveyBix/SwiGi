@@ -15,12 +15,30 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 ---
 
+## ✨ Fonctionnalités
+
+| Fonctionnalité                 | Description                                                           |
+| ------------------------------ | --------------------------------------------------------------------- |
+| 🔀 **Sync Easy-Switch**        | Appuie une fois sur le clavier → la souris suit automatiquement       |
+| 🔵 **Bluetooth natif**         | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
+| 🔄 **Reconnexion automatique** | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
+| ⚡ **Faible latence**          | Polling 10ms, réponse < 300ms dans des conditions normales            |
+| 🖱️ **Souris en mouvement**     | Fonctionne même quand la souris bouge activement (drain BT + retries) |
+| 🍎 **Icône menu bar macOS**    | Statut clavier/souris visible en permanence, compteur de basculements |
+| 🔔 **Notifications système**   | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
+| 🔁 **Démarrage automatique**   | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
+| 📄 **Log rotation**            | `--log-file` : max 4 Mo au total, aucune croissance infinie           |
+| 🔒 **Non-intrusif**            | Mode non-exclusif macOS — coexiste avec Logi Options+                 |
+| 📦 **Zéro friction**           | Un fichier Python, une dépendance (hidapi)                            |
+
+---
+
 ## 🇫🇷 Français
 
-### Requirements
+### Prérequis
 
 - Un clavier **et** une souris Logitech avec Easy-Switch et Bluetooth (série MX, série Ergo, etc.)
-- **pas besoin de savoir coder.**
+- **Pas besoin de savoir coder.**
 
 ---
 
@@ -68,7 +86,7 @@ git clone https://github.com/SirHarveyBix/SwiGi.git
 **Étape 5 — Lancer SwiGi**
 
 ```bash
-cd swigi
+cd SwiGi
 python3 swigi.py
 ```
 
@@ -195,15 +213,16 @@ systemctl --user enable --now swigi
 ### ⚙️ Options
 
 ```bash
-python3 swigi.py       # mode normal
-python3 swigi.py -v    # mode verbose (logs détaillés)
+python3 swigi.py                          # mode normal
+python3 swigi.py -v                       # mode verbose (logs détaillés)
+python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rotation auto)
 ```
 
 ---
 
 ### Comment ça marche
 
-1. SwiGi envoie un « ping » régulier au clavier via Bluetooth (~100ms)
+1. SwiGi envoie un « ping » régulier au clavier via Bluetooth (~10ms)
 2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST`
 3. SwiGi la capture et envoie la même commande à la souris
 4. Les deux périphériques basculent sur le même hôte
@@ -228,6 +247,22 @@ Devrait fonctionner avec toute combinaison d'appareils Logitech supportant HID++
 **Press Easy-Switch. Mouse follows. Done.**
 
 SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth — no USB receiver, no Logi Options+, no same-network requirement.
+
+### Features
+
+| Feature                     | Description                                                    |
+| --------------------------- | -------------------------------------------------------------- |
+| 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically           |
+| 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required           |
+| 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop        |
+| ⚡ **Low latency**          | 10ms polling, < 300ms response under normal conditions         |
+| 🖱️ **Mouse in motion**      | Works even while mouse is actively moving (BT drain + retries) |
+| 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |
+| 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                    |
+| 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux)     |
+| 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth              |
+| 🔒 **Non-intrusive**        | macOS non-exclusive mode — coexists with Logi Options+         |
+| 📦 **Zero friction**        | Single Python file, one dependency (hidapi)                    |
 
 ### Requirements
 
@@ -274,6 +309,34 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 python3 swigi.py
 ```
 
+### ⚙️ Options
+
+```bash
+python3 swigi.py                          # normal mode
+python3 swigi.py -v                       # verbose (detailed logs)
+python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation)
+```
+
+### ❓ Troubleshooting
+
+| Problem                       | Fix                                                     |
+| ----------------------------- | ------------------------------------------------------- |
+| "Keyboard not found"          | Make sure keyboard is connected via Bluetooth (not USB) |
+| "Mouse not found"             | Same for mouse                                          |
+| Nothing happens on macOS      | Add Terminal to Input Monitoring (see above)            |
+| `hidapi not found` on macOS   | Run `brew install hidapi`                               |
+| `hidapi not found` on Windows | Check `hidapi.dll` is in the same folder as `swigi.py`  |
+| SwiGi starts but does nothing | Run with `-v` for details: `python3 swigi.py -v`        |
+
+### How it works
+
+1. SwiGi sends a ping to the keyboard over Bluetooth every ~10ms
+2. When you press Easy-Switch, the keyboard sends a `CHANGE_HOST` notification
+3. SwiGi captures it and sends the same command to the mouse
+4. Both devices switch to the same host
+
+Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python file, one dependency (hidapi).
+
 ### Tested
 
 | Device                  | OS              | Connection |
@@ -289,7 +352,7 @@ Should work with any Logitech device combo supporting HID++ 2.0 and CHANGE_HOST.
 
 If SwiGi saves you time / Si SwiGi t'économise du temps :
 
-<a href="https://github.com/sponsors/SirHarveyBix" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
+<a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
 
 ---
 

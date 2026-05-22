@@ -11,6 +11,7 @@
 Quand la souris envoie activement des rapports de mouvement HID, la commande `CHANGE_HOST` était fréquemment perdue. La cause : les rapports de mouvement saturent la file BT (Bluetooth est partiellement half-duplex au niveau L2CAP) et le firmware de la souris traite la commande en retard ou la rate.
 
 **Ce qui ne fonctionne PAS :**
+
 - Bloquer les événements souris OS (`CGEventTap`) — requiert permission Accessibilité, viole P4
 - Retries avec délai (50ms) — le buffer se re-remplit entre chaque tentative
 
@@ -23,12 +24,12 @@ Quand la souris envoie activement des rapports de mouvement HID, la commande `CH
 
 ## 3. Exigences fonctionnelles
 
-| # | Exigence | Priorité |
-|---|----------|----------|
-| F1 | CHANGE_HOST réussit même quand la souris envoie des données de mouvement | MUST |
-| F2 | Latence ajoutée ≤ 5ms (drain non-bloquant) | MUST |
-| F3 | Exception sur 1er write = erreur réelle, propagée | MUST |
-| F4 | Exception sur retry (2e/3e) = switch réussi, ignorée silencieusement | MUST |
+| #   | Exigence                                                                 | Priorité |
+| --- | ------------------------------------------------------------------------ | -------- |
+| F1  | CHANGE_HOST réussit même quand la souris envoie des données de mouvement | MUST     |
+| F2  | Latence ajoutée ≤ 5ms (drain non-bloquant)                               | MUST     |
+| F3  | Exception sur 1er write = erreur réelle, propagée                        | MUST     |
+| F4  | Exception sur retry (2e/3e) = switch réussi, ignorée silencieusement     | MUST     |
 
 ## 4. Implémentation
 
@@ -60,13 +61,13 @@ def send_change_host(transport, devnumber, feat_idx, target_host):
 
 ## 5. Conformité constitution
 
-| Principe | Impact | Mesure |
-|----------|--------|--------|
-| Simplicité | ✅ Neutre | Stdlib pure, 15 lignes |
-| Portabilité | ✅ Positif | hidapi timeout=0 supporté sur les 3 OS |
-| Robustesse | ✅ Positif | Switch fiable même en charge BT élevée |
+| Principe        | Impact     | Mesure                                             |
+| --------------- | ---------- | -------------------------------------------------- |
+| Simplicité      | ✅ Neutre  | Stdlib pure, 15 lignes                             |
+| Portabilité     | ✅ Positif | hidapi timeout=0 supporté sur les 3 OS             |
+| Robustesse      | ✅ Positif | Switch fiable même en charge BT élevée             |
 | Non-intrusivité | ✅ Positif | Pas de CGEventTap, pas de permission Accessibilité |
-| Réactivité | ✅ Positif | Latence ajoutée ~0ms vs 100ms avant |
+| Réactivité      | ✅ Positif | Latence ajoutée ~0ms vs 100ms avant                |
 
 ## 6. Validation
 

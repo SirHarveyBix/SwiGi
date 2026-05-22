@@ -44,6 +44,7 @@ Cette constitution définit les règles non-négociables qui gouvernent l'évolu
 ### Principe 1 — Simplicité
 
 **Règle :** SwiGi DOIT rester un fichier Python unique (`swigi.py`). La seule dépendance externe requise est `hidapi`. Les dépendances optionnelles installées automatiquement par les scripts platform-specific (`install_mac.sh`, `setup_win.bat`) sont autorisées si et seulement si :
+
 - elles sont installées sans action manuelle de l'utilisateur,
 - l'absence de la dépendance déclenche un fallback silencieux (le core reste fonctionnel),
 - elles ne sont jamais importées au top-level sans `try/except ImportError`.

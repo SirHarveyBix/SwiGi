@@ -769,7 +769,7 @@ def main():
     if not _HAS_RUMPS:
         log.info("Ctrl+C pour quitter.")
 
-    state: dict = {"kb": None, "mouse": None, "switches": 0}
+    state: dict = {"kb": kb.name, "mouse": mouse.name, "switches": 0}
     stop_event = threading.Event()
 
     def _on_stop(sig, frame):
