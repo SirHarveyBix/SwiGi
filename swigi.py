@@ -22,6 +22,7 @@ import argparse
 import ctypes
 import ctypes.util
 import dataclasses
+import json
 import logging
 import logging.handlers
 import os
@@ -469,10 +470,32 @@ _PING_REQUEST_ID = (FEATURE_ROOT << 8) | 0x00 | SW_ID
 _PING_MSG = struct.pack("!BB18s", REPORT_LONG, DEVNUMBER_DIRECT,
                         struct.pack("!H", _PING_REQUEST_ID) + b"\x00\x00\x00")
 
+# ── Préférences persistantes ─────────────────────────────────────────────────
+_PREFS_FILE = os.path.expanduser("~/.swigi_prefs.json")
+
+
+def _load_prefs() -> dict:
+    try:
+        with open(_PREFS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"notifications": True}
+
+
+def _save_prefs(prefs: dict) -> None:
+    try:
+        with open(_PREFS_FILE, "w") as f:
+            json.dump(prefs, f)
+    except Exception:
+        pass
+
+
+_prefs = _load_prefs()
+
 
 def _notify(message: str, subtitle: str = "") -> None:
-    """Notification macOS via osascript. No-op sur Windows/Linux."""
-    if _SYSTEM != "Darwin":
+    """Notification macOS via osascript. No-op si désactivé ou hors Darwin."""
+    if _SYSTEM != "Darwin" or not _prefs.get("notifications", True):
         return
     script = f'display notification "{message}" with title "SwiGi"'
     if subtitle:
@@ -497,11 +520,17 @@ if _HAS_RUMPS:
             self._kb_item = _rumps.MenuItem("Clavier : —")
             self._mouse_item = _rumps.MenuItem("Souris : —")
             self._count_item = _rumps.MenuItem("Basculements : 0")
+            self._notify_item = _rumps.MenuItem("Notifications",
+                                                callback=self._toggle_notify)
+            self._notify_item.state = _prefs.get("notifications", True)
             self.menu = [
                 self._kb_item,
                 self._mouse_item,
                 None,
                 self._count_item,
+                None,
+                self._notify_item,
+                _rumps.MenuItem("Masquer l'icône", callback=self._hide_icon),
                 None,
                 _rumps.MenuItem("Quitter", callback=self._quit),
             ]
@@ -515,6 +544,19 @@ if _HAS_RUMPS:
             self._mouse_item.title = f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
             self._count_item.title = f"Basculements : {switches}"
             self.title = "⌨️" if (kb and mouse) else "⌨️⚠"
+
+        def _toggle_notify(self, sender):
+            enabled = not bool(sender.state)
+            _prefs["notifications"] = enabled
+            _save_prefs(_prefs)
+            sender.state = enabled
+
+        def _hide_icon(self, _):
+            _notify("Icône masquée — relance SwiGi pour réafficher")
+            try:
+                self._status_item.setVisible_(False)
+            except Exception:
+                pass
 
         def _quit(self, _):
             self._stop_event.set()
