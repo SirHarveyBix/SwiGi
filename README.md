@@ -8,7 +8,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 <p align="center">
   <i>Ça t'a fait gagner du temps ?</i><br><br>
-  <a href="https://github.com/sponsors/SirHarveyBix" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
+  <a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
 </p>
 
 🇫🇷 **Français** — tu lis ça | 🇬🇧 [English](#-english) — scroll down
