@@ -48,11 +48,11 @@ else
 fi
 
 # ── rumps (icône menu bar) ───────────────────────────────────────────────────
-if python3 -c "import rumps" 2>/dev/null; then
+if "$PYTHON_PATH" -c "import rumps" 2>/dev/null; then
     echo "✅ rumps trouvé"
 else
     echo "📦 Installation de rumps (icône menu bar)..."
-    pip3 install --quiet rumps --break-system-packages 2>/dev/null || pip3 install --quiet rumps
+    "$PYTHON_PATH" -m pip install --quiet rumps --break-system-packages 2>/dev/null || "$PYTHON_PATH" -m pip install --quiet rumps
     echo "✅ rumps installé"
 fi
 

@@ -116,8 +116,20 @@ launchctl unload ~/Library/LaunchAgents/com.swigi.plist
 
 macOS bloque par défaut l'accès aux périphériques d'entrée. Tu dois autoriser SwiGi :
 
+**Si tu as utilisé le script curl (launchd) :**
+
 1. Ouvre **Réglages Système** → **Confidentialité et sécurité** → **Surveillance des entrées**
-2. Clique sur le **+** et ajoute **Terminal** (ou **SwiGi** si tu utilises le build portable)
+2. Clique sur le **+** et ajoute **python3** — son chemin exact est affiché lors de l'installation, ou retrouve-le avec `which python3` dans le Terminal
+3. Relance le service pour qu'il prenne en compte la permission :
+   ```bash
+   launchctl unload ~/Library/LaunchAgents/com.swigi.plist
+   launchctl load ~/Library/LaunchAgents/com.swigi.plist
+   ```
+
+**Si tu lances manuellement depuis Terminal :**
+
+1. Ouvre **Réglages Système** → **Confidentialité et sécurité** → **Surveillance des entrées**
+2. Clique sur le **+** et ajoute **Terminal**
 3. Redémarre SwiGi
 
 > ⚠️ **Après chaque rebuild** (build portable PyInstaller), macOS ne reconnaît plus le binaire. Supprime l'ancien SwiGi dans Surveillance des entrées et rajoute le nouveau.
@@ -205,7 +217,8 @@ systemctl --user enable --now swigi
 | -------------------------------- | ---------------------------------------------------------------- |
 | « Clavier introuvable »          | Vérifie que le clavier est connecté en Bluetooth (pas en USB)    |
 | « Souris introuvable »           | Idem pour la souris                                              |
-| Rien ne se passe sur macOS       | Ajoute Terminal dans Surveillance des entrées (voir ci-dessus)   |
+| Rien ne se passe sur macOS       | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service |
+| L'icône n'apparaît pas           | 1) Vérifie que `python3` est bien dans Surveillance des entrées (pas Terminal) si tu utilises launchd. 2) Relance : `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist`. 3) Vérifie l'install de rumps : `python3 -c "import rumps"` |
 | `hidapi introuvable` sur macOS   | Lance `brew install hidapi`                                      |
 | `hidapi introuvable` sur Windows | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py` |
 | SwiGi se lance mais ne fait rien | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`     |
@@ -306,7 +319,9 @@ This installs hidapi, starts SwiGi, and sets it to launch automatically at login
 4. In Terminal: `python3 swigi.py`
 
 **macOS Permission (required once):**
-System Settings → Privacy & Security → Input Monitoring → add Terminal (or SwiGi)
+
+- **curl install (launchd):** System Settings → Privacy & Security → Input Monitoring → add **python3** (find its path with `which python3`), then restart the service: `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist`
+- **Manual launch from Terminal:** System Settings → Privacy & Security → Input Monitoring → add **Terminal**
 
 > ⚠️ After every PyInstaller rebuild, remove the old SwiGi entry and re-add the new binary.
 
@@ -342,7 +357,8 @@ python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation)
 | ----------------------------- | ------------------------------------------------------- |
 | "Keyboard not found"          | Make sure keyboard is connected via Bluetooth (not USB) |
 | "Mouse not found"             | Same for mouse                                          |
-| Nothing happens on macOS      | Add Terminal to Input Monitoring (see above)            |
+| Nothing happens on macOS      | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service |
+| Menu bar icon missing         | 1) Check `python3` (not Terminal) is in Input Monitoring if using launchd. 2) Restart: `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist`. 3) Verify rumps: `python3 -c "import rumps"` |
 | `hidapi not found` on macOS   | Run `brew install hidapi`                               |
 | `hidapi not found` on Windows | Check `hidapi.dll` is in the same folder as `swigi.py`  |
 | SwiGi starts but does nothing | Run with `-v` for details: `python3 swigi.py -v`        |

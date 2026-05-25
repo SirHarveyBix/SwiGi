@@ -9,14 +9,36 @@ from swigi.constants import (
     MSG_LENGTHS,
     PING_MSG,
 )
+from swigi.constants import SYSTEM
 from swigi.discovery import DeviceInfo, find_device
-from swigi.gui import notify
+from swigi.gui import notify, prefs
 from swigi.protocol import get_current_host, send_change_host
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
 
 _PENDING_HOST_TTL = 60.0  # secondes avant abandon de la correction pending
+
+
+def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
+    """Applique le profil BetterMouse configuré si auto-apply est activé.
+
+    No-op si BetterMouse absent, profil non configuré, ou toggle désactivé.
+    Toujours silencieux en cas d'erreur (ne bloque jamais la boucle principale).
+    """
+    if SYSTEM != "Darwin":
+        return
+    if not prefs.get("bm_auto_apply") or not prefs.get("bm_profile"):
+        return
+    try:
+        from swigi.bettermouse import apply_profile
+        apply_profile(prefs["bm_profile"], mouse_name=mouse_name)
+        notify(f"Profil {prefs['bm_profile']} appliqué", "BetterMouse")
+        log.info("BetterMouse : profil '%s' appliqué", prefs["bm_profile"])
+    except ValueError as e:
+        log.warning("BetterMouse : profil ignoré (souris différente) : %s", e)
+    except Exception as e:
+        log.warning("BetterMouse : apply_profile échoué : %s", e)
 
 
 def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
@@ -99,7 +121,8 @@ def run_daemon(
                 mouse = mouse_new
                 state["mouse"] = mouse.name
                 log.info("Watchdog reconnexion souris : %s", mouse.name)
-                _check_and_apply_pending_host(mouse, state)
+                if not _check_and_apply_pending_host(mouse, state):
+                    _apply_bm_profile_if_needed(mouse.name)
             last_response = time.time()
             continue
 
@@ -148,6 +171,7 @@ def run_daemon(
                 state["mouse"] = mouse.name
                 log.debug("Souris prête : %s", mouse.name)
                 if not _check_and_apply_pending_host(mouse, state):
+                    _apply_bm_profile_if_needed(mouse.name)
                     notify(f"{mouse.name} reconnectée", "Souris")
             else:
                 log.debug("Souris introuvable, nouvelle tentative au prochain événement")
@@ -253,6 +277,7 @@ def run_daemon(
                 state["mouse"] = mouse.name
                 log.info("Souris reconnectée automatiquement : %s", mouse.name)
                 if not _check_and_apply_pending_host(mouse, state):
+                    _apply_bm_profile_if_needed(mouse.name)
                     notify(f"{mouse.name} reconnectée", "Souris")
 
     log.info("Arrêt. Total : %d basculements.", total_switches)
