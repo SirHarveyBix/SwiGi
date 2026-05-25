@@ -24,7 +24,7 @@ BM_PLIST = os.path.expanduser(
 PROFILES_DIR = os.path.expanduser("~/.swigi_profiles")
 
 # Clés de prefs BetterMouse à ne jamais exporter (données sensibles / licence)
-_SENSITIVE_KEYS = {"Paddle-BetterMouse-760932-SD", "Paddle-BetterMouse-760932-SD"}
+_SENSITIVE_KEYS = {"Paddle-BetterMouse-760932-SD"}
 
 
 def is_available() -> bool:
@@ -190,18 +190,18 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
             plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
         log.info("Profil '%s' appliqué", name)
 
-    except Exception as e:
-        log.error("Patch BetterMouse échoué, rollback : %s", e)
-        shutil.copy2(backup, BM_PLIST)
-        raise
-
-    finally:
+        # Restart BetterMouse uniquement si le patch a réussi
         subprocess.run(["killall", "BetterMouse"], check=False, capture_output=True)
         subprocess.Popen(
             ["open", "-a", "BetterMouse"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+    except Exception as e:
+        log.error("Patch BetterMouse échoué, rollback : %s", e)
+        shutil.copy2(backup, BM_PLIST)
+        raise
 
 
 def _patch_appitems(root: dict, scroll: dict) -> None:

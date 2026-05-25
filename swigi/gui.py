@@ -203,7 +203,12 @@ if HAS_RUMPS and _rumps:
         def _hide_icon(self, _):
             notify("Icône masquée — relance SwiGi pour réafficher")
             try:
-                self._status_item.setVisible_(False)
+                # rumps expose NSStatusItem via _status_item depuis rumps >= 0.4
+                item = getattr(self, "_status_item", None)
+                if item is not None:
+                    item.setVisible_(False)
+                else:
+                    self.title = ""
             except Exception:
                 pass
 

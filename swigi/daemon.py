@@ -41,6 +41,21 @@ def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
         log.warning("BetterMouse : apply_profile échoué : %s", e)
 
 
+def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
+    """Met à jour pending_host d'après l'hôte réel du clavier après reconnexion.
+
+    Corrige le cas où un pending_host stale (du switch précédent) enverrait la
+    souris sur le mauvais hôte lors du retour — surtout avec 3 hôtes ou 2 claviers.
+    """
+    kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
+    if kb_host is not None:
+        state["pending_host"] = (kb_host, time.time() + _PENDING_HOST_TTL)
+        log.debug("pending_host recalé sur hôte clavier : %d", kb_host)
+    else:
+        state["pending_host"] = None
+        log.debug("pending_host effacé (hôte clavier illisible)")
+
+
 def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
     """Vérifie que la souris est sur le bon hôte après un switch.
 
@@ -160,6 +175,8 @@ def run_daemon(
             log.info("Reconnexion clavier : %s", kb.name)
             notify(f"{kb.name} reconnecté", "Clavier")
             last_response = time.time()
+
+            _resync_pending_host_from_keyboard(kb, state)
 
             if mouse.transport.is_open:
                 mouse.close()
