@@ -420,6 +420,17 @@ def _mice_probe_loop(
             if not _check_and_apply_pending_host(new_m, state):
                 _apply_bm_profile_if_needed(new_m.name)
 
+        # Pass 2b : vérifier pending_host sur les souris existantes (pas seulement nouvelles).
+        # Corrige le cas où get_current_host retourne None au premier essai (BT timing)
+        # ou quand pending_host est recalé par _resync_pending_host_from_keyboard après
+        # que la souris est déjà dans mice_list.
+        if state.get("pending_host") and not new_mice:
+            with mouse_lock:
+                existing_open = [m for m in mice if m.transport.is_open]
+            for m in existing_open:
+                if _check_and_apply_pending_host(m, state):
+                    break  # transport fermé, sera redécouvert au prochain cycle
+
         # Pass 3 : mise à jour state sous mouse_lock
         with mouse_lock:
             active = [m for m in mice if m.transport.is_open]

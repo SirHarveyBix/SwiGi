@@ -742,6 +742,74 @@ class TestMiceProbeLoop(unittest.TestCase):
         # pending_host effacé car sync OK
         self.assertIsNone(state["pending_host"])
 
+    def test_existing_mouse_rechecked_when_pending_host_active(self):
+        """Souris déjà dans mice_list + pending_host actif → pass 2b corrige la désync."""
+        mouse = _make_mouse(name="MX Master 4")
+        mouse.pid = 0xB042
+
+        mice_list = [mouse]  # déjà dans la liste (pas "new")
+        state = {"pending_host": (1, time.time() + 60), "mouse": "MX Master 4", "mice": ["MX Master 4"]}
+        lock = self._make_lock()
+
+        sent = []
+
+        def fake_send(transport, devnum, feat_idx, target_host):
+            sent.append(target_host)
+
+        # Souris sur hôte 0, pending dit hôte 1 → correction attendue
+        with patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.send_change_host", side_effect=fake_send):
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(2.0)
+            stop.set()
+            t.join(timeout=2)
+
+        self.assertIn(1, sent, "Correction pending_host non envoyée pour souris existante (pass 2b)")
+
+    def test_existing_mouse_not_rechecked_when_new_mice_found(self):
+        """Si des nouvelles souris sont trouvées, pass 2b est skippé (pass 2 suffit)."""
+        existing_m = _make_mouse(name="MX Vertical")
+        existing_m.pid = 0xB021
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.pid = 0xB042
+
+        mice_list = [existing_m]
+        state = {"pending_host": (1, time.time() + 60), "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = self._make_lock()
+
+        # new_m est sync (hôte 1) → pending cleared by pass 2
+        # existing_m ne devrait PAS recevoir de correction (pass 2b skippé)
+        with patch("swigi.daemon.find_all_devices", return_value=[existing_m, new_m]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=1), \
+             patch("swigi.daemon.send_change_host") as mock_send:
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(1.0)
+            stop.set()
+            t.join(timeout=2)
+
+        # Pas de correction envoyée (sync OK pour la new_m)
+        mock_send.assert_not_called()
+        self.assertIsNone(state["pending_host"])
+
 
 # ── Fix #1 : compare-and-swap pending_host post-I/O ──────────────────────────
 

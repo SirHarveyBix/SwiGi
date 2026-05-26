@@ -31,7 +31,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | 🔁 **Démarrage automatique**   | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
 | 📄 **Log rotation**            | `--log-file` : max 4 Mo au total, aucune croissance infinie           |
 | 🔒 **Non-intrusif**            | Mode non-exclusif macOS — coexiste avec Logi Options+                 |
-| 📦 **Zéro friction**           | Un fichier Python, une dépendance (hidapi)                            |
+| 📦 **Zéro friction**           | Un package Python, une dépendance (hidapi)                            |
 
 ---
 
@@ -285,7 +285,7 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 3. SwiGi la capture et envoie la même commande à la souris
 4. Les deux périphériques basculent sur le même hôte
 
-Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un seul fichier Python, aucune dépendance sauf hidapi.
+Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un package Python modulaire, aucune dépendance sauf hidapi.
 
 ---
 
@@ -336,11 +336,12 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 | ⚡ **Low latency**          | 10ms polling, < 300ms response under normal conditions         |
 | 🖱️ **Mouse in motion**      | Works even while mouse is actively moving (BT drain + retries) |
 | 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |
+| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following          |
 | 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                    |
 | 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux)     |
 | 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth              |
 | 🔒 **Non-intrusive**        | macOS non-exclusive mode — coexists with Logi Options+         |
-| 📦 **Zero friction**        | Single Python file, one dependency (hidapi)                    |
+| 📦 **Zero friction**        | Single Python package, one dependency (hidapi)                 |
 
 ### Requirements
 
@@ -462,7 +463,7 @@ bash install_mac.sh
 3. SwiGi captures it and sends the same command to the mouse
 4. Both devices switch to the same host
 
-Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python file, one dependency (hidapi).
+Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python package, one dependency (hidapi).
 
 ### ⚡ Performance
 

@@ -1,8 +1,8 @@
 # Spec : Fiabilité et synchronisation post-switch
 
-**Version :** 1.1.0
-**Date :** 2026-05-22
-**Statut :** Implémenté (Simplifié)
+**Version :** 1.2.0
+**Date :** 2026-05-26
+**Statut :** Implémenté (Simplifié + Pass 2b)
 
 ---
 
@@ -21,6 +21,7 @@ Pour éviter tout blocage du thread principal du démon (ce qui dégraderait la 
 1. **Double Drain et Rafale (Burst) :** La fonction `send_change_host` vide les buffers d'entrée HID deux fois avant d'émettre, puis envoie la commande `CHANGE_HOST` **5 fois de suite sans délai** au périphérique. Cette redondance au niveau de la couche transport élimine pratiquement tout risque de perte de paquet.
 2. **Fermeture Proactive du Transport :** Dès que le burst d'envoi a réussi sans exception initiale, SwiGi considère la bascule comme initiée. Il appelle immédiatement `mouse.close()` pour fermer proprement le descripteur de fichier USB/Bluetooth et réinitialise l'état local en mettant `state["mouse"] = None`.
 3. **Reconnexion Proactive :** Le démon libère instantanément son thread pour surveiller la déconnexion inévitable du clavier. Lorsque l'utilisateur bascule de nouveau sur cette machine, le démon redécouvrira les deux appareils proprement.
+4. **Vérification périodique (Pass 2b) :** Le probe loop vérifie aussi les souris EXISTANTES (pas seulement les nouvelles) contre `pending_host`. Corrige le cas où `get_current_host` échoue au premier essai (timing BT) ou quand `pending_host` est recalé par `_resync_pending_host_from_keyboard` alors que la souris est déjà connue.
 
 ---
 
@@ -43,6 +44,7 @@ Par conséquent, **le Filet 2 a été complètement retiré du code**.
 | F2  | Après envoi réussi de la bascule, fermer immédiatement le transport de la souris sans lag | MUST     |
 | F3  | Réinitialiser `state["mouse"] = None` pour permettre une détection propre au retour       | MUST     |
 | F4  | Pas de blocage du thread principal par des pings d'attente actifs                         | MUST     |
+| F5  | Souris existantes revérifiées contre pending_host dans le probe loop (pass 2b)            | MUST     |
 
 ---
 

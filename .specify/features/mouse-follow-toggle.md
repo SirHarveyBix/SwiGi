@@ -54,6 +54,7 @@ L'utilisateur souhaite pouvoir désactiver le suivi automatique de la souris lor
 | `run_daemon` (event loop)           | Ne pas appeler `_send_to_all_mice`                |
 | `_check_and_apply_pending_host`     | Effacer `pending_host`, retourner False           |
 | `_resync_pending_host_from_keyboard`| Effacer `pending_host`, ne pas lire l'hôte clavier|
+| `_mice_probe_loop` (pass 2b)       | Ne pas vérifier les souris existantes si `mouse_follow=False` (via `_check_and_apply_pending_host`) |
 
 ---
 
@@ -76,3 +77,5 @@ L'utilisateur souhaite pouvoir désactiver le suivi automatique de la souris lor
 - [x] `mouse_follow=False` → `_resync_pending_host_from_keyboard` efface pending
 - [x] `mouse_follow=True` → comportement normal (CHANGE_HOST envoyé)
 - [x] Valeur par défaut = True (rétro-compatible)
+- [x] Souris existante dans mice_list revérifiée via pass 2b quand pending_host actif
+- [x] Pass 2b skippé si nouvelles souris trouvées (pass 2 suffit)
