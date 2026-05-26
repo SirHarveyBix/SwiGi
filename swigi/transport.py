@@ -38,6 +38,8 @@ class HIDTransport:
         bytes_written = lib.hid_write(self._device, buffer, len(message))
         if bytes_written < 0:
             raise TransportError(f"hid_write échoué : {hid_err(self._device)}")
+        if bytes_written != len(message):
+            raise TransportError(f"hid_write partiel : {bytes_written}/{len(message)} octets écrits")
 
     def close(self):
         if self._device is not None:

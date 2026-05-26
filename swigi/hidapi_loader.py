@@ -94,7 +94,8 @@ _lib = _load_hidapi()
 # Initialiser hidapi
 _lib.hid_init.restype = ctypes.c_int
 _lib.hid_init.argtypes = []
-_lib.hid_init()
+if _lib.hid_init() != 0:
+    raise RuntimeError("hidapi : hid_init() a échoué — permissions insuffisantes ou hidapi corrompu")
 
 # macOS : non-exclusif (coexiste avec Logi Options+)
 if SYSTEM == "Darwin":

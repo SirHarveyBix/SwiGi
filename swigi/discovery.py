@@ -50,7 +50,6 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
     0=clavier, 3=souris, 4=trackpad, 5=trackball.
     Contrairement à find_device, ne s'arrête pas au premier résultat.
     """
-    from swigi.constants import DEVICE_NUMBER_DIRECT
     enumeration_head = lib.hid_enumerate(LOGITECH_VID, 0)
     candidates = []
     enumeration_node = enumeration_head

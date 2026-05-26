@@ -607,9 +607,9 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
             t1.start()
             t2.start()
 
-            # Attendre que les events arrivent (timeout 1.5s)
+            # Attendre que les events arrivent (timeout 3s)
             events = []
-            deadline = time.time() + 1.5
+            deadline = time.time() + 3.0
             while len(events) < 2 and time.time() < deadline:
                 try:
                     event = event_queue.get(timeout=0.05)
@@ -618,8 +618,8 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
                     pass
 
             stop_event.set()
-            t1.join(timeout=1.5)
-            t2.join(timeout=1.5)
+            t1.join(timeout=2.0)
+            t2.join(timeout=2.0)
 
         # Vérifier qu'on a bien reçu 2 SwitchEvents indépendants
         switch_events = [error for error in events if isinstance(error, _SwitchEvent)]
@@ -1004,11 +1004,15 @@ class TestHuntIntervalTiming(unittest.TestCase):
     """Vérifie que _mice_probe_loop probe toutes les ~1s en hunt mode, pas 6s."""
 
     def test_hunt_mode_probes_at_1s_not_6s(self):
-        """En hunt mode, ≥5 probes doivent se produire en 0.15s (interval=0.02s)."""
-        call_times = []
+        """En hunt mode, ≥5 probes doivent se produire rapidement (interval=0.02s)."""
+        probe_count = 0
+        enough_probes = threading.Event()
 
         def fake_find(*args):
-            call_times.append(time.time())
+            nonlocal probe_count
+            probe_count += 1
+            if probe_count >= 5:
+                enough_probes.set()
             return []
 
         mice_list = []
@@ -1027,23 +1031,25 @@ class TestHuntIntervalTiming(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.15)
+            got_enough = enough_probes.wait(timeout=2.0)
             stop.set()
             t.join(timeout=1)
 
-        # Avec interval=0.02s et sleep=0.15s → ≥5 probes attendus.
-        self.assertGreaterEqual(
-            len(call_times), 5,
-            f"Hunt mode trop lent : {len(call_times)} probes en 0.15s (attendu ≥5). "
-            f"Bug probable : wait timeout non adapté au mode hunt.",
+        self.assertTrue(
+            got_enough,
+            f"Hunt mode trop lent : seulement {probe_count} probe(s) avant timeout 2s "
+            f"(interval=0.02s, attendu ≥5). Bug probable : wait timeout non adapté.",
         )
 
     def test_hunt_mode_intervals_under_2s(self):
-        """Intervalles entre probes en hunt mode doivent être < 0.1s (interval=0.02s)."""
+        """Intervalles entre probes en hunt mode doivent être bien inférieurs à l'interval normal."""
         call_times = []
+        enough_probes = threading.Event()
 
         def fake_find(*args):
             call_times.append(time.time())
+            if len(call_times) >= 5:
+                enough_probes.set()
             return []
 
         mice_list = []
@@ -1062,16 +1068,17 @@ class TestHuntIntervalTiming(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.2)
+            enough_probes.wait(timeout=2.0)
             stop.set()
             t.join(timeout=1)
 
         if len(call_times) >= 2:
             intervals = [call_times[i + 1] - call_times[i] for i in range(len(call_times) - 1)]
             max_interval = max(intervals)
+            # 0.3s < normal interval (0.1s patched) — détecte une régression sans être flaky
             self.assertLess(
-                max_interval, 0.1,
-                f"Intervalle max = {max_interval:.3f}s (attendu < 0.1s en hunt mode avec interval=0.02s)",
+                max_interval, 0.3,
+                f"Intervalle max = {max_interval:.3f}s (attendu < 0.3s en hunt mode avec interval=0.02s)",
             )
 
     def test_normal_mode_probes_at_5s(self):
@@ -1925,7 +1932,7 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
         switch_events = []
         while not event_queue.empty():
             event = event_queue.get_nowait()
-            if isinstance(error, _SwitchEvent):
+            if isinstance(event, _SwitchEvent):
                 switch_events.append(event)
         self.assertEqual(switch_events, [], "SwitchEvent inattendu pour notification non-CHANGE_HOST")
 

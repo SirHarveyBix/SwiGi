@@ -107,7 +107,7 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
             keyboard_host = get_current_host(keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index)
         except (TransportError, OSError) as error:
             log.debug("resync essai %d/%d : TransportError : %s", attempt + 1, _RESYNC_RETRIES, error)
-            break
+            continue
         log.debug("resync essai %d/%d : keyboard_host=%s", attempt + 1, _RESYNC_RETRIES, keyboard_host)
         if keyboard_host is not None:
             break
@@ -547,11 +547,12 @@ def _update_keyboard_state(state: dict) -> None:
     state_lock = state.get("_state_lock") or nullcontext()
     with state_lock:
         keyboards = dict(state.get("keyboards", {}))
-    for product_id_data in keyboards.values():
-        if product_id_data.get("ok"):
-            state["keyboard"] = product_id_data["name"]
-            return
-    state["keyboard"] = None
+        new_keyboard = None
+        for product_id_data in keyboards.values():
+            if product_id_data.get("ok"):
+                new_keyboard = product_id_data["name"]
+                break
+        state["keyboard"] = new_keyboard
 
 
 # ── Point d'entrée principal ──────────────────────────────────────────────────
