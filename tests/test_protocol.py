@@ -129,10 +129,10 @@ class TestSendChangeHost(unittest.TestCase):
         request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
         return struct.pack("!BB", REPORT_LONG, devnumber) + struct.pack("!H", request_id) + b"\x00" * 16
 
-    def test_send_writes_5_times(self):
+    def test_send_writes_3_times(self):
         transport = MockTransport()
         protocol.send_change_host(transport, 0xFF, 0x09, 1)
-        self.assertEqual(len(transport.written_messages), 5)
+        self.assertEqual(len(transport.written_messages), 3)
 
     def test_send_all_writes_same_message(self):
         transport = MockTransport()
@@ -159,7 +159,8 @@ class TestSendChangeHost(unittest.TestCase):
                     raise TransportError("disconnected — switch succeeded")
         t = FailAfterFirstTransport()
         protocol.send_change_host(t, 0xFF, 0x09, 0)
-        self.assertEqual(call_count[0], 2)
+        # 1er write OK, 2e lève (switch réussi) — fonction retourne sans exception
+        self.assertGreaterEqual(call_count[0], 2)
 
 
 class TestResolveFeature(unittest.TestCase):

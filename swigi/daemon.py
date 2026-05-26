@@ -64,29 +64,41 @@ def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
         log.warning("BetterMouse : apply_profile échoué : %s", e)
 
 
+_RESYNC_RETRIES = 3
+_RESYNC_RETRY_DELAY = 0.15  # secondes — laisse le stack BT se stabiliser après reconnexion
+
+
 def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
     """Met à jour pending_host d'après l'hôte réel du clavier après reconnexion.
 
     Corrige le cas où un pending_host stale (du switch précédent) enverrait la
     souris sur le mauvais hôte lors du retour — surtout avec 3 hôtes ou 2 claviers.
     """
-    # Ne pas recaler pending_host si suivi souris désactivé
     with _prefs_lock:
         mouse_follow = prefs.get("mouse_follow", True)
     if not mouse_follow:
         state["pending_host"] = None
         return
 
-    try:
-        kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
-    except (TransportError, OSError):
-        kb_host = None
+    # Le stack BT macOS peut prendre 150–300ms après reconnexion avant que
+    # getHostInfo réponde correctement — retry avec backoff linéaire.
+    kb_host = None
+    for attempt in range(_RESYNC_RETRIES):
+        if attempt > 0:
+            time.sleep(_RESYNC_RETRY_DELAY)
+        try:
+            kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
+        except (TransportError, OSError):
+            break
+        if kb_host is not None:
+            break
+
     if kb_host is not None:
         state["pending_host"] = (kb_host, time.time() + _PENDING_HOST_TTL)
         log.debug("pending_host recalé sur hôte clavier : %d", kb_host)
     else:
         state["pending_host"] = None
-        log.debug("pending_host effacé (hôte clavier illisible)")
+        log.warning("pending_host effacé — hôte clavier illisible après %d essais", _RESYNC_RETRIES)
 
 
 def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
