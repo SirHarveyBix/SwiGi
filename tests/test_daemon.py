@@ -2,7 +2,7 @@ import sys
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 # Mock hidapi_loader + gui AVANT tout import swigi (effets de bord)
 _mock_loader = MagicMock()
@@ -404,7 +404,7 @@ class TestFindKbByPid(unittest.TestCase):
         kb2.pid = 0xB361
 
         with patch("swigi.daemon.find_all_devices", return_value=[kb1, kb2]):
-            result = _find_kb_by_pid(0xB35B)
+            _find_kb_by_pid(0xB35B)
 
         # kb2 ne correspond pas, doit être fermé
         kb2.close.assert_called_once()
@@ -540,7 +540,6 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
         }
 
         # Simuler un événement CHANGE_HOST : construire un message HID++ long
-        import struct
         from swigi.constants import REPORT_LONG, MSG_LONG_LEN
 
         def _make_switch_msg(change_host_idx, target_host):
@@ -827,7 +826,6 @@ class TestWatchKeyboardNotificationParsing(unittest.TestCase):
         kb = _make_kb(change_host_idx=5, name="MX Keys S")
         kb.pid = 0xB35B
         state = {"kbs": {kb.pid: {"name": kb.name, "ok": True}}, "pending_host": None}
-        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
 
         # Retourner le message une fois, puis None indéfiniment (évite StopIteration dans thread)
         _reads = iter([switch_msg])
@@ -1680,7 +1678,6 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
     def test_ping_fail_reconnect_backoff_multiple_attempts(self):
         """Reconnect après 2 échecs (backoff) → finalement reconnecté, hunt levé."""
         import queue as q_module
-        from swigi.daemon import _KbReconnected
 
         event_q = q_module.Queue()
         stop = threading.Event()

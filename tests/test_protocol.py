@@ -11,8 +11,8 @@ _mock_loader.hid_err = MagicMock(return_value="mock error")
 _mock_loader.DeviceInfoStruct = MagicMock()
 sys.modules.setdefault("swigi.hidapi_loader", _mock_loader)
 
-from swigi import protocol
-from swigi.constants import REPORT_LONG, SW_ID
+from swigi import protocol  # noqa: E402
+from swigi.constants import REPORT_LONG, SW_ID  # noqa: E402
 
 
 class MockTransport:

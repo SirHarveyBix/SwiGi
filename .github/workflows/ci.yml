@@ -33,6 +33,7 @@ jobs:
             --tb=short \
             -v \
             --cov=swigi \
+            --cov-config=.coveragerc \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \

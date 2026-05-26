@@ -6,7 +6,6 @@ import time
 
 from swigi.constants import (
     CHANGE_HOST_FN_SET,
-    DEVNUMBER_DIRECT,
     FEATURE_ROOT,
     MSG_LENGTHS,
     REPORT_LONG,

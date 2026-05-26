@@ -326,7 +326,6 @@ class TestApplyProfile(unittest.TestCase):
 
     def test_apply_rollback_on_patch_error(self):
         """Plist corrompu → rollback vers backup."""
-        import shutil
         with open(self.plist_path, "rb") as fh:
             original_data = fh.read()
 

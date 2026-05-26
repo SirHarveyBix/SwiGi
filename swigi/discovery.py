@@ -12,7 +12,7 @@ from swigi.constants import (
     FEATURE_DEVICE_TYPE_AND_NAME,
     LOGITECH_VID,
 )
-from swigi.hidapi_loader import DeviceInfoStruct, lib
+from swigi.hidapi_loader import lib
 from swigi.protocol import get_device_name, get_device_type, resolve_feature
 from swigi.transport import HIDTransport, TransportError
 

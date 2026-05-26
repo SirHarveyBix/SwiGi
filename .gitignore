@@ -10,5 +10,11 @@ python-3/
 lib/
 *.egg-info/
 
+# Couverture de tests
+htmlcov/
+coverage.xml
+.coverage
+.coverage.*
+
 .claude
 .antigravitycli

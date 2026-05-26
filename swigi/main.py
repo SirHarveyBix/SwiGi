@@ -124,7 +124,7 @@ def _main_inner(args) -> int:
     state: dict = {
         "kb": keyboards[0].name,
         "kbs": {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards},
-        "mouse": mice[0].name,
+        "mouse": mice[0].name if mice else None,
         "mice": [m.name for m in mice],
         "switches": 0,
         "pending_host": None,
