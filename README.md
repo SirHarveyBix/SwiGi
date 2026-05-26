@@ -26,6 +26,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | ⚡ **Faible latence**          | Polling 10ms, réponse < 300ms dans des conditions normales            |
 | 🖱️ **Souris en mouvement**     | Fonctionne même quand la souris bouge activement (drain BT + retries) |
 | 🍎 **Icône menu bar macOS**    | Statut clavier/souris visible en permanence, compteur de basculements |
+| ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris   |
 | 🔔 **Notifications système**   | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
 | 🔁 **Démarrage automatique**   | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
 | 📄 **Log rotation**            | `--log-file` : max 4 Mo au total, aucune croissance infinie           |

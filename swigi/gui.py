@@ -104,11 +104,11 @@ if HAS_RUMPS and _rumps:
             from swigi.bettermouse import is_available
             if is_available():
                 self._bm_auto_item = _rumps.MenuItem(
-                    "Auto-appliquer profil au connect",
+                    "Appliquer profil BetterMouse auto",
                     callback=self._bm_toggle_auto,
                 )
                 self._bm_auto_item.state = bool(prefs.get("bm_auto_apply", False))
-                self._bm_profile_menu = _rumps.MenuItem("Profil au connect")
+                self._bm_profile_menu = _rumps.MenuItem("Profil BetterMouse à appliquer")
                 self._rebuild_profile_menu()
                 menu_items += [
                     None,
@@ -184,7 +184,7 @@ if HAS_RUMPS and _rumps:
         # ── BetterMouse — sélection profil ────────────────────────────────
 
         def _rebuild_profile_menu(self):
-            """Reconstruit le sous-menu 'Profil au connect' depuis PROFILES_DIR."""
+            """Reconstruit le sous-menu 'Profil BetterMouse à appliquer' depuis PROFILES_DIR."""
             if self._bm_profile_menu is None:
                 return
             from swigi.bettermouse import list_profiles
