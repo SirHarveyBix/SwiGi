@@ -88,8 +88,10 @@ def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
             time.sleep(_RESYNC_RETRY_DELAY)
         try:
             kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
-        except (TransportError, OSError):
+        except (TransportError, OSError) as e:
+            log.debug("resync essai %d/%d : TransportError : %s", attempt + 1, _RESYNC_RETRIES, e)
             break
+        log.debug("resync essai %d/%d : kb_host=%s", attempt + 1, _RESYNC_RETRIES, kb_host)
         if kb_host is not None:
             break
 
@@ -133,6 +135,7 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         mouse.close()
         state["mouse"] = None
         return True
+    log.debug("pending_host check : %s current=%s target=%d", mouse.name, current, target_host)
     if current is None:
         log.debug("pending_host : lecture hôte souris impossible, prochaine tentative au reconnect")
         return False
@@ -197,6 +200,8 @@ def _send_to_all_mice(
     Met à jour state["pending_host"] et state["mice"].
     """
     with mouse_lock:
+        log.debug("_send_to_all_mice : mice_list=%s target=%d",
+                  [f"{m.name}(open={m.transport.is_open})" for m in mice], target_host)
         for mouse in list(mice):
             if not mouse.transport.is_open:
                 log.debug("[%s] Transport fermé — skip", mouse.name)
@@ -411,6 +416,11 @@ def _mice_probe_loop(
         # Probe les souris disponibles
         found = find_all_devices(DEVICE_TYPE_MOUSE)
         found_by_pid = {m.pid: m for m in found}
+        log.debug("probe: found=%s mice_list=%s pending=%s hunt=%s",
+                  [f"0x{m.pid:04X}" for m in found],
+                  [f"{m.name}(open={m.transport.is_open})" for m in mice],
+                  state.get("pending_host"),
+                  in_hunt)
 
         # Pass 1 : mises à jour liste (rapide, no I/O) + collecte nouvelles souris
         new_mice = []

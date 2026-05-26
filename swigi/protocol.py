@@ -117,13 +117,13 @@ def get_device_name(transport: HIDTransport, devnumber: int, feat_idx: int) -> s
 def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
     """Vide le buffer d'entrée HID avant d'écrire une commande.
 
-    timeout=5ms : sur macOS Sonoma/Sequoia + BT 5.3 (M3 Pro), l'IOHID stack
-    peut avoir une latence de 3–5ms par paquet. 1ms était insuffisant et
-    laissait des paquets in-flight corrompre le prochain échange HID++.
+    timeout=1 (1ms) plutôt que 0 : sur macOS Sonoma/Sequoia + BT 5.3 (M3),
+    hid_read_timeout(..., 0) peut ignorer des paquets déjà en file kernel.
+    1ms suffit pour que le BT stack rende les paquets disponibles.
     """
     for _ in range(max_reads):
         try:
-            if transport.read(timeout=5) is None:
+            if transport.read(timeout=1) is None:
                 break
         except (TransportError, OSError):
             break
@@ -132,33 +132,29 @@ def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
 def send_change_host(transport: HIDTransport, devnumber: int, feat_idx: int, target_host: int) -> None:
     """Bascule le périphérique vers target_host (base 0).
 
-    Double drain (avant + après 5ms d'attente) pour absorber les paquets
+    Double drain (avant + après 1ms d'attente) pour absorber les paquets
     in-flight sur les chips BT 5.3 haute fréquence (M3 Pro).
-    Envoie la commande 3× avec 10ms inter-write : un burst de 5× sans délai
-    pouvait être coalesé par le firmware Logitech et traité comme 1 seul paquet
-    (ou ignoré si le TX buffer saturer le slot BT), surtout sur BT 5.3.
+    Envoie la commande 5× back-to-back sans délai.
     Exception sur 1er essai = erreur réelle (propagée).
     Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
     """
     _drain_transport(transport)
-    time.sleep(0.005)  # laisse arriver les paquets BT in-flight (5ms > latence M3 Pro)
+    time.sleep(0.001)  # laisse arriver les paquets BT in-flight
     _drain_transport(transport)
 
     request_id = (feat_idx << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     params = struct.pack("B", target_host)
     msg = _build_msg(devnumber, request_id, params)
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             transport.write(msg)
         except (TransportError, OSError):
             if attempt == 0:
                 raise  # 1er essai échoué = transport mort avant envoi
             return  # retry échoué = switch réussi, périphérique déconnecté
-        if attempt < 2:
-            time.sleep(0.010)  # 10ms entre envois — laisse le firmware digérer
     # Flush OS TX buffer : lecture courte force le BT stack à expédier les writes en attente
     try:
-        transport.read(timeout=20)
+        transport.read(timeout=10)
     except (TransportError, OSError):
         pass  # souris déconnectée = commande reçue, comportement attendu
 
