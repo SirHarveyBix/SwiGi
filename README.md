@@ -17,21 +17,21 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 ## ✨ Fonctionnalités
 
-| Fonctionnalité                 | Description                                                           |
-| ------------------------------ | --------------------------------------------------------------------- |
-| 🔀 **Sync Easy-Switch**        | Appuie une fois sur le clavier → la souris suit automatiquement       |
-| 🔵 **Bluetooth natif**         | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
-| 🔄 **Reconnexion automatique** | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
-| 🔗 **Sync garantie**           | Détecte et corrige automatiquement les désynchronisations (filets ×2) |
-| ⚡ **Faible latence**          | Polling 10ms, réponse < 300ms dans des conditions normales            |
-| 🖱️ **Souris en mouvement**     | Fonctionne même quand la souris bouge activement (drain BT + retries) |
-| 🍎 **Icône menu bar macOS**    | Statut clavier/souris visible en permanence, compteur de basculements |
+| Fonctionnalité                   | Description                                                           |
+| -------------------------------- | --------------------------------------------------------------------- |
+| 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement       |
+| 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
+| 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
+| 🔗 **Sync garantie**             | Détecte et corrige automatiquement les désynchronisations (filets ×2) |
+| ⚡ **Faible latence**            | Polling 10ms, réponse < 300ms dans des conditions normales            |
+| 🖱️ **Souris en mouvement**       | Fonctionne même quand la souris bouge activement (drain BT + retries) |
+| 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements |
 | ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris   |
-| 🔔 **Notifications système**   | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
-| 🔁 **Démarrage automatique**   | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
-| 📄 **Log rotation**            | `--log-file` : max 4 Mo au total, aucune croissance infinie           |
-| 🔒 **Non-intrusif**            | Mode non-exclusif macOS — coexiste avec Logi Options+                 |
-| 📦 **Zéro friction**           | Un package Python, une dépendance (hidapi)                            |
+| 🔔 **Notifications système**     | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
+| 🔁 **Démarrage automatique**     | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
+| 📄 **Log rotation**              | `--log-file` : max 4 Mo au total, aucune croissance infinie           |
+| 🔒 **Non-intrusif**              | Mode non-exclusif macOS — coexiste avec Logi Options+                 |
+| 📦 **Zéro friction**             | Un package Python, une dépendance (hidapi)                            |
 
 ---
 
@@ -336,7 +336,7 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 | ⚡ **Low latency**          | 10ms polling, < 300ms response under normal conditions         |
 | 🖱️ **Mouse in motion**      | Works even while mouse is actively moving (BT drain + retries) |
 | 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |
-| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following          |
+| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following         |
 | 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                    |
 | 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux)     |
 | 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth              |

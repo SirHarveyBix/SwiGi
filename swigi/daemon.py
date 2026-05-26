@@ -77,7 +77,10 @@ def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
         state["pending_host"] = None
         return
 
-    kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
+    try:
+        kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
+    except (TransportError, OSError):
+        kb_host = None
     if kb_host is not None:
         state["pending_host"] = (kb_host, time.time() + _PENDING_HOST_TTL)
         log.debug("pending_host recalé sur hôte clavier : %d", kb_host)
@@ -111,7 +114,13 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         state["pending_host"] = None
         return False
 
-    current = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
+    try:
+        current = get_current_host(mouse.transport, DEVNUMBER_DIRECT, mouse.change_host_idx)
+    except (TransportError, OSError) as e:
+        log.debug("pending_host : transport souris mort pendant lecture hôte : %s", e)
+        mouse.close()
+        state["mouse"] = None
+        return True
     if current is None:
         log.debug("pending_host : lecture hôte souris impossible, prochaine tentative au reconnect")
         return False
@@ -246,7 +255,6 @@ def _watch_keyboard(
 
             if kb_new:
                 kb = kb_new
-                kb.name = kb.name  # nom potentiellement mis à jour
                 prefix = f"[{kb.name}]"
                 _lock = state.get("_state_lock") or nullcontext()
                 with _lock:

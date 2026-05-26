@@ -11,6 +11,7 @@
 L'utilisateur souhaite pouvoir désactiver le suivi automatique de la souris lorsque le clavier bascule via Easy-Switch. Cela permet d'utiliser le clavier sur un Mac différent de celui de la souris si besoin.
 
 **Comportement clé :**
+
 - Seul le switch du **clavier** peut déclencher le suivi de la souris (jamais l'inverse)
 - Le switch de la souris via Easy-Switch ne déclenche PAS le switch du clavier
 - Le suivi peut être activé/désactivé via une checkbox dans le menu bar
@@ -38,7 +39,7 @@ L'utilisateur souhaite pouvoir désactiver le suivi automatique de la souris lor
 | #   | Exigence                                                                       | Priorité |
 | --- | ------------------------------------------------------------------------------ | -------- |
 | F1  | Checkbox visible dans le menu bar entre le compteur et les notifications       | MUST     |
-| F2  | Cochée par défaut (suivi actif = comportement historique)                       | MUST     |
+| F2  | Cochée par défaut (suivi actif = comportement historique)                      | MUST     |
 | F3  | Décochée → `CHANGE_HOST` n'est PAS envoyé à la souris lors d'un switch clavier | MUST     |
 | F4  | Décochée → `pending_host` est effacé (pas de correction différée)              | MUST     |
 | F5  | Changement en temps réel (pas besoin de relancer SwiGi)                        | MUST     |
@@ -49,12 +50,12 @@ L'utilisateur souhaite pouvoir désactiver le suivi automatique de la souris lor
 
 ## 4. Points de garde dans le code
 
-| Fonction                            | Comportement si `mouse_follow = False`            |
-| ----------------------------------- | ------------------------------------------------- |
-| `run_daemon` (event loop)           | Ne pas appeler `_send_to_all_mice`                |
-| `_check_and_apply_pending_host`     | Effacer `pending_host`, retourner False           |
-| `_resync_pending_host_from_keyboard`| Effacer `pending_host`, ne pas lire l'hôte clavier|
-| `_mice_probe_loop` (pass 2b)       | Ne pas vérifier les souris existantes si `mouse_follow=False` (via `_check_and_apply_pending_host`) |
+| Fonction                             | Comportement si `mouse_follow = False`                                                              |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `run_daemon` (event loop)            | Ne pas appeler `_send_to_all_mice`                                                                  |
+| `_check_and_apply_pending_host`      | Effacer `pending_host`, retourner False                                                             |
+| `_resync_pending_host_from_keyboard` | Effacer `pending_host`, ne pas lire l'hôte clavier                                                  |
+| `_mice_probe_loop` (pass 2b)         | Ne pas vérifier les souris existantes si `mouse_follow=False` (via `_check_and_apply_pending_host`) |
 
 ---
 
