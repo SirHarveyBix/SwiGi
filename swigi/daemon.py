@@ -22,6 +22,14 @@ log = logging.getLogger("swigi.daemon")
 
 _PENDING_HOST_TTL = 60.0  # secondes avant abandon de la correction pending
 
+# Délai de stabilité après reconnexion clavier (rejet des connexions fantômes BT).
+# Un clavier en transit vers un autre Mac peut être brièvement connectable depuis ce Mac.
+# Patchable à 0.0 dans les tests.
+_KB_STABILITY_SECS = 2.0
+
+# Fenêtre fantôme : disconnect < cette durée après reconnexion (sans switch) → pending_host effacé.
+_KB_PHANTOM_WINDOW = 5.0
+
 
 # ── Structures d'événements inter-threads ─────────────────────────────────────
 
@@ -66,6 +74,15 @@ def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
 
 _RESYNC_RETRIES = 3
 _RESYNC_RETRY_DELAY = 0.15  # secondes — laisse le stack BT se stabiliser après reconnexion
+
+# Constantes probe souris — module-level pour être patchables dans les tests.
+_MOUSE_HUNT_INTERVAL = 1.0   # secondes entre probes en mode hunt
+_MOUSE_PROBE_INTERVAL = 5.0  # secondes entre probes en mode normal
+_MOUSE_HUNT_WINDOW = 30.0    # durée du mode hunt après un trigger
+
+# Constantes reconnexion clavier — module-level pour être patchables dans les tests.
+_KB_RECONNECT_INITIAL_DELAY = 0.5  # délai initial de reconnexion (backoff exponentiel)
+_KB_RECONNECT_MAX_DELAY = 5.0      # délai maximum de reconnexion
 
 
 def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
@@ -245,6 +262,7 @@ def _watch_keyboard(
     prefix = f"[{kb.name}]"
     last_response = time.time()
     last_switch_time = 0.0
+    kb_reconnected_at: float | None = None
     WATCHDOG_TIMEOUT = 10.0
 
     log.info("%s Surveillance démarrée (PID=0x%04X)", prefix, kb.pid)
@@ -259,15 +277,22 @@ def _watch_keyboard(
             with _lock:
                 state["kbs"][kb.pid]["ok"] = False
 
-            delay = 0.5
-            max_delay = 5.0
+            delay = _KB_RECONNECT_INITIAL_DELAY
             kb_new = None
             while not stop_event.is_set():
                 time.sleep(delay)
                 kb_new = _find_kb_by_pid(kb.pid)
                 if kb_new is not None:
-                    break
-                delay = min(delay * 1.5, max_delay)
+                    if _KB_STABILITY_SECS > 0:
+                        time.sleep(_KB_STABILITY_SECS)
+                    try:
+                        kb_new.transport.write(PING_MSG)
+                        break  # stable
+                    except (TransportError, OSError):
+                        log.debug("%s Connexion fantôme watchdog — réessai", prefix)
+                        kb_new.close()
+                        kb_new = None
+                delay = min(delay * 1.5, _KB_RECONNECT_MAX_DELAY)
                 log.debug("%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay)
 
             if kb_new:
@@ -278,6 +303,7 @@ def _watch_keyboard(
                     state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
                 # Compatibilité GUI : mettre à jour le premier clavier actif
                 _update_kb_state(state)
+                kb_reconnected_at = time.time()
                 log.info("%s Watchdog reconnexion OK", prefix)
                 _resync_pending_host_from_keyboard(kb, state)
                 hunt_trigger.set()
@@ -289,10 +315,45 @@ def _watch_keyboard(
         try:
             kb.transport.write(PING_MSG)
         except (TransportError, OSError):
+            # Drain buffer : notification CHANGE_HOST peut être en file noyau
+            # juste avant la déconnexion BT (keyboard sends event then drops).
+            try:
+                for _ in range(8):
+                    raw = kb.transport.read(timeout=5)
+                    if raw is None or len(raw) < 4:
+                        break
+                    if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
+                        continue
+                    feat = raw[2]
+                    sw_id = raw[3] & 0x0F
+                    if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
+                        num_hosts = raw[4] if raw[4] > 0 else 3
+                        target_host = raw[5]
+                        if 0 <= target_host < num_hosts:
+                            last_switch_time = time.time()
+                            log.info("%s ★ Easy-Switch (buffer) → hôte %d", prefix, target_host)
+                            event_q.put(_SwitchEvent(target_host, kb.name))
+                        break
+            except (TransportError, OSError):
+                pass
+
             switch_triggered = time.time() - last_switch_time <= 3.0
             log.info("%s Déconnecté%s", prefix, " (post-switch)" if switch_triggered else "")
             if not switch_triggered:
                 notify(f"{kb.name} déconnecté", "Clavier")
+
+            # Détection connexion fantôme : disconnect trop rapide après reconnexion,
+            # sans switch → pending_host corrompu par l'hôte transitoire du clavier.
+            if not switch_triggered and kb_reconnected_at is not None:
+                elapsed = time.time() - kb_reconnected_at
+                if elapsed < _KB_PHANTOM_WINDOW:
+                    log.warning(
+                        "%s Connexion fantôme (%.1fs après reconnexion) → pending_host effacé",
+                        prefix, elapsed,
+                    )
+                    state["pending_host"] = None
+            kb_reconnected_at = None
+
             kb.close()
             _lock = state.get("_state_lock") or nullcontext()
             with _lock:
@@ -300,15 +361,22 @@ def _watch_keyboard(
             _update_kb_state(state)
 
             # Reconnexion : chercher CE clavier (même PID) avec backoff exponentiel
-            delay = 0.5
-            max_delay = 5.0
+            delay = _KB_RECONNECT_INITIAL_DELAY
             kb_new = None
             while not stop_event.is_set():
                 time.sleep(delay)
                 kb_new = _find_kb_by_pid(kb.pid)
                 if kb_new is not None:
-                    break
-                delay = min(delay * 1.5, max_delay)
+                    if _KB_STABILITY_SECS > 0:
+                        time.sleep(_KB_STABILITY_SECS)
+                    try:
+                        kb_new.transport.write(PING_MSG)
+                        break  # stable
+                    except (TransportError, OSError):
+                        log.debug("%s Connexion fantôme (< %.0fs) — réessai", prefix, _KB_STABILITY_SECS)
+                        kb_new.close()
+                        kb_new = None
+                delay = min(delay * 1.5, _KB_RECONNECT_MAX_DELAY)
                 log.debug("%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay)
 
             if kb_new is None:
@@ -323,6 +391,7 @@ def _watch_keyboard(
             log.info("%s Reconnexion OK", prefix)
             notify(f"{kb.name} reconnecté", "Clavier")
             last_response = time.time()
+            kb_reconnected_at = time.time()
 
             _resync_pending_host_from_keyboard(kb, state)
             hunt_trigger.set()
@@ -388,10 +457,6 @@ def _mice_probe_loop(
     - Ajoute les nouvelles souris trouvées, retire celles qui ont disparu
     - Applique pending_host aux nouvelles souris connectées
     """
-    MOUSE_HUNT_INTERVAL = 1.0
-    MOUSE_PROBE_INTERVAL = 5.0
-    MOUSE_HUNT_WINDOW = 30.0
-
     hunt_deadline = 0.0
 
     log.debug("Probe souris : thread démarré")
@@ -401,12 +466,12 @@ def _mice_probe_loop(
         # BUG FIX : le timeout doit être calculé AVANT wait(), sinon le tour suivant
         # attend toujours 5s même en hunt mode (bug : intervalle réel = 6s au lieu de 1s).
         in_hunt = time.time() < hunt_deadline
-        timeout = MOUSE_HUNT_INTERVAL if in_hunt else MOUSE_PROBE_INTERVAL
+        timeout = _MOUSE_HUNT_INTERVAL if in_hunt else _MOUSE_PROBE_INTERVAL
         triggered = hunt_trigger.wait(timeout=timeout)
         if triggered:
             hunt_trigger.clear()
-            hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
-            log.debug("Probe souris : mode hunt activé (%ds)", int(MOUSE_HUNT_WINDOW))
+            hunt_deadline = time.time() + _MOUSE_HUNT_WINDOW
+            log.debug("Probe souris : mode hunt activé (%ds)", int(_MOUSE_HUNT_WINDOW))
 
         if stop_event.is_set():
             break
@@ -468,7 +533,7 @@ def _mice_probe_loop(
             state["mouse"] = active[0].name if active else None
 
         if in_hunt and not mice:
-            log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(MOUSE_HUNT_INTERVAL))
+            log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(_MOUSE_HUNT_INTERVAL))
 
     log.debug("Probe souris : thread arrêté")
     with mouse_lock:
@@ -483,8 +548,8 @@ def _update_kb_state(state: dict) -> None:
     """
     _lock = state.get("_state_lock") or nullcontext()
     with _lock:
-        kbs = dict(state.get("kbs", {}))
-    for pid_data in kbs.values():
+        keyboards = dict(state.get("kbs", {}))
+    for pid_data in keyboards.values():
         if pid_data.get("ok"):
             state["kb"] = pid_data["name"]
             return
@@ -525,17 +590,17 @@ def run_daemon(
     mice_list = list(mice)
 
     # Spawner un thread par clavier
-    kb_threads = []
-    for kb in keyboards:
-        t = threading.Thread(
+    keyboard_threads = []
+    for keyboard in keyboards:
+        thread = threading.Thread(
             target=_watch_keyboard,
-            args=(kb, event_q, state, stop_event, hunt_trigger),
-            name=f"kb-{kb.pid:04X}",
+            args=(keyboard, event_q, state, stop_event, hunt_trigger),
+            name=f"kb-{keyboard.pid:04X}",
             daemon=True,
         )
-        t.start()
-        kb_threads.append(t)
-        log.info("Thread clavier démarré : %s (PID=0x%04X)", kb.name, kb.pid)
+        thread.start()
+        keyboard_threads.append(thread)
+        log.info("Thread clavier démarré : %s (PID=0x%04X)", keyboard.name, keyboard.pid)
 
     # Thread probe souris
     probe_thread = threading.Thread(
@@ -577,6 +642,6 @@ def run_daemon(
     log.info("Arrêt du daemon. Total : %d basculements.", state.get("switches", 0))
 
     # Attendre les threads
-    for t in kb_threads:
-        t.join(timeout=3)
+    for thread in keyboard_threads:
+        thread.join(timeout=3)
     probe_thread.join(timeout=3)

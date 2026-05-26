@@ -1,3 +1,4 @@
+import contextlib
 import sys
 import threading
 import time
@@ -50,6 +51,24 @@ def _make_kb(change_host_idx=5, name="MX Keys S"):
 
 def _pending(host, ttl=60.0):
     return (host, time.time() + ttl)
+
+
+@contextlib.contextmanager
+def _fast_probe():
+    """Réduit tous les délais de 50x pour éviter thread explosion en tests."""
+    patches = [
+        patch("swigi.daemon._MOUSE_HUNT_INTERVAL", 0.02),
+        patch("swigi.daemon._MOUSE_PROBE_INTERVAL", 0.1),
+        patch("swigi.daemon._MOUSE_HUNT_WINDOW", 0.5),
+        patch("swigi.daemon._KB_STABILITY_SECS", 0.0),
+        patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        patch("swigi.daemon._KB_RECONNECT_INITIAL_DELAY", 0.02),
+        patch("swigi.daemon._KB_RECONNECT_MAX_DELAY", 0.1),
+    ]
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        yield
 
 
 # ── _check_and_apply_pending_host ──────────────────────────────────────────────
@@ -568,32 +587,33 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
         from swigi.daemon import _watch_keyboard
 
         # Lancer les deux threads de surveillance
-        t1 = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb1, event_q, state, stop_event, hunt_trigger),
-            daemon=True,
-        )
-        t2 = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb2, event_q, state, stop_event, hunt_trigger),
-            daemon=True,
-        )
-        t1.start()
-        t2.start()
+        with _fast_probe():
+            t1 = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb1, event_q, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            t2 = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb2, event_q, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            t1.start()
+            t2.start()
 
-        # Attendre que les events arrivent (timeout 2s)
-        events = []
-        deadline = time.time() + 2.0
-        while len(events) < 2 and time.time() < deadline:
-            try:
-                ev = event_q.get(timeout=0.1)
-                events.append(ev)
-            except q_module.Empty:
-                pass
+            # Attendre que les events arrivent (timeout 1.5s)
+            events = []
+            deadline = time.time() + 1.5
+            while len(events) < 2 and time.time() < deadline:
+                try:
+                    ev = event_q.get(timeout=0.05)
+                    events.append(ev)
+                except q_module.Empty:
+                    pass
 
-        stop_event.set()
-        t1.join(timeout=2)
-        t2.join(timeout=2)
+            stop_event.set()
+            t1.join(timeout=1.5)
+            t2.join(timeout=1.5)
 
         # Vérifier qu'on a bien reçu 2 SwitchEvents indépendants
         switch_events = [e for e in events if isinstance(e, _SwitchEvent)]
@@ -623,7 +643,8 @@ class TestMiceProbeLoop(unittest.TestCase):
         state = {"pending_host": None, "mouse": None, "mice": []}
         lock = self._make_lock()
 
-        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=None):
             import threading
@@ -638,9 +659,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertGreater(len(mice_list), 0)
 
@@ -658,7 +679,8 @@ class TestMiceProbeLoop(unittest.TestCase):
         state = {"pending_host": None, "mouse": None, "mice": []}
         lock = self._make_lock()
 
-        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=None):
             import threading
@@ -673,9 +695,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         # new_m doit être dans la liste, pas old_m
         self.assertIn(new_m, mice_list)
@@ -691,7 +713,8 @@ class TestMiceProbeLoop(unittest.TestCase):
         state = {"pending_host": None, "mouse": None, "mice": []}
         lock = self._make_lock()
 
-        with patch("swigi.daemon.find_all_devices", return_value=[]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[]), \
              patch("swigi.daemon.notify"):
             import threading
             from swigi.daemon import _mice_probe_loop
@@ -705,9 +728,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertNotIn(dead_m, mice_list)
 
@@ -720,7 +743,8 @@ class TestMiceProbeLoop(unittest.TestCase):
         state = {"pending_host": (1, time.time() + 60), "mouse": None, "mice": []}
         lock = self._make_lock()
 
-        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=1):
             import threading
@@ -735,9 +759,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.3)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         # pending_host effacé car sync OK
         self.assertIsNone(state["pending_host"])
@@ -757,7 +781,8 @@ class TestMiceProbeLoop(unittest.TestCase):
             sent.append(target_host)
 
         # Souris sur hôte 0, pending dit hôte 1 → correction attendue
-        with patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=0), \
              patch("swigi.daemon.send_change_host", side_effect=fake_send):
@@ -770,9 +795,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(2.0)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIn(1, sent, "Correction pending_host non envoyée pour souris existante (pass 2b)")
 
@@ -789,7 +814,8 @@ class TestMiceProbeLoop(unittest.TestCase):
 
         # new_m est sync (hôte 1) → pending cleared by pass 2
         # existing_m ne devrait PAS recevoir de correction (pass 2b skippé)
-        with patch("swigi.daemon.find_all_devices", return_value=[existing_m, new_m]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[existing_m, new_m]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=1), \
              patch("swigi.daemon.send_change_host") as mock_send:
@@ -802,9 +828,9 @@ class TestMiceProbeLoop(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(1.0)
+            time.sleep(0.08)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         # Pas de correction envoyée (sync OK pour la new_m)
         mock_send.assert_not_called()
@@ -901,22 +927,23 @@ class TestWatchKeyboardNotificationParsing(unittest.TestCase):
         kb.transport.write.return_value = None
         kb.transport.is_open = True
 
-        t = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb, event_q, state, stop, hunt),
-            daemon=True,
-        )
-        t.start()
-        events = []
-        deadline = time.time() + 2.0
-        while time.time() < deadline:
-            try:
-                events.append(event_q.get(timeout=0.1))
-                break
-            except __import__("queue").Empty:
-                pass
-        stop.set()
-        t.join(timeout=2)
+        with _fast_probe():
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            events = []
+            deadline = time.time() + 1.5
+            while time.time() < deadline:
+                try:
+                    events.append(event_q.get(timeout=0.05))
+                    break
+                except __import__("queue").Empty:
+                    pass
+            stop.set()
+            t.join(timeout=1.5)
         return [e for e in events if isinstance(e, _SwitchEvent)]
 
     def _make_notif(self, change_host_idx, num_hosts, target_host):
@@ -971,7 +998,7 @@ class TestHuntIntervalTiming(unittest.TestCase):
     """Vérifie que _mice_probe_loop probe toutes les ~1s en hunt mode, pas 6s."""
 
     def test_hunt_mode_probes_at_1s_not_6s(self):
-        """En hunt mode, ≥3 probes doivent se produire en 3.5s."""
+        """En hunt mode, ≥5 probes doivent se produire en 0.15s (interval=0.02s)."""
         call_times = []
 
         def fake_find(*args):
@@ -985,7 +1012,8 @@ class TestHuntIntervalTiming(unittest.TestCase):
         hunt = threading.Event()
         hunt.set()
 
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
                 target=_mice_probe_loop,
@@ -993,20 +1021,19 @@ class TestHuntIntervalTiming(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(3.5)
+            time.sleep(0.15)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
-        # Avec le bug (6s), on aurait 0-1 probe en 3.5s.
-        # Avec le fix (1s), on attend ≥3 probes.
+        # Avec interval=0.02s et sleep=0.15s → ≥5 probes attendus.
         self.assertGreaterEqual(
-            len(call_times), 3,
-            f"Hunt mode trop lent : {len(call_times)} probes en 3.5s (attendu ≥3). "
+            len(call_times), 5,
+            f"Hunt mode trop lent : {len(call_times)} probes en 0.15s (attendu ≥5). "
             f"Bug probable : wait timeout non adapté au mode hunt.",
         )
 
     def test_hunt_mode_intervals_under_2s(self):
-        """Intervalles entre probes en hunt mode doivent être < 2s."""
+        """Intervalles entre probes en hunt mode doivent être < 0.1s (interval=0.02s)."""
         call_times = []
 
         def fake_find(*args):
@@ -1020,7 +1047,8 @@ class TestHuntIntervalTiming(unittest.TestCase):
         hunt = threading.Event()
         hunt.set()
 
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
                 target=_mice_probe_loop,
@@ -1028,20 +1056,20 @@ class TestHuntIntervalTiming(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(4.0)
+            time.sleep(0.2)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         if len(call_times) >= 2:
             intervals = [call_times[i + 1] - call_times[i] for i in range(len(call_times) - 1)]
             max_interval = max(intervals)
             self.assertLess(
-                max_interval, 2.0,
-                f"Intervalle max = {max_interval:.2f}s (attendu < 2s en hunt mode)",
+                max_interval, 0.1,
+                f"Intervalle max = {max_interval:.3f}s (attendu < 0.1s en hunt mode avec interval=0.02s)",
             )
 
     def test_normal_mode_probes_at_5s(self):
-        """Hors hunt mode, probe toutes les ~5s (pas 1s — éviter CPU busy-loop)."""
+        """Hors hunt mode, probe toutes les ~0.1s (pas 0.02s — éviter CPU busy-loop)."""
         call_times = []
 
         def fake_find(*args):
@@ -1055,7 +1083,8 @@ class TestHuntIntervalTiming(unittest.TestCase):
         hunt = threading.Event()
         # hunt NOT set → mode normal
 
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
                 target=_mice_probe_loop,
@@ -1063,15 +1092,14 @@ class TestHuntIntervalTiming(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(3.0)  # 3s → moins d'un intervalle normal (5s)
+            time.sleep(0.05)  # 0.05s → moins d'un intervalle normal (0.1s)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
-        # En mode normal, 3s < 5s : au plus 1 probe (le premier immédiat ne se produit pas
-        # car wait(5s) bloque directement). 0 probe attendus en 3s.
+        # En mode normal, 0.05s < 0.1s : au plus 1 probe.
         self.assertLessEqual(
             len(call_times), 1,
-            f"Mode normal : {len(call_times)} probes en 3s (devrait être ≤1)",
+            f"Mode normal : {len(call_times)} probes en 0.05s (devrait être ≤1)",
         )
 
 
@@ -1095,12 +1123,13 @@ class TestStartupWithoutMouse(unittest.TestCase):
             call_count[0] += 1
             return [mouse] if call_count[0] >= 3 else []  # souris arrive au 3e probe
 
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=None):
             stop = threading.Event()
             hunt = threading.Event()
-            hunt.set()  # hunt mode : 1s entre probes
+            hunt.set()  # hunt mode : 0.02s entre probes
 
             t = threading.Thread(
                 target=_mice_probe_loop,
@@ -1108,9 +1137,9 @@ class TestStartupWithoutMouse(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(4.0)  # 4s → ≥3 probes à 1s d'intervalle
+            time.sleep(0.2)  # 0.2s → ≥3 probes à 0.02s d'intervalle
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIn(mouse, mice_list, "Souris jamais trouvée après arrivée tardive")
         self.assertEqual(state["mouse"], "MX Master 4")
@@ -1136,7 +1165,8 @@ class TestStartupWithoutMouse(unittest.TestCase):
             sent_hosts.append(target_host)
 
         # Simuler : souris sur hôte 1 (Mac B), doit aller vers hôte 0 (Mac A)
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=1), \
              patch("swigi.daemon.send_change_host", side_effect=fake_send):
@@ -1150,9 +1180,9 @@ class TestStartupWithoutMouse(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(3.0)
+            time.sleep(0.15)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIn(0, sent_hosts, "Correction pending_host non envoyée à l'arrivée de la souris")
 
@@ -1216,7 +1246,8 @@ class TestThreeMacFullScenario(unittest.TestCase):
         def fake_send(transport, devnum, feat_idx, target_host):
             sent.append(target_host)
 
-        with patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=1), \
              patch("swigi.daemon.send_change_host", side_effect=fake_send):
@@ -1229,9 +1260,9 @@ class TestThreeMacFullScenario(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(1.0)
+            time.sleep(0.08)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIn(0, sent, "Correction vers hôte 0 (Mac A) non envoyée")
 
@@ -1358,7 +1389,8 @@ class TestThreeMacFullScenario(unittest.TestCase):
             sent.append(target_host)
 
         # Souris sur hôte 0 (Mac A), pending dit hôte 1 (Mac B)
-        with patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=0), \
              patch("swigi.daemon.send_change_host", side_effect=fake_send):
@@ -1371,9 +1403,9 @@ class TestThreeMacFullScenario(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(1.0)
+            time.sleep(0.08)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIn(1, sent, "Correction vers hôte 1 non envoyée malgré pending_host")
 
@@ -1420,7 +1452,8 @@ class TestThreeMacFullScenario(unittest.TestCase):
 
         start = time.time()
 
-        with patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", side_effect=fake_find), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=1):  # sync OK
             stop = threading.Event()
@@ -1432,13 +1465,13 @@ class TestThreeMacFullScenario(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(3.0)
+            time.sleep(0.15)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertIsNotNone(arrival[0], "Souris jamais trouvée")
         elapsed = arrival[0] - start
-        self.assertLess(elapsed, 3.0, f"Souris trouvée trop tard ({elapsed:.1f}s, attendu < 3s)")
+        self.assertLess(elapsed, 0.15, f"Souris trouvée trop tard ({elapsed:.3f}s, attendu < 0.15s)")
         self.assertIsNone(state["pending_host"], "pending_host non effacé après sync OK")
 
     def test_state_mouse_updated_after_probe(self):
@@ -1450,7 +1483,8 @@ class TestThreeMacFullScenario(unittest.TestCase):
         mouse = _make_mouse(name="MX Master 4")
         mouse.pid = 0xB042
 
-        with patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
              patch("swigi.daemon.notify"), \
              patch("swigi.daemon.get_current_host", return_value=None):
             stop = threading.Event()
@@ -1462,9 +1496,9 @@ class TestThreeMacFullScenario(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.5)
+            time.sleep(0.05)
             stop.set()
-            t.join(timeout=2)
+            t.join(timeout=1)
 
         self.assertEqual(state["mouse"], "MX Master 4")
         self.assertIn("MX Master 4", state["mice"])
@@ -1553,7 +1587,8 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             "pending_host": None,
         }
 
-        with patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
+        with _fast_probe(), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
              patch("swigi.daemon.get_current_host", return_value=0), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
@@ -1563,15 +1598,15 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             )
             t.start()
             events = []
-            deadline = time.time() + 3.0
+            deadline = time.time() + 1.5
             while time.time() < deadline:
                 try:
-                    events.append(event_q.get(timeout=0.2))
+                    events.append(event_q.get(timeout=0.05))
                     break
                 except q_module.Empty:
                     pass
             stop.set()
-            t.join(timeout=3)
+            t.join(timeout=1.5)
 
         reconnected = [e for e in events if isinstance(e, _KbReconnected)]
         self.assertGreater(len(reconnected), 0, "_KbReconnected non émis après ping fail")
@@ -1617,7 +1652,8 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
         }
 
         notifications = []
-        with patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
+        with _fast_probe(), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
              patch("swigi.daemon.get_current_host", return_value=1), \
              patch("swigi.daemon.notify", side_effect=lambda msg, *a: notifications.append(msg)):
             t = threading.Thread(
@@ -1626,9 +1662,9 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(1.5)
+            time.sleep(0.1)
             stop.set()
-            t.join(timeout=3)
+            t.join(timeout=1.5)
 
         disconnect_notifs = [n for n in notifications if "déconnecté" in n.lower()]
         self.assertEqual(disconnect_notifs, [], f"Notification 'déconnecté' inattendue post-switch : {disconnect_notifs}")
@@ -1661,7 +1697,8 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             "pending_host": None,
         }
 
-        with patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
+        with _fast_probe(), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
              patch("swigi.daemon.get_current_host", return_value=0), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
@@ -1670,9 +1707,9 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            hunt.wait(timeout=3)
+            hunt.wait(timeout=1.5)
             stop.set()
-            t.join(timeout=3)
+            t.join(timeout=1.5)
 
         self.assertTrue(hunt.is_set(), "hunt_trigger non levé après reconnect clavier")
 
@@ -1699,15 +1736,16 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             "pending_host": None,
         }
 
-        t = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb, event_q, state, stop, hunt),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(0.3)
-        stop.set()
-        t.join(timeout=2)
+        with _fast_probe():
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.05)
+            stop.set()
+            t.join(timeout=1)
         # Pas d'exception propagée — test passe si le thread s'est terminé proprement
 
     def test_bad_rid_message_skipped(self):
@@ -1732,15 +1770,16 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             "pending_host": None,
         }
 
-        t = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb, event_q, state, stop, hunt),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(0.3)
-        stop.set()
-        t.join(timeout=2)
+        with _fast_probe():
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.05)
+            stop.set()
+            t.join(timeout=1)
         self.assertTrue(event_q.empty(), "Aucun event attendu pour message rid=0xFF")
 
     def test_ping_fail_reconnect_backoff_multiple_attempts(self):
@@ -1777,7 +1816,8 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             attempts[0] += 1
             return None if attempts[0] < 3 else kb_new
 
-        with patch("swigi.daemon._find_kb_by_pid", side_effect=find_side), \
+        with _fast_probe(), \
+             patch("swigi.daemon._find_kb_by_pid", side_effect=find_side), \
              patch("swigi.daemon.get_current_host", return_value=0), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
@@ -1786,9 +1826,9 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            hunt.wait(timeout=6)
+            hunt.wait(timeout=1.5)
             stop.set()
-            t.join(timeout=3)
+            t.join(timeout=1.5)
 
         self.assertTrue(hunt.is_set(), "hunt_trigger non levé après reconnect avec backoff")
         self.assertGreaterEqual(attempts[0], 3)
@@ -1817,12 +1857,14 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
         }
 
         def stop_after():
-            time.sleep(0.8)
+            # Doit firer APRÈS le second ping fail (~0.17s) mais bien avant 1s
+            time.sleep(0.3)
             stop.set()
 
         stopper = threading.Thread(target=stop_after, daemon=True)
 
-        with patch("swigi.daemon._find_kb_by_pid", return_value=None), \
+        with _fast_probe(), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=None), \
              patch("swigi.daemon.notify"):
             t = threading.Thread(
                 target=_watch_keyboard,
@@ -1831,8 +1873,8 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             )
             t.start()
             stopper.start()
-            t.join(timeout=4)
-            stopper.join(timeout=2)
+            t.join(timeout=2.0)
+            stopper.join(timeout=1)
 
         self.assertFalse(t.is_alive(), "Thread _watch_keyboard bloqué (stop ignoré)")
         self.assertFalse(state["kbs"][kb_old.pid]["ok"])
@@ -1863,15 +1905,16 @@ class TestWatchKeyboardPingFailReconnect(unittest.TestCase):
             "pending_host": None,
         }
 
-        t = threading.Thread(
-            target=_watch_keyboard,
-            args=(kb, event_q, state, stop, hunt),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(0.3)
-        stop.set()
-        t.join(timeout=2)
+        with _fast_probe():
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.05)
+            stop.set()
+            t.join(timeout=1)
 
         switch_events = []
         while not event_q.empty():
@@ -2121,6 +2164,360 @@ class TestMouseFollowPreference(unittest.TestCase):
 
         self.assertTrue(result)
         mock_send.assert_called_once()
+
+
+# ── Connexions fantômes BT ────────────────────────────────────────────────────
+
+class TestPhantomReconnection(unittest.TestCase):
+    """Tests pour la détection des connexions fantômes BT.
+
+    Un clavier en transit vers un autre Mac peut apparaître brièvement connectable.
+    Si disconnect < _KB_PHANTOM_WINDOW après reconnexion (sans switch) → pending_host effacé.
+    """
+
+    def _run_phantom_scenario(
+        self,
+        kb_new_reads=None,
+        initial_pending_host=1,
+        expect_cleared=True,
+        timeout=4.0,
+    ):
+        """
+        Simule : kb_old → disconnect → reconnect (kb_new) → disconnect immédiat.
+        Retourne (state final, event_queue).
+        """
+        import queue as q_module
+
+        event_q = q_module.Queue()
+        stop = threading.Event()
+        hunt = threading.Event()
+
+        kb_old = _make_kb(name="MX Keys S")
+        kb_old.pid = 0xB35B
+        write_calls_old = [0]
+
+        def write_old(msg):
+            write_calls_old[0] += 1
+            if write_calls_old[0] >= 2:
+                raise TransportError("disconnect")
+
+        kb_old.transport.write.side_effect = write_old
+        kb_old.transport.read.side_effect = lambda *a, **kw: None
+
+        kb_new = _make_kb(name="MX Keys S")
+        kb_new.pid = 0xB35B
+        write_calls_new = [0]
+
+        def write_new(msg):
+            write_calls_new[0] += 1
+            # stability ping (call 1) OK, iter suivant (call 2+) → phantom disconnect
+            if write_calls_new[0] >= 2:
+                raise TransportError("phantom disconnect")
+
+        kb_new.transport.write.side_effect = write_new
+
+        if kb_new_reads is not None:
+            reads_iter = iter(kb_new_reads)
+            kb_new.transport.read.side_effect = lambda *a, **kw: next(reads_iter, None)
+        else:
+            kb_new.transport.read.side_effect = lambda *a, **kw: None
+
+        state = {
+            "kbs": {kb_old.pid: {"name": kb_old.name, "ok": True}},
+            "pending_host": (initial_pending_host, time.time() + 60),
+        }
+
+        with _fast_probe(), \
+             patch("swigi.daemon._KB_STABILITY_SECS", 0.0), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=kb_new), \
+             patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.notify"):
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb_old, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            deadline = time.time() + 0.3
+            while time.time() < deadline:
+                ph = state.get("pending_host")
+                if expect_cleared and ph is None:
+                    break
+                if not expect_cleared and ph is not None and ph[0] == 0:
+                    # resync a eu lieu (kb_new sur hôte 0) → phantom sans effacement
+                    break
+                time.sleep(0.02)
+            stop.set()
+            t.join(timeout=1.5)
+
+        return state, event_q
+
+    def test_phantom_clears_pending_host(self):
+        """Disconnect < _KB_PHANTOM_WINDOW après reconnexion → pending_host effacé."""
+        state, _ = self._run_phantom_scenario(expect_cleared=True)
+        self.assertIsNone(
+            state.get("pending_host"),
+            "pending_host doit être effacé après détection connexion fantôme",
+        )
+
+    def test_switch_event_prevents_phantom_clear(self):
+        """Switch détecté pendant disconnect fantôme → pending_host NON effacé (vrai switch)."""
+        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
+
+        switch_msg = bytearray(MSG_LONG_LEN)
+        switch_msg[0] = REPORT_LONG
+        switch_msg[2] = 5   # change_host_idx
+        switch_msg[3] = 0x00
+        switch_msg[4] = 3
+        switch_msg[5] = 1   # target_host = 1
+        switch_msg = bytes(switch_msg)
+
+        state, event_q = self._run_phantom_scenario(
+            kb_new_reads=[switch_msg],
+            expect_cleared=False,
+        )
+
+        # SwitchEvent doit avoir été émis
+        events = []
+        while not event_q.empty():
+            events.append(event_q.get_nowait())
+        from swigi.daemon import _SwitchEvent
+        switch_events = [e for e in events if isinstance(e, _SwitchEvent)]
+        self.assertGreater(len(switch_events), 0, "SwitchEvent doit être émis même lors d'un disconnect")
+        self.assertEqual(switch_events[0].target_host, 1)
+
+        # pending_host NON effacé (resync l'a recalé sur hôte 0, pas None)
+        self.assertIsNotNone(
+            state.get("pending_host"),
+            "pending_host ne doit PAS être effacé si un switch a été détecté",
+        )
+
+    def test_no_phantom_on_first_disconnect(self):
+        """Premier disconnect sans reconnect précédent → pending_host conservé."""
+        import queue as q_module
+        event_q = q_module.Queue()
+        stop = threading.Event()
+        hunt = threading.Event()
+
+        kb = _make_kb(name="MX Keys S")
+        kb.pid = 0xB35B
+        write_calls = [0]
+
+        def write_side(msg):
+            write_calls[0] += 1
+            if write_calls[0] >= 2:
+                raise TransportError("disconnect")
+
+        kb.transport.write.side_effect = write_side
+        kb.transport.read.side_effect = lambda *a, **kw: None
+
+        state = {
+            "kbs": {kb.pid: {"name": kb.name, "ok": True}},
+            "pending_host": (1, time.time() + 60),
+        }
+
+        with _fast_probe(), \
+             patch("swigi.daemon._KB_STABILITY_SECS", 0.0), \
+             patch("swigi.daemon._find_kb_by_pid", return_value=None), \
+             patch("swigi.daemon.notify"):
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(kb, event_q, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.1)
+            stop.set()
+            t.join(timeout=1.5)
+
+        # Pas de reconnect précédent → phantom check non déclenché → pending conservé
+        ph = state.get("pending_host")
+        self.assertIsNotNone(ph)
+        self.assertEqual(ph[0], 1, "pending_host ne doit PAS être effacé au premier disconnect")
+
+    def test_phantom_in_complex_abc_scenario(self):
+        """Scénario A→B→A : connexion fantôme au retour → souris ne va pas sur mauvais Mac."""
+        kb = _make_kb(name="MX Keys S")
+        state = {"pending_host": (1, time.time() + 60)}  # stale post-switch A→B
+
+        # 1. Clavier revient sur A (hôte 0) — resync
+        with patch("swigi.daemon.get_current_host", return_value=0):
+            _resync_pending_host_from_keyboard(kb, state)
+
+        # pending_host recalé sur hôte 0
+        self.assertEqual(state["pending_host"][0], 0)
+
+        # 2. Connexion fantôme détectée (simule effacement par _watch_keyboard)
+        state["pending_host"] = None  # ce que fait le phantom check
+
+        # 3. Souris revient — pas de pending_host → aucune correction envoyée
+        mouse = _make_mouse()
+        with patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.send_change_host") as mock_send:
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result, "Aucune correction attendue — pending_host effacé par fantôme")
+        mock_send.assert_not_called()
+
+
+class TestComplexSwitchSequences(unittest.TestCase):
+    """Tests scénarios A→B→A→B→C→B→C→A→B→C→B→A — logique pure, sans threads."""
+
+    def setUp(self):
+        self.mouse = _make_mouse(name="MX Master 4")
+        self.kb = _make_kb(name="MX Keys S")
+        self.state = {
+            "pending_host": None,
+            "mouse": "MX Master 4",
+            "mice": ["MX Master 4"],
+        }
+        self.lock = threading.Lock()
+        self.sent = []
+
+    def _send(self, target):
+        """Simule switch clavier → envoie CHANGE_HOST à la souris."""
+        mice = [self.mouse] if self.mouse.transport.is_open else []
+        with patch("swigi.daemon.send_change_host", side_effect=lambda *a: self.sent.append(a[3])):
+            _send_to_all_mice(mice, target, self.state, self.lock)
+        # Réouvrir le mock transport pour simulations suivantes
+        self.mouse.transport.is_open = True
+
+    def _kb_return(self, host):
+        """Simule le retour du clavier sur un hôte — resync pending_host."""
+        with patch("swigi.daemon.get_current_host", return_value=host):
+            _resync_pending_host_from_keyboard(self.kb, self.state)
+
+    def _mouse_check(self, current_host):
+        """Simule la vérification de sync souris — retourne (corrected, target_sent)."""
+        correction_target = []
+        with patch("swigi.daemon.get_current_host", return_value=current_host), \
+             patch("swigi.daemon.send_change_host", side_effect=lambda *a: correction_target.append(a[3])):
+            result = _check_and_apply_pending_host(self.mouse, self.state)
+        self.mouse.transport.is_open = True  # reset mock
+        return result, correction_target
+
+    def test_A_B_A_no_spurious_correction(self):
+        """A→B→A : souris revenue sur A, pas de correction."""
+        self._send(1)  # A→B
+        self._kb_return(0)  # clavier revenu sur A
+        corrected, targets = self._mouse_check(0)  # souris aussi sur A
+        self.assertFalse(corrected)
+        self.assertEqual(targets, [])
+
+    def test_A_B_A_desync_corrected(self):
+        """A→B→A : souris bloquée sur B → correction vers A."""
+        self._send(1)  # A→B
+        self._kb_return(0)  # clavier revenu sur A
+        corrected, targets = self._mouse_check(1)  # souris encore sur B
+        self.assertTrue(corrected)
+        self.assertEqual(targets, [0])
+
+    def test_A_B_C_A_no_spurious_correction(self):
+        """A→B, B→C, C→A : souris et clavier sur A, pas de correction."""
+        self._send(1)  # A→B
+        # B→C : Mac A ne voit pas ça (keyboard parti)
+        # C→A : keyboard reconnecte
+        self._kb_return(0)  # resync : clavier sur A (hôte 0)
+        corrected, targets = self._mouse_check(0)  # souris sur A
+        self.assertFalse(corrected)
+        self.assertEqual(targets, [])
+
+    def test_A_B_C_A_mouse_stuck_on_C(self):
+        """A→B→C→A : souris bloquée sur C (hôte 2) → correction vers A."""
+        self._send(1)  # A→B
+        self._kb_return(0)  # C→A : resync
+        corrected, targets = self._mouse_check(2)  # souris encore sur C
+        self.assertTrue(corrected)
+        self.assertEqual(targets, [0])
+
+    def test_A_B_A_B_no_double_correction(self):
+        """A→B→A→B : second switch écrase le premier pending."""
+        self._send(1)  # A→B
+        self._kb_return(0)  # B→A
+        self.assertEqual(self.state["pending_host"][0], 0)
+        # On check la sync de la souris (elle est sur A)
+        corrected, _ = self._mouse_check(0)
+        self.assertFalse(corrected)
+        self.assertIsNone(self.state["pending_host"])
+
+        # Re-switch A→B
+        self._send(1)  # A→B again
+        self.assertEqual(self.state["pending_host"][0], 1)
+
+    def test_A_B_C_B_A_complex(self):
+        """A→B→C→B→A : pending_host recalé à chaque retour sur A."""
+        # Étape 1 : A→B
+        self._send(1)
+        self.assertEqual(self.state["pending_host"][0], 1)
+
+        # Étape 2 : clavier revient sur A (depuis B, puis C, puis B... final A)
+        # Mac A ne voit que le retour final
+        self._kb_return(0)
+        self.assertEqual(self.state["pending_host"][0], 0)
+
+        # Étape 3 : souris revenue sur A — pas de correction
+        corrected, targets = self._mouse_check(0)
+        self.assertFalse(corrected)
+        self.assertIsNone(self.state["pending_host"])
+
+    def test_full_sequence_A_B_A_B_C_B_C_A_B_C_B_A(self):
+        """Scénario complet 12 étapes — vérifie pending_host à chaque retour sur A."""
+        seq = [
+            ("switch", 1),     # A→B
+            ("return_kb", 0),  # B→A
+            ("check_ok", 0),   # souris sur A : sync
+            ("switch", 1),     # A→B
+            # B→C→B→C : Mac A ne voit pas
+            ("return_kb", 0),  # C/B→A (depuis C)
+            ("check_ok", 0),   # souris sur A : sync
+            ("switch", 1),     # A→B
+            # B→C→B : Mac A ne voit pas
+            ("return_kb", 0),  # B→A
+            ("check_ok", 0),   # souris sur A : sync
+        ]
+        corrections = []
+        for op, host in seq:
+            if op == "switch":
+                self._send(host)
+            elif op == "return_kb":
+                self._kb_return(host)
+            elif op == "check_ok":
+                with patch("swigi.daemon.get_current_host", return_value=host), \
+                     patch("swigi.daemon.send_change_host", side_effect=lambda *a: corrections.append(a[3])):
+                    result = _check_and_apply_pending_host(self.mouse, self.state)
+                self.mouse.transport.is_open = True
+                self.assertFalse(result, f"Correction inattendue pour op={op} host={host}")
+
+        self.assertEqual(corrections, [], f"Corrections spurieuses : {corrections}")
+
+    def test_desync_after_3_host_cycle(self):
+        """Cycle complet avec désync réelle : souris corrigée exactement 1 fois."""
+        # A→B
+        self._send(1)
+        # B→A : clavier revenu
+        self._kb_return(0)
+        # Souris encore sur B (hôte 1) → correction vers A (hôte 0)
+        corrected, targets = self._mouse_check(1)
+        self.assertTrue(corrected)
+        self.assertEqual(targets, [0])
+        # pending_host effacé après correction
+        self.assertIsNone(self.state["pending_host"])
+
+    def test_rapid_switch_pending_host_reflects_last_target(self):
+        """Switches rapides : le dernier switch gagne."""
+        mice = [self.mouse]
+        with patch("swigi.daemon.send_change_host", side_effect=lambda *a: None):
+            _send_to_all_mice(mice, 1, self.state, self.lock)  # A→B
+            _send_to_all_mice(mice, 2, self.state, self.lock)  # B→C immédiatement
+        self.assertEqual(self.state["pending_host"][0], 2, "Le 2ème switch doit écraser le 1er")
+
+    def test_pending_host_ttl_prevents_stale_correction(self):
+        """pending_host expiré → pas de correction même si désync."""
+        self.state["pending_host"] = (1, time.time() - 1.0)  # déjà expiré
+        corrected, targets = self._mouse_check(0)
+        self.assertFalse(corrected)
+        self.assertEqual(targets, [])
+        self.assertIsNone(self.state["pending_host"])
 
 
 if __name__ == "__main__":

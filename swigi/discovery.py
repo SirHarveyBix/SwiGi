@@ -13,7 +13,7 @@ from swigi.constants import (
     LOGITECH_VID,
 )
 from swigi.hidapi_loader import lib
-from swigi.protocol import get_device_name, get_device_type, resolve_feature
+from swigi.protocol import get_device_name, get_device_type, resolve_feature, _drain_transport
 from swigi.transport import HIDTransport, TransportError
 
 log = logging.getLogger("swigi.discovery")
@@ -78,33 +78,36 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             log.debug("PID=0x%04X déjà traité (interface multiple ignorée)", pid)
             continue
         try:
-            t = HIDTransport(path, pid)
+            transport = HIDTransport(path, pid)
         except OSError:
             log.debug("Ouverture échouée pid=0x%04X up=0x%04X u=0x%04X", pid, up, usage)
             continue
+        # Vide le buffer kernel avant toute requête HID++ — évite de lire une réponse
+        # stale d'une session précédente (cause du nom corrompu après reconnexion BT).
+        _drain_transport(transport)
         try:
-            feat = resolve_feature(t, DEVNUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME)
+            feat = resolve_feature(transport, DEVNUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME)
             if feat is None:
-                t.close()
+                transport.close()
                 continue
-            dt = get_device_type(t, DEVNUMBER_DIRECT, feat)
-            raw_name = get_device_name(t, DEVNUMBER_DIRECT, feat)
+            dt = get_device_type(transport, DEVNUMBER_DIRECT, feat)
+            raw_name = get_device_name(transport, DEVNUMBER_DIRECT, feat)
             name = _clean_name(raw_name, pid)
             is_mouse = dt in (DEVICE_TYPE_MOUSE, DEVICE_TYPE_TRACKPAD, DEVICE_TYPE_TRACKBALL)
             if device_type_wanted == DEVICE_TYPE_KEYBOARD and dt != DEVICE_TYPE_KEYBOARD:
-                t.close()
+                transport.close()
                 continue
             if device_type_wanted == DEVICE_TYPE_MOUSE and not is_mouse:
-                t.close()
+                transport.close()
                 continue
-            ch = resolve_feature(t, DEVNUMBER_DIRECT, FEATURE_CHANGE_HOST)
+            ch = resolve_feature(transport, DEVNUMBER_DIRECT, FEATURE_CHANGE_HOST)
             if ch is None:
-                t.close()
+                transport.close()
                 continue
             seen_pids.add(pid)
-            results.append(DeviceInfo(t, name, pid, ch))
+            results.append(DeviceInfo(transport, name, pid, ch))
         except (TransportError, OSError):
-            t.close()
+            transport.close()
             continue
     return results
 
