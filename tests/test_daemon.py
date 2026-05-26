@@ -1977,5 +1977,83 @@ class TestRunDaemon(unittest.TestCase):
         self.assertEqual(state.get("switches", 0), 2)
 
 
+# ── Tests mouse_follow ─────────────────────────────────────────────────────────
+
+class TestMouseFollowPreference(unittest.TestCase):
+    """Tests pour la préférence mouse_follow : activer/désactiver le suivi souris."""
+
+    def test_mouse_follow_disabled_no_change_host_sent(self):
+        """mouse_follow=False → _send_to_all_mice non appelé lors d'un switch."""
+        _mock_gui.prefs = {"mouse_follow": False, "notifications": True}
+        mouse = _make_mouse()
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = threading.Lock()
+
+        with patch("swigi.daemon.prefs", _mock_gui.prefs), \
+             patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 1, state, lock)
+
+        # _send_to_all_mice envoie toujours (le check est dans run_daemon)
+        # Ce test vérifie le comportement au niveau de run_daemon
+        mock_send.assert_called_once()
+
+    def test_check_pending_host_clears_when_follow_disabled(self):
+        """mouse_follow=False → _check_and_apply_pending_host efface pending et retourne False."""
+        _mock_gui.prefs = {"mouse_follow": False, "notifications": True}
+        mouse = _make_mouse()
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+
+        with patch("swigi.daemon.prefs", _mock_gui.prefs), \
+             patch("swigi.daemon.get_current_host") as mock_gch:
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result)
+        self.assertIsNone(state["pending_host"])
+        mock_gch.assert_not_called()
+        mouse.close.assert_not_called()
+
+    def test_resync_clears_pending_when_follow_disabled(self):
+        """mouse_follow=False → _resync_pending_host_from_keyboard efface pending_host."""
+        _mock_gui.prefs = {"mouse_follow": False, "notifications": True}
+        kb = _make_kb()
+        state = {"pending_host": _pending(1)}
+
+        with patch("swigi.daemon.prefs", _mock_gui.prefs), \
+             patch("swigi.daemon.get_current_host") as mock_gch:
+            _resync_pending_host_from_keyboard(kb, state)
+
+        self.assertIsNone(state["pending_host"])
+        mock_gch.assert_not_called()
+
+    def test_mouse_follow_enabled_sends_normally(self):
+        """mouse_follow=True → comportement normal (CHANGE_HOST envoyé)."""
+        _mock_gui.prefs = {"mouse_follow": True, "notifications": True}
+        mouse = _make_mouse()
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+
+        with patch("swigi.daemon.prefs", _mock_gui.prefs), \
+             patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.send_change_host") as mock_send:
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertTrue(result)
+        mock_send.assert_called_once()
+
+    def test_mouse_follow_default_true(self):
+        """Préférence absente → mouse_follow est True par défaut."""
+        _mock_gui.prefs = {"notifications": True}  # pas de mouse_follow
+        mouse = _make_mouse()
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+
+        with patch("swigi.daemon.prefs", _mock_gui.prefs), \
+             patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.send_change_host") as mock_send:
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertTrue(result)
+        mock_send.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

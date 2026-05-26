@@ -20,9 +20,12 @@ except ImportError:
 def load_prefs() -> dict:
     try:
         with open(PREFS_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            data.setdefault("notifications", True)
+            data.setdefault("mouse_follow", True)
+            return data
     except Exception:
-        return {"notifications": True}
+        return {"notifications": True, "mouse_follow": True}
 
 
 def save_prefs(prefs: dict) -> None:
@@ -81,6 +84,10 @@ if HAS_RUMPS and _rumps:
             self._count_item = _rumps.MenuItem("Basculements : 0")
             self._notify_item = _rumps.MenuItem("Notifications", callback=self._toggle_notify)
             self._notify_item.state = prefs.get("notifications", True)
+            self._mouse_follow_item = _rumps.MenuItem(
+                "Souris suit le clavier", callback=self._toggle_mouse_follow
+            )
+            self._mouse_follow_item.state = prefs.get("mouse_follow", True)
 
             menu_items = [
                 self._kb_item,
@@ -88,6 +95,7 @@ if HAS_RUMPS and _rumps:
                 None,
                 self._count_item,
                 None,
+                self._mouse_follow_item,
                 self._notify_item,
                 _rumps.MenuItem("Masquer l'icône", callback=self._hide_icon),
             ]
@@ -146,6 +154,16 @@ if HAS_RUMPS and _rumps:
                 prefs["notifications"] = enabled
             save_prefs(prefs)
             sender.state = enabled
+
+        # ── Souris suit le clavier ─────────────────────────────────────────
+
+        def _toggle_mouse_follow(self, sender):
+            enabled = not bool(sender.state)
+            with _prefs_lock:
+                prefs["mouse_follow"] = enabled
+            save_prefs(prefs)
+            sender.state = enabled
+            log.info("Souris suit le clavier : %s", "ON" if enabled else "OFF")
 
         # ── BetterMouse — export ───────────────────────────────────────────
 

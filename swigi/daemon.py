@@ -70,6 +70,13 @@ def _resync_pending_host_from_keyboard(kb: DeviceInfo, state: dict) -> None:
     Corrige le cas où un pending_host stale (du switch précédent) enverrait la
     souris sur le mauvais hôte lors du retour — surtout avec 3 hôtes ou 2 claviers.
     """
+    # Ne pas recaler pending_host si suivi souris désactivé
+    with _prefs_lock:
+        mouse_follow = prefs.get("mouse_follow", True)
+    if not mouse_follow:
+        state["pending_host"] = None
+        return
+
     kb_host = get_current_host(kb.transport, DEVNUMBER_DIRECT, kb.change_host_idx)
     if kb_host is not None:
         state["pending_host"] = (kb_host, time.time() + _PENDING_HOST_TTL)
@@ -88,6 +95,13 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
 
     Retourne True si le transport souris a été fermé (correction ou lecture impossible).
     """
+    # Ne pas corriger si le suivi est désactivé
+    with _prefs_lock:
+        mouse_follow = prefs.get("mouse_follow", True)
+    if not mouse_follow:
+        state["pending_host"] = None
+        return False
+
     pending = state.get("pending_host")
     if pending is None:
         return False
@@ -501,7 +515,17 @@ def run_daemon(
 
         if isinstance(event, _SwitchEvent):
             log.info("★ Switch reçu de [%s] → hôte %d", event.kb_name, event.target_host)
-            _send_to_all_mice(mice_list, event.target_host, state, mouse_lock)
+
+            # Vérifier si le suivi de la souris est activé
+            with _prefs_lock:
+                mouse_follow = prefs.get("mouse_follow", True)
+
+            if mouse_follow:
+                _send_to_all_mice(mice_list, event.target_host, state, mouse_lock)
+            else:
+                log.info("Suivi souris désactivé — CHANGE_HOST non envoyé")
+                state["pending_host"] = None
+
             state["switches"] = state.get("switches", 0) + 1
             hunt_trigger.set()  # probe rapide pour reconnecter les souris après switch
 
