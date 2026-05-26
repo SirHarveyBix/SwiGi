@@ -19,8 +19,8 @@ except ImportError:
 
 def load_prefs() -> dict:
     try:
-        with open(PREFS_FILE, "r") as f:
-            data = json.load(f)
+        with open(PREFS_FILE, "r") as prefs_file:
+            data = json.load(prefs_file)
             data.setdefault("notifications", True)
             data.setdefault("mouse_follow", True)
             return data
@@ -30,10 +30,10 @@ def load_prefs() -> dict:
 
 def save_prefs(prefs: dict) -> None:
     try:
-        with open(PREFS_FILE, "w") as f:
-            json.dump(prefs, f)
-    except Exception as e:
-        log.warning("Impossible de sauvegarder les préférences : %s", e)
+        with open(PREFS_FILE, "w") as prefs_file:
+            json.dump(prefs, prefs_file)
+    except Exception as error:
+        log.warning("Impossible de sauvegarder les préférences : %s", error)
 
 
 prefs = load_prefs()
@@ -47,13 +47,13 @@ def notify(message: str, subtitle: str = "") -> None:
     if SYSTEM != "Darwin" or not notifications_enabled:
         return
 
-    def _esc(s: str) -> str:
-        s = s.replace("\\", "\\\\").replace('"', '\\"')
-        return ''.join(c for c in s if c >= ' ' or c in '\t')
+    def _escape_string(text: str) -> str:
+        text = text.replace("\\", "\\\\").replace('"', '\\"')
+        return ''.join(char for char in text if char >= ' ' or char in '\t')
 
-    script = f'display notification "{_esc(message)}" with title "SwiGi"'
+    script = f'display notification "{_escape_string(message)}" with title "SwiGi"'
     if subtitle:
-        script += f' subtitle "{_esc(subtitle)}"'
+        script += f' subtitle "{_escape_string(subtitle)}"'
     try:
         subprocess.Popen(
             ["osascript", "-e", script],
@@ -68,9 +68,9 @@ if HAS_RUMPS and _rumps:
 
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            keyboard0 = state.get("keyboard")
-            mouse0 = state.get("mouse")
-            super().__init__("⌨️" if (keyboard0 and mouse0) else "⌨", quit_button=None)
+            initial_keyboard = state.get("keyboard")
+            initial_mouse = state.get("mouse")
+            super().__init__("⌨️" if (initial_keyboard and initial_mouse) else "⌨", quit_button=None)
             try:
                 from AppKit import NSApplication
                 NSApplication.sharedApplication().setActivationPolicy_(1)
@@ -79,8 +79,8 @@ if HAS_RUMPS and _rumps:
             self._state = state
             self._stop_event = stop_event
 
-            self._keyboard_item    = _rumps.MenuItem(f"Clavier : {keyboard0 or '—'} {'✅' if keyboard0 else '❌'}")
-            self._mouse_item = _rumps.MenuItem(f"Souris : {mouse0 or '—'} {'✅' if mouse0 else '❌'}")
+            self._keyboard_item    = _rumps.MenuItem(f"Clavier : {initial_keyboard or '—'} {'✅' if initial_keyboard else '❌'}")
+            self._mouse_item = _rumps.MenuItem(f"Souris : {initial_mouse or '—'} {'✅' if initial_mouse else '❌'}")
             self._count_item = _rumps.MenuItem("Basculements : 0")
             self._notify_item = _rumps.MenuItem("Notifications", callback=self._toggle_notify)
             self._notify_item.state = prefs.get("notifications", True)
@@ -130,21 +130,21 @@ if HAS_RUMPS and _rumps:
 
         @_rumps.timer(2)
         def _refresh(self, _):
-            # Support multi-clavier : construire le nom depuis state["kbs"] si disponible
-            kbs = self._state.get("kbs")
-            if kbs:
-                actifs = [d["name"] for d in kbs.values() if d.get("ok") and d.get("name")]
-                kb = ", ".join(actifs) if actifs else None
-                # Garder state["kb"] cohérent pour le reste du code
-                self._state["kb"] = actifs[0] if actifs else None
+            # Support multi-clavier : construire le nom depuis state["keyboards"] si disponible
+            keyboards = self._state.get("keyboards")
+            if keyboards:
+                actifs = [d["name"] for d in keyboards.values() if d.get("ok") and d.get("name")]
+                keyboard = ", ".join(actifs) if actifs else None
+                # Garder state["keyboard"] cohérent pour le reste du code
+                self._state["keyboard"] = actifs[0] if actifs else None
             else:
-                kb = self._state.get("kb")
+                keyboard = self._state.get("keyboard")
             mouse = self._state.get("mouse")
             switches = self._state.get("switches", 0)
-            self._kb_item.title    = f"Clavier : {kb or '—'} {'✅' if kb else '❌'}"
+            self._keyboard_item.title = f"Clavier : {keyboard or '—'} {'✅' if keyboard else '❌'}"
             self._mouse_item.title = f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
             self._count_item.title = f"Basculements : {switches}"
-            self.title = "⌨️" if (kb and mouse) else "⌨"
+            self.title = "⌨️" if (keyboard and mouse) else "⌨"
 
         # ── Notifications ──────────────────────────────────────────────────
 
@@ -173,13 +173,13 @@ if HAS_RUMPS and _rumps:
             default_name = mouse_name.replace(" ", "-").lower()
             try:
                 path = export_current(name=default_name)
-                fname = os.path.basename(path)[:-5]  # sans .json
-                notify(f"Profil exporté : {fname}", "BetterMouse")
+                file_name = os.path.basename(path)[:-5]  # sans .json
+                notify(f"Profil exporté : {file_name}", "BetterMouse")
                 log.info("BetterMouse : profil exporté → %s", path)
                 self._rebuild_profile_menu()
-            except Exception as e:
-                log.warning("Export BetterMouse échoué : %s", e)
-                notify(f"Export échoué : {e}", "Erreur")
+            except Exception as error:
+                log.warning("Export BetterMouse échoué : %s", error)
+                notify(f"Export échoué : {error}", "Erreur")
 
         # ── BetterMouse — sélection profil ────────────────────────────────
 

@@ -24,9 +24,9 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(constants.MSG_LENGTHS[constants.REPORT_LONG], constants.MSG_LONG_LEN)
 
     def test_ping_msg_format(self):
-        self.assertEqual(len(constants.PING_MSG), 20)
-        self.assertEqual(constants.PING_MSG[0], constants.REPORT_LONG)
-        self.assertEqual(constants.PING_MSG[1], constants.DEVNUMBER_DIRECT)
+        self.assertEqual(len(constants.PING_MESSAGE), 20)
+        self.assertEqual(constants.PING_MESSAGE[0], constants.REPORT_LONG)
+        self.assertEqual(constants.PING_MESSAGE[1], constants.DEVICE_NUMBER_DIRECT)
 
 
 if __name__ == "__main__":

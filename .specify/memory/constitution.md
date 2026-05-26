@@ -119,6 +119,17 @@ Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être
 - Fenêtre de lecture à 80ms (`deadline = time.time() + 0.08`).
 - Pas de `time.sleep()` > 1s dans le chemin critique de traitement d'un événement.
 
+### Principe 6 — Clarté et Lisibilité
+
+**Règle :** Toutes les variables, fonctions, classes et constantes dans la base de code de SwiGi DOIVENT avoir des noms explicites, clairs et complets en toutes lettres. Les abréviations peu claires ou cryptiques (telles que `kb` pour `keyboard`, `e` pour `error` ou `exception`, `q` pour `queue`, `idx` pour `index`, `dev` pour `device`, `pid` pour `product_id` / `process_id`) sont interdites dans le code source.
+
+**Rationale :** Une base de code lisible réduit la charge cognitive lors de la maintenance et prévient les bugs d'inattention, garantissant la robustesse à long terme.
+
+**Tests de conformité :**
+
+- Aucun identifiant de variable à lettre unique ou abréviation cryptique n'est toléré dans les fichiers `.py`.
+- Le code de test s'aligne exactement sur la même nomenclature.
+
 ---
 
 ## 3. Gouvernance
@@ -140,7 +151,7 @@ Suit la sémantique suivante :
 
 ### 3.3 Révision de conformité
 
-Chaque Pull Request modifiant le package `swigi/` ou le wrapper `swigi.py` DOIT inclure une vérification mentale des 5 principes. En cas de violation intentionnelle (nécessité technique documentée), une note explicite DOIT figurer dans le message de commit ou la PR description.
+Chaque Pull Request modifiant le package `swigi/` ou le wrapper `swigi.py` DOIT inclure une vérification mentale des 6 principes. En cas de violation intentionnelle (nécessité technique documentée), une note explicite DOIT figurer dans le message de commit ou la PR description.
 
 ### 3.4 Compatibilité avec les outils de spécification
 

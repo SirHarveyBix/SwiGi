@@ -7,16 +7,22 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # Mock swigi.gui avant import (effet de bord load_prefs)
-_mock_gui = MagicMock()
-_mock_gui.notify = MagicMock()
-_mock_gui.prefs = {}
-_mock_gui.HAS_RUMPS = False
-_mock_gui.SwiGiMenuBar = None
-sys.modules.setdefault("swigi.gui", _mock_gui)
+if "swigi.gui" in sys.modules:
+    _mock_gui = sys.modules["swigi.gui"]
+else:
+    _mock_gui = MagicMock()
+    _mock_gui.notify = MagicMock()
+    _mock_gui.prefs = {}
+    _mock_gui.HAS_RUMPS = False
+    _mock_gui.SwiGiMenuBar = None
+    sys.modules["swigi.gui"] = _mock_gui
 
-_mock_loader = MagicMock()
-_mock_loader.lib = MagicMock()
-sys.modules.setdefault("swigi.hidapi_loader", _mock_loader)
+if "swigi.hidapi_loader" in sys.modules:
+    _mock_loader = sys.modules["swigi.hidapi_loader"]
+else:
+    _mock_loader = MagicMock()
+    _mock_loader.lib = MagicMock()
+    sys.modules["swigi.hidapi_loader"] = _mock_loader
 
 from swigi.bettermouse import (  # noqa: E402
     _find_global_app,
@@ -90,22 +96,22 @@ def _make_root_plist(product="MX Master 4", vendor="Logitech"):
 
 def _write_root_plist(path, **kwargs):
     root = _make_root_plist(**kwargs)
-    with open(path, "wb") as f:
-        plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
+    with open(path, "wb") as file:
+        plistlib.dump(root, file, fmt=plistlib.FMT_BINARY)
 
 
 # ── Helpers privés ─────────────────────────────────────────────────────────────
 
 class TestFindGlobalApp(unittest.TestCase):
     def test_finds_global(self):
-        apps = {"g": {"url": {"relative": "./"}, "scl": {}}}
-        result = _find_global_app(apps)
+        applications = {"global_app": {"url": {"relative": "./"}, "scl": {}}}
+        result = _find_global_app(applications)
         self.assertIsNotNone(result)
         self.assertIn("scl", result)
 
     def test_returns_none_when_missing(self):
-        apps = {"app1": {"url": {"relative": "/some/app"}}}
-        self.assertIsNone(_find_global_app(apps))
+        applications = {"app1": {"url": {"relative": "/some/app"}}}
+        self.assertIsNone(_find_global_app(applications))
 
     def test_empty_dict(self):
         self.assertIsNone(_find_global_app({}))
@@ -113,15 +119,15 @@ class TestFindGlobalApp(unittest.TestCase):
 
 class TestPollingHz(unittest.TestCase):
     def test_1000hz(self):
-        # bit 3 = 1000 Hz, rpRate=0 → seul bit disponible → 1000 Hz
+        # bit 3 = 1000 Hz, reporting_rate=0 → seul bit disponible → 1000 Hz
         self.assertEqual(_polling_hz(0b00001000, 0), 1000)
 
     def test_500hz(self):
-        # bits 2+3 disponibles, rpRate=0 → 500 Hz
+        # bits 2+3 disponibles, reporting_rate=0 → 500 Hz
         self.assertEqual(_polling_hz(0b00001100, 0), 500)
 
     def test_out_of_range(self):
-        # rpRate hors limites → 0
+        # reporting_rate hors limites → 0
         self.assertEqual(_polling_hz(0b00000001, 5), 0)
 
 
@@ -138,8 +144,8 @@ class TestSafeUpdate(unittest.TestCase):
 
 class TestIsAvailable(unittest.TestCase):
     def test_true_when_plist_exists_darwin(self):
-        with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as f:
-            plist_path = f.name
+        with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as temp_file:
+            plist_path = temp_file.name
         try:
             with patch("swigi.bettermouse.BM_PLIST", plist_path), \
                  patch("swigi.bettermouse.SYSTEM", "Darwin"):
@@ -161,24 +167,24 @@ class TestIsAvailable(unittest.TestCase):
 
 class TestListProfiles(unittest.TestCase):
     def test_lists_json_files_sorted(self):
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as temp_dir:
             for name in ("b-prof.json", "a-prof.json", "c-prof.json"):
-                open(os.path.join(d, name), "w").close()
-            with patch("swigi.bettermouse.PROFILES_DIR", d):
+                open(os.path.join(temp_dir, name), "w").close()
+            with patch("swigi.bettermouse.PROFILES_DIR", temp_dir):
                 result = list_profiles()
         self.assertEqual(result, ["a-prof", "b-prof", "c-prof"])
 
     def test_ignores_non_json(self):
-        with tempfile.TemporaryDirectory() as d:
-            open(os.path.join(d, "prof.json"), "w").close()
-            open(os.path.join(d, "notes.txt"), "w").close()
-            with patch("swigi.bettermouse.PROFILES_DIR", d):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            open(os.path.join(temp_dir, "prof.json"), "w").close()
+            open(os.path.join(temp_dir, "notes.txt"), "w").close()
+            with patch("swigi.bettermouse.PROFILES_DIR", temp_dir):
                 result = list_profiles()
         self.assertEqual(result, ["prof"])
 
     def test_empty_dir(self):
-        with tempfile.TemporaryDirectory() as d:
-            with patch("swigi.bettermouse.PROFILES_DIR", d):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("swigi.bettermouse.PROFILES_DIR", temp_dir):
                 self.assertEqual(list_profiles(), [])
 
 
@@ -201,8 +207,8 @@ class TestExportCurrent(unittest.TestCase):
              patch("swigi.bettermouse.SYSTEM", "Darwin"):
             path = export_current("test-export")
         self.assertTrue(os.path.isfile(path))
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
         self.assertEqual(data["meta"]["name"], "test-export")
         self.assertEqual(data["meta"]["mouse"], "MX Master 4")
         self.assertIn("scroll", data)
@@ -214,8 +220,8 @@ class TestExportCurrent(unittest.TestCase):
              patch("swigi.bettermouse.PROFILES_DIR", profiles_dir), \
              patch("swigi.bettermouse.SYSTEM", "Darwin"):
             path = export_current("scroll-test")
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
         scroll = data["scroll"]
         self.assertTrue(scroll["smooth_en"])
         self.assertEqual(scroll["duration"], 10)
@@ -270,8 +276,8 @@ class TestApplyProfile(unittest.TestCase):
                 "polling_rate": 2,
             },
         }
-        with open(os.path.join(self.profiles_dir, "test.json"), "w") as f:
-            json.dump(profile, f)
+        with open(os.path.join(self.profiles_dir, "test.json"), "w") as file:
+            json.dump(profile, file)
 
     def tearDown(self):
         import shutil
@@ -287,26 +293,26 @@ class TestApplyProfile(unittest.TestCase):
 
     def test_apply_patches_scroll(self):
         self._apply()
-        with open(self.plist_path, "rb") as f:
-            root = plistlib.load(f)
+        with open(self.plist_path, "rb") as file:
+            root = plistlib.load(file)
         appitems = plistlib.loads(root["appitems"])
-        scl = _find_global_app(appitems["apps"])["scl"]
-        self.assertFalse(scl["smoothEn"])
-        self.assertEqual(scl["duration"], 20)
-        self.assertEqual(scl["brake"], 5)
-        self.assertTrue(scl["vertInvEn"])
+        scroll_settings = _find_global_app(appitems["apps"])["scl"]
+        self.assertFalse(scroll_settings["smoothEn"])
+        self.assertEqual(scroll_settings["duration"], 20)
+        self.assertEqual(scroll_settings["brake"], 5)
+        self.assertTrue(scroll_settings["vertInvEn"])
 
     def test_apply_patches_mouse_hw(self):
         self._apply()
-        with open(self.plist_path, "rb") as f:
-            root = plistlib.load(f)
+        with open(self.plist_path, "rb") as file:
+            root = plistlib.load(file)
         mice = plistlib.loads(root["mice"])["mice"]
-        m = next(m for m in mice if m["name"]["vendor"].lower() == "logitech")
-        self.assertFalse(m["ratchetMode"])
-        self.assertFalse(m["hiResWheel"])
-        self.assertEqual(m["disengagePoint"], 10)
-        self.assertEqual(m["torque"], 50)
-        self.assertEqual(m["rpRate"], 2)
+        mouse = next(mouse for mouse in mice if mouse["name"]["vendor"].lower() == "logitech")
+        self.assertFalse(mouse["ratchetMode"])
+        self.assertFalse(mouse["hiResWheel"])
+        self.assertEqual(mouse["disengagePoint"], 10)
+        self.assertEqual(mouse["torque"], 50)
+        self.assertEqual(mouse["rpRate"], 2)
 
     def test_apply_raises_for_wrong_mouse(self):
         with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
@@ -326,8 +332,8 @@ class TestApplyProfile(unittest.TestCase):
 
     def test_apply_rollback_on_patch_error(self):
         """Plist corrompu → rollback vers backup."""
-        with open(self.plist_path, "rb") as fh:
-            original_data = fh.read()
+        with open(self.plist_path, "rb") as file_handle:
+            original_data = file_handle.read()
 
         with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
              patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir), \
@@ -338,8 +344,8 @@ class TestApplyProfile(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 apply_profile("test")
         # Plist doit être restauré
-        with open(self.plist_path, "rb") as fh:
-            self.assertEqual(fh.read(), original_data)
+        with open(self.plist_path, "rb") as file_handle:
+            self.assertEqual(file_handle.read(), original_data)
 
     def test_apply_accepts_none_mouse_name(self):
         """mouse_name=None → pas de vérification souris."""

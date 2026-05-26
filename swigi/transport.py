@@ -8,41 +8,41 @@ class TransportError(Exception):
 
 
 class HIDTransport:
-    def __init__(self, path: bytes, pid: int):
+    def __init__(self, path: bytes, product_id: int):
         self.path = path
-        self.pid = pid
-        self._dev = lib.hid_open_path(path)
-        if not self._dev:
+        self.product_id = product_id
+        self._device = lib.hid_open_path(path)
+        if not self._device:
             raise OSError(f"hid_open_path échoué : {hid_err()}")
 
     @property
     def is_open(self) -> bool:
-        return self._dev is not None
+        return self._device is not None
 
     def read(self, timeout: int = 500) -> bytes | None:
-        if self._dev is None:
+        if self._device is None:
             raise TransportError("lecture sur transport fermé")
-        buf = (ctypes.c_ubyte * MAX_READ_SIZE)()
-        n = lib.hid_read_timeout(self._dev, buf, MAX_READ_SIZE, timeout)
-        if n < 0:
-            err = hid_err(self._dev) or ""
-            if "success" in err.lower() or err == "":
+        buffer = (ctypes.c_ubyte * MAX_READ_SIZE)()
+        bytes_read = lib.hid_read_timeout(self._device, buffer, MAX_READ_SIZE, timeout)
+        if bytes_read < 0:
+            error_message = hid_err(self._device) or ""
+            if "success" in error_message.lower() or error_message == "":
                 return None  # quirk BT macOS
-            raise TransportError(f"hid_read échoué : {err}")
-        return bytes(buf[:n]) if n > 0 else None
+            raise TransportError(f"hid_read échoué : {error_message}")
+        return bytes(buffer[:bytes_read]) if bytes_read > 0 else None
 
-    def write(self, msg: bytes) -> None:
-        if self._dev is None:
+    def write(self, message: bytes) -> None:
+        if self._device is None:
             raise TransportError("écriture sur transport fermé")
-        buf = (ctypes.c_ubyte * len(msg))(*msg)
-        n = lib.hid_write(self._dev, buf, len(msg))
-        if n < 0:
-            raise TransportError(f"hid_write échoué : {hid_err(self._dev)}")
+        buffer = (ctypes.c_ubyte * len(message))(*message)
+        bytes_written = lib.hid_write(self._device, buffer, len(message))
+        if bytes_written < 0:
+            raise TransportError(f"hid_write échoué : {hid_err(self._device)}")
 
     def close(self):
-        if self._dev is not None:
-            lib.hid_close(self._dev)
-            self._dev = None
+        if self._device is not None:
+            lib.hid_close(self._device)
+            self._device = None
 
     def __del__(self):
         self.close()
@@ -50,5 +50,5 @@ class HIDTransport:
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exceptions):
         self.close()

@@ -24,17 +24,17 @@ def _acquire_lock() -> bool:
     Si le fichier existe déjà, vérifie si le PID est vivant avant de conclure.
     """
     try:
-        fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w") as f:
-            f.write(str(os.getpid()))
+        lock_file_descriptor = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(lock_file_descriptor, "w") as lock_file:
+            lock_file.write(str(os.getpid()))
         return True
     except FileExistsError:
         pass  # fichier existe — vérifier si le PID est vivant
 
     try:
-        with open(_LOCK_FILE) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 0)
+        with open(_LOCK_FILE) as lock_file:
+            process_id = int(lock_file.read().strip())
+        os.kill(process_id, 0)
         return False  # instance vivante
     except (ValueError, OSError):
         # PID mort ou fichier corrompu — écraser le lock
@@ -60,21 +60,21 @@ def main() -> int:
         metavar="FICHIER",
         help="Écrire les logs dans ce fichier (rotation auto : 1 Mo × 3)",
     )
-    args = parser.parse_args()
+    arguments = parser.parse_args()
 
     if not _acquire_lock():
         print("SwiGi est déjà en cours d'exécution.", file=sys.stderr)
         return 0
 
     try:
-        return _main_inner(args)
+        return _main_inner(arguments)
     finally:
         _release_lock()
 
 
-def _main_inner(args) -> int:
-    level = logging.DEBUG if args.verbose else logging.INFO
-    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+def _main_inner(arguments) -> int:
+    level = logging.DEBUG if arguments.verbose else logging.INFO
+    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 
     # Configuration propre du logger "swigi"
     swigi_logger = logging.getLogger("swigi")
@@ -84,16 +84,16 @@ def _main_inner(args) -> int:
     # Effacer les handlers existants s'il y en a (sécurité import multiple)
     swigi_logger.handlers.clear()
 
-    ch = logging.StreamHandler()
-    ch.setFormatter(fmt)
-    swigi_logger.addHandler(ch)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    swigi_logger.addHandler(console_handler)
 
-    if args.log_file:
-        fh = logging.handlers.RotatingFileHandler(
-            args.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    if arguments.log_file:
+        file_handler = logging.handlers.RotatingFileHandler(
+            arguments.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
         )
-        fh.setFormatter(fmt)
-        swigi_logger.addHandler(fh)
+        file_handler.setFormatter(formatter)
+        swigi_logger.addHandler(file_handler)
 
     log.info("SwiGi — recherche des périphériques...")
 
@@ -102,7 +102,7 @@ def _main_inner(args) -> int:
         log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
         return 1
     for keyboard in keyboards:
-        log.info("Clavier : %s (PID=0x%04X, CHANGE_HOST idx=%d)", keyboard.name, keyboard.pid, keyboard.change_host_idx)
+        log.info("Clavier : %s (Product ID=0x%04X, CHANGE_HOST index=%d)", keyboard.name, keyboard.product_id, keyboard.change_host_index)
         notify(f"{keyboard.name} connecté", "Clavier")
 
     mice = find_all_devices(DEVICE_TYPE_MOUSE)
@@ -112,7 +112,7 @@ def _main_inner(args) -> int:
             " (Normal si la souris est connectée à un autre Mac.)"
         )
     for mouse in mice:
-        log.info("Souris :  %s (PID=0x%04X, CHANGE_HOST idx=%d)", mouse.name, mouse.pid, mouse.change_host_idx)
+        log.info("Souris :  %s (Product ID=0x%04X, CHANGE_HOST index=%d)", mouse.name, mouse.product_id, mouse.change_host_index)
         notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
@@ -123,7 +123,7 @@ def _main_inner(args) -> int:
 
     state: dict = {
         "keyboard": keyboards[0].name,
-        "keyboards": {keyboard.pid: {"name": keyboard.name, "ok": True} for keyboard in keyboards},
+        "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True} for keyboard in keyboards},
         "mouse": mice[0].name if mice else None,
         "mice": [mouse.name for mouse in mice],
         "switches": 0,
@@ -131,7 +131,7 @@ def _main_inner(args) -> int:
     }
     stop_event = threading.Event()
 
-    def _on_stop(sig, frame):
+    def _on_stop(signal_number, stack_frame):
         stop_event.set()
         if HAS_RUMPS and SwiGiMenuBar:
             try:
@@ -154,14 +154,14 @@ def _main_inner(args) -> int:
                 if stop_event.is_set():
                     break
                 time.sleep(5)
-                keyboards_new = find_all_devices(DEVICE_TYPE_KEYBOARD)
-                if keyboards_new:
-                    keyboards = keyboards_new
-                    state["keyboards"] = {keyboard.pid: {"name": keyboard.name, "ok": True} for keyboard in keyboards}
+                new_keyboards = find_all_devices(DEVICE_TYPE_KEYBOARD)
+                if new_keyboards:
+                    keyboards = new_keyboards
+                    state["keyboards"] = {keyboard.product_id: {"name": keyboard.name, "ok": True} for keyboard in keyboards}
                     state["keyboard"] = keyboards[0].name
-                mice_new = find_all_devices(DEVICE_TYPE_MOUSE)
-                if mice_new:
-                    mice = mice_new
+                new_mice = find_all_devices(DEVICE_TYPE_MOUSE)
+                if new_mice:
+                    mice = new_mice
                     state["mice"] = [mouse.name for mouse in mice]
                     state["mouse"] = mice[0].name
 

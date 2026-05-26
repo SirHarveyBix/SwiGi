@@ -27,7 +27,7 @@ DEVICE_TYPE_MOUSE = 3
 DEVICE_TYPE_TRACKPAD = 4
 DEVICE_TYPE_TRACKBALL = 5
 
-DEVNUMBER_DIRECT = 0xFF
+DEVICE_NUMBER_DIRECT = 0xFF
 SW_ID = 0x0A  # identifiant SwiGi (CleverSwitch utilise 0x08)
 CHANGE_HOST_FN_SET = 0x10
 
@@ -47,4 +47,4 @@ PREFS_FILE = os.path.expanduser("~/.swigi_prefs.json")
 PING_REQUEST_ID = (FEATURE_ROOT << 8) | 0x00 | SW_ID
 # Construction explicite du ping : 20 octets au total (format HID++ REPORT_LONG)
 _PING_DATA = struct.pack("!H", PING_REQUEST_ID) + b"\x00" * 16  # 18 octets total
-PING_MSG = struct.pack("!BB", REPORT_LONG, DEVNUMBER_DIRECT) + _PING_DATA
+PING_MESSAGE = struct.pack("!BB", REPORT_LONG, DEVICE_NUMBER_DIRECT) + _PING_DATA
