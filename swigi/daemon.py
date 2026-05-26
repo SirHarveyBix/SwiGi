@@ -151,10 +151,9 @@ def _send_to_all_mice(
     Met à jour state["pending_host"] et state["mice"].
     """
     with mouse_lock:
-        # Travailler sur une copie de la liste pour éviter les modifications concurrentes
         for mouse in list(mice):
             if not mouse.transport.is_open:
-                log.debug("[%s] Transport fermé — skip (sera reconnectée par probe)", mouse.name)
+                log.debug("[%s] Transport fermé — skip", mouse.name)
                 continue
             try:
                 send_change_host(
@@ -169,9 +168,11 @@ def _send_to_all_mice(
                 log.warning("[%s] CHANGE_HOST échoué : %s", mouse.name, e)
                 mouse.close()
 
-        # Mémoriser l'hôte cible pour correction au reconnect des souris absentes
+        # Vider la liste : probe_loop va retrouver les souris avec des handles frais.
+        # Sans ce clear(), les DeviceInfo avec transport fermé bloquent la reconnexion
+        # (leur PID reste dans existing_pids → nouvel handle fermé comme "doublon").
+        mice.clear()
         state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
-        # Effacer la liste des souris actives (toutes viennent d'être fermées)
         state["mouse"] = None
         state["mice"] = []
 
@@ -337,42 +338,37 @@ def _mice_probe_loop(
 
         # Probe les souris disponibles
         found = find_all_devices(DEVICE_TYPE_MOUSE)
-        found_pids = {m.pid for m in found}
+        found_by_pid = {m.pid: m for m in found}
 
         with mouse_lock:
-            existing_pids = {m.pid for m in mice}
-
-            # Nouvelles souris détectées
-            for m in found:
-                if m.pid not in existing_pids:
-                    log.info("Souris détectée : %s (PID=0x%04X)", m.name, m.pid)
-                    notify(f"{m.name} connectée", "Souris")
-                    mice.append(m)
-                    existing_pids.add(m.pid)
-                    # Appliquer pending_host si nécessaire
-                    if not _check_and_apply_pending_host(m, state):
-                        _apply_bm_profile_if_needed(m.name)
+            # Pour chaque souris trouvée :
+            #  - PID inconnu dans mice          → nouvelle souris, on l'ajoute
+            #  - PID connu, transport ouvert     → doublon, on ferme le nouveau
+            #  - PID connu, transport fermé      → souris morte, on la remplace
+            for new_m in found:
+                existing = next((m for m in mice if m.pid == new_m.pid), None)
+                if existing is None:
+                    log.info("Souris détectée : %s (PID=0x%04X)", new_m.name, new_m.pid)
+                    notify(f"{new_m.name} connectée", "Souris")
+                    mice.append(new_m)
+                    if not _check_and_apply_pending_host(new_m, state):
+                        _apply_bm_profile_if_needed(new_m.name)
+                elif not existing.transport.is_open:
+                    # Remplacer l'instance morte par la nouvelle (handle frais)
+                    log.info("Souris réouverte : %s (PID=0x%04X)", new_m.name, new_m.pid)
+                    mice.remove(existing)
+                    mice.append(new_m)
+                    if not _check_and_apply_pending_host(new_m, state):
+                        _apply_bm_profile_if_needed(new_m.name)
                 else:
-                    # Fermer les doublons (déjà dans la liste)
-                    m.close()
+                    # Transport déjà ouvert — fermer le doublon
+                    new_m.close()
 
-            # Tenter de rouvrir les souris avec transport fermé
-            to_remove = []
-            for m in mice:
-                if not m.transport.is_open:
-                    if m.pid in found_pids:
-                        # La souris est disponible mais transport fermé — rouvrir
-                        # (déjà géré ci-dessus en tant que nouvelle souris si pid non connu)
-                        pass
-                    else:
-                        # Souris disparue
-                        to_remove.append(m)
-
-            for m in to_remove:
+            # Retirer les souris mortes non retrouvées par find_all_devices
+            for m in [x for x in list(mice) if not x.transport.is_open and x.pid not in found_by_pid]:
                 log.info("Souris retirée : %s (plus disponible)", m.name)
                 mice.remove(m)
 
-            # Mettre à jour state["mice"] et state["mouse"]
             active = [m for m in mice if m.transport.is_open]
             state["mice"] = [m.name for m in active]
             state["mouse"] = active[0].name if active else None

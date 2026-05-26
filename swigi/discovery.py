@@ -68,8 +68,15 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
     lib.hid_free_enumeration(head)
     candidates.sort(key=lambda x: -x[0])
 
+    seen_pids: set[int] = set()
     results = []
     for score, path, pid, up, usage in candidates:
+        # Un seul handle par PID — un périphérique BT expose plusieurs interfaces HID
+        # (keyboard HID, vendor HID++, etc.) avec le même PID. Ouvrir les deux →
+        # double-free dans libhidapi → malloc crash.
+        if pid in seen_pids:
+            log.debug("PID=0x%04X déjà traité (interface multiple ignorée)", pid)
+            continue
         try:
             t = HIDTransport(path, pid)
         except OSError:
@@ -94,6 +101,7 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             if ch is None:
                 t.close()
                 continue
+            seen_pids.add(pid)
             results.append(DeviceInfo(t, name, pid, ch))
         except (TransportError, OSError):
             t.close()
