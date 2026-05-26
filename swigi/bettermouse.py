@@ -12,6 +12,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime
 
 from swigi.constants import SYSTEM
@@ -164,6 +165,7 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
     if not is_available():
         raise FileNotFoundError("BetterMouse plist introuvable")
 
+    name = os.path.basename(name)
     path = os.path.join(PROFILES_DIR, f"{name}.json")
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Profil introuvable : {path}")
@@ -177,7 +179,7 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
             f"Profil pour '{profile['meta']['mouse']}', souris connectée : '{mouse_name}'"
         )
 
-    backup = BM_PLIST + ".swigi_bak"
+    backup = f"{BM_PLIST}.swigi_bak_{datetime.now():%Y%m%d_%H%M%S}"
     shutil.copy2(BM_PLIST, backup)
     log.debug("Backup BetterMouse plist → %s", backup)
 
@@ -186,8 +188,19 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
         _patch_appitems(root, profile.get("scroll", {}))
         _patch_mice(root, profile.get("mouse_hw", {}))
 
-        with open(BM_PLIST, "wb") as f:
-            plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=os.path.dirname(BM_PLIST), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "wb") as f:
+                plistlib.dump(root, f, fmt=plistlib.FMT_BINARY)
+            os.replace(tmp_path, BM_PLIST)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         log.info("Profil '%s' appliqué", name)
 
         # Restart BetterMouse uniquement si le patch a réussi

@@ -55,7 +55,7 @@ def hidpp_request(
         raw = transport.read(min(timeout, remaining_ms))
         if not raw or len(raw) < 4:
             continue
-        if raw[0] not in MSG_LENGTHS or len(raw) != MSG_LENGTHS[raw[0]]:
+        if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
             continue
 
         rdev = raw[1]
@@ -164,7 +164,8 @@ def get_current_host(transport: HIDTransport, devnumber: int, feat_idx: int) -> 
     """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
     reply = hidpp_request(transport, devnumber, (feat_idx << 8) | 0x00, timeout=500)
     if reply and len(reply) >= 2:
-        # reply[0] = numHosts, reply[1] = currentHost
-        return reply[1]
+        num_hosts, current_host = reply[0], reply[1]
+        if num_hosts > 0 and 0 <= current_host < num_hosts:
+            return current_host
     return None
 

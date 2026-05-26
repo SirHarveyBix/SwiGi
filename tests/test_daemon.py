@@ -606,5 +606,140 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
         self.assertIn("MX Keys Mini", names)
 
 
+class TestMiceProbeLoop(unittest.TestCase):
+    """Tests pour _mice_probe_loop : détection, remplacement, retrait, pending_host."""
+
+    def _make_lock(self):
+        import threading
+        return threading.Lock()
+
+    def test_new_mouse_added_to_list(self):
+        """Nouvelle souris détectée → ajoutée à mice_list."""
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.pid = 0xB042
+        mice_list = []
+        state = {"pending_host": None, "mouse": None, "mice": []}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=None):
+            import threading
+            from swigi.daemon import _mice_probe_loop
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)
+            stop.set()
+            t.join(timeout=2)
+
+        self.assertGreater(len(mice_list), 0)
+
+    def test_dead_mouse_replaced(self):
+        """Souris avec transport fermé → remplacée par nouvelle instance."""
+        old_m = _make_mouse(name="MX Master 4")
+        old_m.pid = 0xB042
+        old_m.transport.is_open = False
+
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.pid = 0xB042
+        new_m.transport.is_open = True
+
+        mice_list = [old_m]
+        state = {"pending_host": None, "mouse": None, "mice": []}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=None):
+            import threading
+            from swigi.daemon import _mice_probe_loop
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)
+            stop.set()
+            t.join(timeout=2)
+
+        # new_m doit être dans la liste, pas old_m
+        self.assertIn(new_m, mice_list)
+        self.assertNotIn(old_m, mice_list)
+
+    def test_dead_mouse_removed_when_not_found(self):
+        """Souris morte non retrouvée par find_all_devices → retirée."""
+        dead_m = _make_mouse(name="MX Master 4")
+        dead_m.pid = 0xB042
+        dead_m.transport.is_open = False
+
+        mice_list = [dead_m]
+        state = {"pending_host": None, "mouse": None, "mice": []}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.find_all_devices", return_value=[]), \
+             patch("swigi.daemon.notify"):
+            import threading
+            from swigi.daemon import _mice_probe_loop
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)
+            stop.set()
+            t.join(timeout=2)
+
+        self.assertNotIn(dead_m, mice_list)
+
+    def test_pending_host_applied_at_reconnect(self):
+        """pending_host appliqué quand nouvelle souris connectée."""
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.pid = 0xB042
+
+        mice_list = []
+        state = {"pending_host": (1, time.time() + 60), "mouse": None, "mice": []}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.find_all_devices", return_value=[new_m]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=1):
+            import threading
+            from swigi.daemon import _mice_probe_loop
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.3)
+            stop.set()
+            t.join(timeout=2)
+
+        # pending_host effacé car sync OK
+        self.assertIsNone(state["pending_host"])
+
+
 if __name__ == "__main__":
     unittest.main()

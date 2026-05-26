@@ -193,6 +193,49 @@ class TestGetCurrentHost(unittest.TestCase):
         result = protocol.get_current_host(transport, 0xFF, 0x09)
         self.assertIsNone(result)
 
+    def test_get_current_host_zero_is_valid(self):
+        """currentHost=0 est une valeur valide (falsy en Python mais pas None)."""
+        transport = MockTransport()
+        feat_idx = 0x09
+        request_id = ((feat_idx << 8) | 0x00 | SW_ID)
+        # numHosts=3, currentHost=0 → valide
+        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([3, 0]) + b"\x00" * 14
+        transport.responses_to_read.append(response)
+        host = protocol.get_current_host(transport, 0xFF, feat_idx)
+        self.assertEqual(host, 0)
+        self.assertIsNotNone(host)
+
+    def test_get_current_host_invalid_range_returns_none(self):
+        """currentHost >= numHosts → invalide → None."""
+        transport = MockTransport()
+        feat_idx = 0x09
+        request_id = ((feat_idx << 8) | 0x00 | SW_ID)
+        # numHosts=3, currentHost=5 → invalide
+        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([3, 5]) + b"\x00" * 14
+        transport.responses_to_read.append(response)
+        host = protocol.get_current_host(transport, 0xFF, feat_idx)
+        self.assertIsNone(host)
+
+
+class TestHidppRequestPaddedResponse(unittest.TestCase):
+    def test_hidpp_request_accepts_padded_32byte_response(self):
+        """Réponse paddée à 32 octets doit être acceptée (macOS BT quirk)."""
+        transport = MockTransport()
+        devnumber = 0xFF
+        request_id = 0x0900
+        resolved_request_id = (request_id & 0xFFF0) | SW_ID
+        # Response paddée à 32 bytes (MAX_READ_SIZE) au lieu de 20
+        response_payload = bytes([0x01, 0x02]) + b"\x00" * 10
+        response_msg = (
+            struct.pack("!BB", REPORT_LONG, devnumber)
+            + struct.pack("!H", resolved_request_id)
+            + response_payload
+            + b"\x00" * 12  # padding jusqu'à 32 bytes
+        )
+        transport.responses_to_read.append(response_msg)
+        reply = protocol.hidpp_request(transport, devnumber, request_id)
+        self.assertIsNotNone(reply)
+
 
 if __name__ == "__main__":
     unittest.main()

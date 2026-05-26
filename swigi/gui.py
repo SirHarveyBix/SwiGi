@@ -34,11 +34,14 @@ def save_prefs(prefs: dict) -> None:
 
 
 prefs = load_prefs()
+_prefs_lock = threading.Lock()
 
 
 def notify(message: str, subtitle: str = "") -> None:
     """Notification macOS via osascript. No-op si désactivé ou hors Darwin."""
-    if SYSTEM != "Darwin" or not prefs.get("notifications", True):
+    with _prefs_lock:
+        notifications_enabled = prefs.get("notifications", True)
+    if SYSTEM != "Darwin" or not notifications_enabled:
         return
 
     def _esc(s: str) -> str:
@@ -139,7 +142,8 @@ if HAS_RUMPS and _rumps:
 
         def _toggle_notify(self, sender):
             enabled = not bool(sender.state)
-            prefs["notifications"] = enabled
+            with _prefs_lock:
+                prefs["notifications"] = enabled
             save_prefs(prefs)
             sender.state = enabled
 
@@ -188,7 +192,8 @@ if HAS_RUMPS and _rumps:
 
         def _bm_select_profile(self, sender):
             name = sender.title if sender.title != "(aucun)" else None
-            prefs["bm_profile"] = name
+            with _prefs_lock:
+                prefs["bm_profile"] = name
             save_prefs(prefs)
             # Mettre à jour les checkmarks
             for key, item in self._bm_profile_menu.items():
@@ -201,7 +206,8 @@ if HAS_RUMPS and _rumps:
 
         def _bm_toggle_auto(self, sender):
             enabled = not bool(sender.state)
-            prefs["bm_auto_apply"] = enabled
+            with _prefs_lock:
+                prefs["bm_auto_apply"] = enabled
             save_prefs(prefs)
             sender.state = enabled
             log.info("BetterMouse auto-apply : %s", "ON" if enabled else "OFF")

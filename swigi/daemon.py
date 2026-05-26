@@ -3,6 +3,7 @@ import logging
 import queue
 import threading
 import time
+from contextlib import nullcontext
 
 from swigi.constants import (
     DEVICE_TYPE_KEYBOARD,
@@ -13,7 +14,7 @@ from swigi.constants import (
 )
 from swigi.constants import SYSTEM
 from swigi.discovery import DeviceInfo, find_all_devices
-from swigi.gui import notify, prefs
+from swigi.gui import notify, prefs, _prefs_lock
 from swigi.protocol import get_current_host, send_change_host
 from swigi.transport import TransportError
 
@@ -47,13 +48,16 @@ def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
     """
     if SYSTEM != "Darwin":
         return
-    if not prefs.get("bm_auto_apply") or not prefs.get("bm_profile"):
+    with _prefs_lock:
+        bm_auto = prefs.get("bm_auto_apply")
+        bm_profile = prefs.get("bm_profile")
+    if not bm_auto or not bm_profile:
         return
     try:
         from swigi.bettermouse import apply_profile
-        apply_profile(prefs["bm_profile"], mouse_name=mouse_name)
-        notify(f"Profil {prefs['bm_profile']} appliqué", "BetterMouse")
-        log.info("BetterMouse : profil '%s' appliqué", prefs["bm_profile"])
+        apply_profile(bm_profile, mouse_name=mouse_name)
+        notify(f"Profil {bm_profile} appliqué", "BetterMouse")
+        log.info("BetterMouse : profil '%s' appliqué", bm_profile)
     except ValueError as e:
         log.warning("BetterMouse : profil ignoré (souris différente) : %s", e)
     except Exception as e:
@@ -204,15 +208,28 @@ def _watch_keyboard(
             log.info("%s Watchdog : aucune réponse depuis %ds, reconnexion...",
                      prefix, int(WATCHDOG_TIMEOUT))
             kb.close()
-            state["kbs"][kb.pid]["ok"] = False
-            time.sleep(1.0)
+            _lock = state.get("_state_lock") or nullcontext()
+            with _lock:
+                state["kbs"][kb.pid]["ok"] = False
 
-            kb_new = _find_kb_by_pid(kb.pid)
+            delay = 0.5
+            max_delay = 5.0
+            kb_new = None
+            while not stop_event.is_set():
+                time.sleep(delay)
+                kb_new = _find_kb_by_pid(kb.pid)
+                if kb_new is not None:
+                    break
+                delay = min(delay * 1.5, max_delay)
+                log.debug("%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay)
+
             if kb_new:
                 kb = kb_new
                 kb.name = kb.name  # nom potentiellement mis à jour
                 prefix = f"[{kb.name}]"
-                state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
+                _lock = state.get("_state_lock") or nullcontext()
+                with _lock:
+                    state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
                 # Compatibilité GUI : mettre à jour le premier clavier actif
                 _update_kb_state(state)
                 log.info("%s Watchdog reconnexion OK", prefix)
@@ -231,20 +248,22 @@ def _watch_keyboard(
             if not switch_triggered:
                 notify(f"{kb.name} déconnecté", "Clavier")
             kb.close()
-            state["kbs"][kb.pid]["ok"] = False
+            _lock = state.get("_state_lock") or nullcontext()
+            with _lock:
+                state["kbs"][kb.pid]["ok"] = False
             _update_kb_state(state)
 
-            # Reconnexion : chercher CE clavier (même PID)
+            # Reconnexion : chercher CE clavier (même PID) avec backoff exponentiel
+            delay = 0.5
+            max_delay = 5.0
             kb_new = None
-            for attempt in range(600):
-                if stop_event.is_set():
-                    break
-                time.sleep(0.1)
+            while not stop_event.is_set():
+                time.sleep(delay)
                 kb_new = _find_kb_by_pid(kb.pid)
                 if kb_new is not None:
                     break
-                if attempt % 100 == 99:
-                    log.debug("%s Reconnexion : tentative %d/600...", prefix, attempt + 1)
+                delay = min(delay * 1.5, max_delay)
+                log.debug("%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay)
 
             if kb_new is None:
                 if not stop_event.is_set():
@@ -253,7 +272,9 @@ def _watch_keyboard(
 
             kb = kb_new
             prefix = f"[{kb.name}]"
-            state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
+            _lock = state.get("_state_lock") or nullcontext()
+            with _lock:
+                state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
             _update_kb_state(state)
             log.info("%s Reconnexion OK", prefix)
             notify(f"{kb.name} reconnecté", "Clavier")
@@ -275,7 +296,7 @@ def _watch_keyboard(
             if raw is None or len(raw) < 4:
                 continue
             rid = raw[0]
-            if rid not in MSG_LENGTHS or len(raw) != MSG_LENGTHS[rid]:
+            if rid not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[rid]:
                 continue
 
             feat = raw[2]
@@ -286,6 +307,9 @@ def _watch_keyboard(
             # Notification CHANGE_HOST
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
                 target_host = raw[5]
+                if not (0 <= target_host <= 2):
+                    log.warning("%s Hôte cible invalide : %d (ignoré)", prefix, target_host)
+                    continue
                 last_switch_time = time.time()
                 log.info("─" * 50)
                 log.info("%s ★ Easy-Switch → hôte %d", prefix, target_host)
@@ -340,26 +364,18 @@ def _mice_probe_loop(
         found = find_all_devices(DEVICE_TYPE_MOUSE)
         found_by_pid = {m.pid: m for m in found}
 
+        # Pass 1 : mises à jour liste (rapide, no I/O) + collecte nouvelles souris
+        new_mice = []
         with mouse_lock:
-            # Pour chaque souris trouvée :
-            #  - PID inconnu dans mice          → nouvelle souris, on l'ajoute
-            #  - PID connu, transport ouvert     → doublon, on ferme le nouveau
-            #  - PID connu, transport fermé      → souris morte, on la remplace
             for new_m in found:
                 existing = next((m for m in mice if m.pid == new_m.pid), None)
                 if existing is None:
-                    log.info("Souris détectée : %s (PID=0x%04X)", new_m.name, new_m.pid)
-                    notify(f"{new_m.name} connectée", "Souris")
                     mice.append(new_m)
-                    if not _check_and_apply_pending_host(new_m, state):
-                        _apply_bm_profile_if_needed(new_m.name)
+                    new_mice.append(new_m)
                 elif not existing.transport.is_open:
-                    # Remplacer l'instance morte par la nouvelle (handle frais)
-                    log.info("Souris réouverte : %s (PID=0x%04X)", new_m.name, new_m.pid)
                     mice.remove(existing)
                     mice.append(new_m)
-                    if not _check_and_apply_pending_host(new_m, state):
-                        _apply_bm_profile_if_needed(new_m.name)
+                    new_mice.append(new_m)
                 else:
                     # Transport déjà ouvert — fermer le doublon
                     new_m.close()
@@ -369,6 +385,15 @@ def _mice_probe_loop(
                 log.info("Souris retirée : %s (plus disponible)", m.name)
                 mice.remove(m)
 
+        # Pass 2 : HID I/O hors du lock (get_current_host peut prendre ~500ms)
+        for new_m in new_mice:
+            log.info("Souris détectée : %s (PID=0x%04X)", new_m.name, new_m.pid)
+            notify(f"{new_m.name} connectée", "Souris")
+            if not _check_and_apply_pending_host(new_m, state):
+                _apply_bm_profile_if_needed(new_m.name)
+
+        # Pass 3 : mise à jour state sous mouse_lock
+        with mouse_lock:
             active = [m for m in mice if m.transport.is_open]
             state["mice"] = [m.name for m in active]
             state["mouse"] = active[0].name if active else None
@@ -396,7 +421,9 @@ def _update_kb_state(state: dict) -> None:
 
     Compatibilité GUI : state["kb"] doit rester valide pour le timer de rafraîchissement.
     """
-    kbs = state.get("kbs", {})
+    _lock = state.get("_state_lock") or nullcontext()
+    with _lock:
+        kbs = dict(state.get("kbs", {}))
     for pid_data in kbs.values():
         if pid_data.get("ok"):
             state["kb"] = pid_data["name"]
@@ -419,6 +446,7 @@ def run_daemon(
     - Boucle principale : lit la queue d'événements et dispatche
     """
     # Initialiser l'état
+    state["_state_lock"] = threading.Lock()
     state["kbs"] = {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards}
     state["mouse"] = mice[0].name if mice else None
     state["mice"] = [m.name for m in mice]

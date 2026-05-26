@@ -67,6 +67,12 @@ RestartSec=5
 
 Désactivation : `systemctl --user disable swigi`
 
+## Notes de maintenance
+
+- `launchctl load/unload` déprécié depuis macOS 13 → remplacé par `bootstrap/bootout` (fix 2026-05-26)
+- `curl | bash` ne fonctionne pas avec `install_mac.sh` car le script nécessite les fichiers SwiGi locaux (`$SCRIPT_DIR/swigi.py`). Message d'erreur clair ajouté.
+- Après update Homebrew Python : le chemin `PYTHON_PATH` dans le plist pointe vers l'ancien binaire. Il faut relancer `install_mac.sh` pour régénérer le plist avec le nouveau chemin.
+
 ## 5. Conformité constitution
 
 | Principe        | Impact     | Mesure                                              |

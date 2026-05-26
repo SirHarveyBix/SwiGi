@@ -48,13 +48,21 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 **Méthode la plus simple — script automatique (recommandé)**
 
 1. Ouvre le Terminal (`Cmd+Espace`)
-2. Colle cette commande et appuie sur Entrée :
+2. Clone le dépôt et lance le script d'installation :
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+cd SwiGi
+bash install_mac.sh
 ```
 
 C'est tout. SwiGi démarre et se relancera automatiquement à chaque démarrage de ton Mac.
+
+> **Alternative :** Si le dépôt est déjà cloné sur ta machine, tu peux aussi utiliser :
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+> ```
+> ⚠️ Cette commande nécessite que les fichiers SwiGi soient déjà présents localement — elle ne peut pas fonctionner seule.
 
 ---
 
@@ -105,7 +113,7 @@ bash install_mac.sh
 Pour **désactiver** le démarrage automatique :
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.swigi.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
 ```
 
 ---
@@ -116,14 +124,14 @@ launchctl unload ~/Library/LaunchAgents/com.swigi.plist
 
 macOS bloque par défaut l'accès aux périphériques d'entrée. Tu dois autoriser SwiGi :
 
-**Si tu as utilisé le script curl (launchd) :**
+**Si tu as utilisé le script d'installation (launchd) :**
 
 1. Ouvre **Réglages Système** → **Confidentialité et sécurité** → **Surveillance des entrées**
 2. Clique sur le **+** et ajoute **python3** — son chemin exact est affiché lors de l'installation, ou retrouve-le avec `which python3` dans le Terminal
 3. Relance le service pour qu'il prenne en compte la permission :
    ```bash
-   launchctl unload ~/Library/LaunchAgents/com.swigi.plist
-   launchctl load ~/Library/LaunchAgents/com.swigi.plist
+   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
    ```
 
 **Si tu lances manuellement depuis Terminal :**
@@ -215,7 +223,7 @@ systemctl --user enable --now swigi
 
 > **Important pour 2+ Macs**
 
-SwiGi tourne sur **chaque Mac** séparément. Chaque instance gère le switch dans sa direction.
+SwiGi doit tourner sur les **3 Macs SIMULTANÉMENT**. Chaque instance surveille les périphériques localement connectés via Bluetooth HID++ 2.0 — il n'y a aucune communication réseau entre les instances.
 
 **Pourquoi c'est nécessaire :** SwiGi ne peut envoyer CHANGE_HOST qu'aux périphériques **actuellement connectés au Mac local**. Quand la souris est sur Mac2, Mac1 ne peut pas la commander via Bluetooth HID.
 
@@ -225,10 +233,14 @@ SwiGi tourne sur **chaque Mac** séparément. Chaque instance gère le switch da
 - Mac2 → Mac1 : SwiGi sur **Mac2** envoie CHANGE_HOST(0) à la souris ✓
 - Mac1 → Mac3 : SwiGi sur **Mac1** envoie CHANGE_HOST(2) ✓
 
+**Support multi-clavier :** 2 claviers MX Keys connectés au même Mac sont supportés. SwiGi surveille chaque clavier dans un thread dédié.
+
 **Installation sur chaque Mac :**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+cd SwiGi
+bash install_mac.sh
 ```
 
 > ⚠️ Si SwiGi est installé sur un seul Mac, la souris ne suivra que dans **une direction** (vers les autres hôtes). Au retour vers ce Mac, il faudra presser manuellement le bouton Easy-Switch de la souris.
@@ -242,12 +254,14 @@ curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac
 | « Clavier introuvable »          | Vérifie que le clavier est connecté en Bluetooth (pas en USB)    |
 | « Souris introuvable »           | Idem pour la souris                                              |
 | Rien ne se passe sur macOS       | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service |
-| L'icône n'apparaît pas (curl)    | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"` |
-| L'icône n'apparaît pas (général) | 1) `python3` dans Surveillance des entrées. 2) `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist` |
-| Souris ne revient pas après switch | SwiGi doit tourner sur **les deux Macs** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log` |
+| L'icône n'apparaît pas (installation) | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"` |
+| L'icône n'apparaît pas (général) | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
+| Souris ne revient pas après switch | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log` |
 | `hidapi introuvable` sur macOS   | Lance `brew install hidapi`                                      |
 | `hidapi introuvable` sur Windows | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py` |
 | SwiGi se lance mais ne fait rien | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`     |
+| Permission perdue après update Homebrew Python | Ré-autoriser le nouveau binaire dans Surveillance des entrées. Trouver le chemin avec `which python3`. |
+| Logs : où les trouver | `tail -50 ~/Library/Logs/swigi.log` ou `cat ~/Library/Logs/swigi.log` |
 
 ---
 
@@ -290,10 +304,13 @@ La boucle principale passe ~80 ms bloquée dans `hid_read_timeout` (appel systè
 
 ### Appareils testés
 
-| Appareil                | OS              | Connexion |
-| ----------------------- | --------------- | --------- |
-| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth |
-| MX Keys S + MX Vertical | Windows 11      | Bluetooth |
+| Appareil                                      | OS              | Connexion |
+| --------------------------------------------- | --------------- | --------- |
+| MX Keys S + MX Vertical                       | macOS (Sequoia) | Bluetooth |
+| MX Keys S + MX Vertical                       | Windows 11      | Bluetooth |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4      | macOS 13+       | Bluetooth |
+
+_Validé en production : 3 Macs simultanément, multi-clavier._
 
 Devrait fonctionner avec toute combinaison d'appareils Logitech supportant HID++ 2.0 et CHANGE_HOST.
 
@@ -332,10 +349,18 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 **Automatic install (recommended):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+cd SwiGi
+bash install_mac.sh
 ```
 
 This installs hidapi, starts SwiGi, and sets it to launch automatically at login.
+
+> **Alternative:** If the repo is already cloned on your machine, you can also use:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+> ```
+> ⚠️ This command requires SwiGi files to already be present locally — it cannot work standalone.
 
 **Manual install:**
 
@@ -346,7 +371,11 @@ This installs hidapi, starts SwiGi, and sets it to launch automatically at login
 
 **macOS Permission (required once):**
 
-- **curl install (launchd):** System Settings → Privacy & Security → Input Monitoring → add **python3** (find its path with `which python3`), then restart the service: `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist`
+- **Script install (launchd):** System Settings → Privacy & Security → Input Monitoring → add **python3** (find its path with `which python3`), then restart the service:
+  ```bash
+  launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
+  ```
 - **Manual launch from Terminal:** System Settings → Privacy & Security → Input Monitoring → add **Terminal**
 
 > ⚠️ After every PyInstaller rebuild, remove the old SwiGi entry and re-add the new binary.
@@ -381,7 +410,7 @@ python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation)
 
 > **Required if you use 2+ Macs**
 
-SwiGi runs on **each Mac separately**. Each instance handles the switch in its own direction.
+SwiGi must run on **all 3 Macs SIMULTANEOUSLY**. Each instance monitors locally connected devices via Bluetooth HID++ 2.0 — there is no network communication between instances.
 
 **Why this matters:** SwiGi can only send CHANGE_HOST to devices **currently connected to the local Mac**. When the mouse is on Mac2, Mac1 cannot reach it over Bluetooth HID.
 
@@ -389,11 +418,16 @@ SwiGi runs on **each Mac separately**. Each instance handles the switch in its o
 
 - Mac1 → Mac2: SwiGi on **Mac1** sends CHANGE_HOST(1) to mouse ✓
 - Mac2 → Mac1: SwiGi on **Mac2** sends CHANGE_HOST(0) to mouse ✓
+- Mac1 → Mac3: SwiGi on **Mac1** sends CHANGE_HOST(2) ✓
+
+**Multi-keyboard support:** 2 MX Keys keyboards connected to the same Mac are supported. SwiGi monitors each keyboard in a dedicated thread.
 
 Install on each Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+cd SwiGi
+bash install_mac.sh
 ```
 
 > ⚠️ With SwiGi on only one Mac, the mouse will follow in **one direction only**. On the return switch, you'll need to press the mouse's Easy-Switch button manually.
@@ -407,12 +441,14 @@ curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac
 | "Keyboard not found"          | Make sure keyboard is connected via Bluetooth (not USB) |
 | "Mouse not found"             | Same for mouse                                          |
 | Nothing happens on macOS      | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service |
-| Menu bar icon missing (curl)  | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"` |
-| Menu bar icon missing (general) | 1) `python3` in Input Monitoring. 2) `launchctl unload ~/Library/LaunchAgents/com.swigi.plist && launchctl load ~/Library/LaunchAgents/com.swigi.plist` |
-| Mouse doesn't come back after switch | SwiGi must run on **both Macs** (see above). Check logs: `tail -50 ~/Library/Logs/swigi.log` |
+| Menu bar icon missing (install) | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"` |
+| Menu bar icon missing (general) | 1) `python3` in Input Monitoring. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
+| Mouse doesn't come back after switch | SwiGi must run on **all 3 Macs simultaneously** (see above). Check logs: `tail -50 ~/Library/Logs/swigi.log` |
 | `hidapi not found` on macOS   | Run `brew install hidapi`                               |
 | `hidapi not found` on Windows | Check `hidapi.dll` is in the same folder as `swigi.py`  |
 | SwiGi starts but does nothing | Run with `-v` for details: `python3 swigi.py -v`        |
+| Permission lost after Homebrew Python update | Re-authorize the new binary in Input Monitoring. Find the path with `which python3`. |
+| Where to find logs | `tail -50 ~/Library/Logs/swigi.log` |
 
 ### How it works
 
@@ -439,10 +475,13 @@ The main loop spends ~80ms blocked in `hid_read_timeout` (a kernel syscall), the
 
 ### Tested
 
-| Device                  | OS              | Connection |
-| ----------------------- | --------------- | ---------- |
-| MX Keys S + MX Vertical | macOS (Sequoia) | Bluetooth  |
-| MX Keys S + MX Vertical | Windows 11      | Bluetooth  |
+| Device                                          | OS              | Connection |
+| ----------------------------------------------- | --------------- | ---------- |
+| MX Keys S + MX Vertical                         | macOS (Sequoia) | Bluetooth  |
+| MX Keys S + MX Vertical                         | Windows 11      | Bluetooth  |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4        | macOS 13+       | Bluetooth  |
+
+_Validated in production: 3 Macs simultaneously, multi-keyboard._
 
 Should work with any Logitech device combo supporting HID++ 2.0 and CHANGE_HOST.
 
@@ -453,6 +492,19 @@ Should work with any Logitech device combo supporting HID++ 2.0 and CHANGE_HOST.
 If SwiGi saves you time / Si SwiGi t'économise du temps :
 
 <a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
+
+---
+
+## 📋 Historique des correctifs
+
+| Version    | Symptôme                                                                 | Fix                                                                   |
+| ---------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)        | MSG_LENGTHS check accepte len >= au lieu de ==                        |
+| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O)    | I/O sorti du lock dans probe loop                                     |
+| 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                       | Backoff exponentiel 0.5s→5s                                           |
+| 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                    | Détection + message d'erreur clair, git clone recommandé              |
+| 2026-05-26 | launchctl load/unload déprécié macOS 13+                                 | Remplacé par bootstrap/bootout                                        |
+| 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)            | tempfile + os.replace()                                               |
 
 ---
 
