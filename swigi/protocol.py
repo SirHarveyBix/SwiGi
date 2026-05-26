@@ -59,17 +59,26 @@ def hidpp_request(
         raw_bytes = transport.read(min(timeout, remaining_ms))
         if not raw_bytes or len(raw_bytes) < 4:
             continue
-        if raw_bytes[0] not in MSG_LENGTHS or len(raw_bytes) < MSG_LENGTHS[raw_bytes[0]]:
+        if (
+            raw_bytes[0] not in MSG_LENGTHS
+            or len(raw_bytes) < MSG_LENGTHS[raw_bytes[0]]
+        ):
             continue
 
         received_device = raw_bytes[1]
-        if received_device != device_number and received_device != (device_number ^ 0xFF):
+        if received_device != device_number and received_device != (
+            device_number ^ 0xFF
+        ):
             continue
 
         received_data = raw_bytes[2:]
 
         # Erreur HID++ 1.0
-        if raw_bytes[0] == REPORT_SHORT and received_data[0:1] == b"\x8f" and received_data[1:3] == request_data[:2]:
+        if (
+            raw_bytes[0] == REPORT_SHORT
+            and received_data[0:1] == b"\x8f"
+            and received_data[1:3] == request_data[:2]
+        ):
             return None
         # Erreur HID++ 2.0
         if received_data[0:1] == b"\xff" and received_data[1:3] == request_data[:2]:
@@ -81,7 +90,9 @@ def hidpp_request(
     return None
 
 
-def resolve_feature(transport: HIDTransport, device_number: int, feature_code: int) -> int | None:
+def resolve_feature(
+    transport: HIDTransport, device_number: int, feature_code: int
+) -> int | None:
     """Recherche l'index de feature. Retourne l'index ou None."""
     request_id = (FEATURE_ROOT << 8) | 0x00
     reply = hidpp_request(
@@ -98,13 +109,21 @@ def resolve_feature(transport: HIDTransport, device_number: int, feature_code: i
     return None
 
 
-def get_device_type(transport: HIDTransport, device_number: int, feature_index: int) -> int | None:
-    reply = hidpp_request(transport, device_number, (feature_index << 8) | 0x20, timeout=500)
+def get_device_type(
+    transport: HIDTransport, device_number: int, feature_index: int
+) -> int | None:
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x20, timeout=500
+    )
     return reply[0] if reply else None
 
 
-def get_device_name(transport: HIDTransport, device_number: int, feature_index: int) -> str | None:
-    reply = hidpp_request(transport, device_number, (feature_index << 8) | 0x00, timeout=500)
+def get_device_name(
+    transport: HIDTransport, device_number: int, feature_index: int
+) -> str | None:
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x00, timeout=500
+    )
     if not reply:
         return None
     name_len = min(reply[0], 64)
@@ -112,7 +131,13 @@ def get_device_name(transport: HIDTransport, device_number: int, feature_index: 
         return None
     chars = []
     while len(chars) < name_len:
-        reply = hidpp_request(transport, device_number, (feature_index << 8) | 0x10, len(chars), timeout=500)
+        reply = hidpp_request(
+            transport,
+            device_number,
+            (feature_index << 8) | 0x10,
+            len(chars),
+            timeout=500,
+        )
         if not reply:
             break
         to_read = name_len - len(chars)
@@ -137,7 +162,9 @@ def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
             break
 
 
-def send_change_host(transport: HIDTransport, device_number: int, feature_index: int, target_host: int) -> None:
+def send_change_host(
+    transport: HIDTransport, device_number: int, feature_index: int, target_host: int
+) -> None:
     """Bascule le périphérique vers target_host (base 0).
 
     Double drain (avant + après 1ms d'attente) pour absorber les paquets
@@ -167,12 +194,15 @@ def send_change_host(transport: HIDTransport, device_number: int, feature_index:
         pass  # souris déconnectée = commande reçue, comportement attendu
 
 
-def get_current_host(transport: HIDTransport, device_number: int, feature_index: int) -> int | None:
+def get_current_host(
+    transport: HIDTransport, device_number: int, feature_index: int
+) -> int | None:
     """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
-    reply = hidpp_request(transport, device_number, (feature_index << 8) | 0x00, timeout=500)
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x00, timeout=500
+    )
     if reply and len(reply) >= 2:
         num_hosts, current_host = reply[0], reply[1]
         if num_hosts > 0 and 0 <= current_host < num_hosts:
             return current_host
     return None
-

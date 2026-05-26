@@ -53,8 +53,12 @@ def _release_lock() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="SwiGi — synchronisation Easy-Switch via Bluetooth")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Journalisation détaillée")
+    parser = argparse.ArgumentParser(
+        description="SwiGi — synchronisation Easy-Switch via Bluetooth"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Journalisation détaillée"
+    )
     parser.add_argument(
         "--log-file",
         metavar="FICHIER",
@@ -74,7 +78,9 @@ def main() -> int:
 
 def _main_inner(arguments) -> int:
     level = logging.DEBUG if arguments.verbose else logging.INFO
-    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S"
+    )
 
     # Configuration propre du logger "swigi"
     swigi_logger = logging.getLogger("swigi")
@@ -102,7 +108,12 @@ def _main_inner(arguments) -> int:
         log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
         return 1
     for keyboard in keyboards:
-        log.info("Clavier : %s (Product ID=0x%04X, CHANGE_HOST index=%d)", keyboard.name, keyboard.product_id, keyboard.change_host_index)
+        log.info(
+            "Clavier : %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
+            keyboard.name,
+            keyboard.product_id,
+            keyboard.change_host_index,
+        )
         notify(f"{keyboard.name} connecté", "Clavier")
 
     mice = find_all_devices(DEVICE_TYPE_MOUSE)
@@ -112,7 +123,12 @@ def _main_inner(arguments) -> int:
             " (Normal si la souris est connectée à un autre Mac.)"
         )
     for mouse in mice:
-        log.info("Souris :  %s (Product ID=0x%04X, CHANGE_HOST index=%d)", mouse.name, mouse.product_id, mouse.change_host_index)
+        log.info(
+            "Souris :  %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
+            mouse.name,
+            mouse.product_id,
+            mouse.change_host_index,
+        )
         notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
@@ -123,7 +139,10 @@ def _main_inner(arguments) -> int:
 
     state: dict = {
         "keyboard": keyboards[0].name,
-        "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True} for keyboard in keyboards},
+        "keyboards": {
+            keyboard.product_id: {"name": keyboard.name, "ok": True}
+            for keyboard in keyboards
+        },
         "mouse": mice[0].name if mice else None,
         "mice": [mouse.name for mouse in mice],
         "switches": 0,
@@ -159,7 +178,10 @@ def _main_inner(arguments) -> int:
                     for old in keyboards:
                         old.close()
                     keyboards = new_keyboards
-                    state["keyboards"] = {keyboard.product_id: {"name": keyboard.name, "ok": True} for keyboard in keyboards}
+                    state["keyboards"] = {
+                        keyboard.product_id: {"name": keyboard.name, "ok": True}
+                        for keyboard in keyboards
+                    }
                     state["keyboard"] = keyboards[0].name if keyboards else None
                 new_mice = find_all_devices(DEVICE_TYPE_MOUSE)
                 if new_mice:

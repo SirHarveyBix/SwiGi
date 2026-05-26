@@ -35,7 +35,9 @@ MSG_LENGTHS = {REPORT_SHORT: MSG_SHORT_LEN, REPORT_LONG: MSG_LONG_LEN}
 
 # Paires Usage : HID++ fabricant + Generic Desktop (macOS BT n'expose que Generic Desktop)
 DIRECT_USAGE_PAIRS = [
-    (0xFF00, 0x0002), (0xFF43, 0x0202), (0xFF0C, 0x0001),
+    (0xFF00, 0x0002),
+    (0xFF43, 0x0202),
+    (0xFF0C, 0x0001),
     (0x0001, 0x0006),  # Clavier
     (0x0001, 0x0002),  # Souris
 ]

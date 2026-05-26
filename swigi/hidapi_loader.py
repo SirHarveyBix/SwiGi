@@ -58,7 +58,12 @@ def _load_hidapi() -> ctypes.CDLL:
             except Exception as error:
                 log.debug("add_dll_directory échoué : %s", error)
     else:  # Linux
-        local_names = ["libhidapi-hidraw.so.0", "libhidapi-hidraw.so", "libhidapi.so.0", "libhidapi.so"]
+        local_names = [
+            "libhidapi-hidraw.so.0",
+            "libhidapi-hidraw.so",
+            "libhidapi.so.0",
+            "libhidapi.so",
+        ]
         system_names = local_names + ["libhidapi-libusb.so.0", "libhidapi-libusb.so"]
 
     for directory in search_dirs:
@@ -95,7 +100,9 @@ _lib = _load_hidapi()
 _lib.hid_init.restype = ctypes.c_int
 _lib.hid_init.argtypes = []
 if _lib.hid_init() != 0:
-    raise RuntimeError("hidapi : hid_init() a échoué — permissions insuffisantes ou hidapi corrompu")
+    raise RuntimeError(
+        "hidapi : hid_init() a échoué — permissions insuffisantes ou hidapi corrompu"
+    )
 
 # macOS : non-exclusif (coexiste avec Logi Options+)
 if SYSTEM == "Darwin":
@@ -115,9 +122,18 @@ _lib.hid_open_path.argtypes = [ctypes.c_char_p]
 _lib.hid_close.restype = None
 _lib.hid_close.argtypes = [ctypes.c_void_p]
 _lib.hid_read_timeout.restype = ctypes.c_int
-_lib.hid_read_timeout.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_int]
+_lib.hid_read_timeout.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_ubyte),
+    ctypes.c_size_t,
+    ctypes.c_int,
+]
 _lib.hid_write.restype = ctypes.c_int
-_lib.hid_write.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t]
+_lib.hid_write.argtypes = [
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_ubyte),
+    ctypes.c_size_t,
+]
 _lib.hid_error.restype = ctypes.c_wchar_p
 _lib.hid_error.argtypes = [ctypes.c_void_p]
 

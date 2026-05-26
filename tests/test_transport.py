@@ -15,7 +15,6 @@ from swigi.transport import HIDTransport, TransportError  # noqa: E402
 
 
 class TestHIDTransport(unittest.TestCase):
-
     def _make(self, device=None):
         if device is None:
             device = MagicMock()
@@ -33,8 +32,10 @@ class TestHIDTransport(unittest.TestCase):
         self.assertTrue(transport.is_open)
 
     def test_init_fail_raises_oserror(self):
-        with patch("swigi.transport.lib") as lib_mock, \
-             patch("swigi.transport.hid_err", return_value="fail"):
+        with (
+            patch("swigi.transport.lib") as lib_mock,
+            patch("swigi.transport.hid_err", return_value="fail"),
+        ):
             lib_mock.hid_open_path.return_value = None
             with self.assertRaises(OSError):
                 HIDTransport(b"/dev/hidraw0", 0xB35B)
@@ -68,8 +69,10 @@ class TestHIDTransport(unittest.TestCase):
 
     def test_read_raises_transport_error_on_negative(self):
         device = MagicMock()
-        with patch("swigi.transport.lib") as lib_mock, \
-             patch("swigi.transport.hid_err", return_value="read error"):
+        with (
+            patch("swigi.transport.lib") as lib_mock,
+            patch("swigi.transport.hid_err", return_value="read error"),
+        ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
             transport = HIDTransport(b"/dev/hidraw0", 0xB35B)
@@ -79,8 +82,10 @@ class TestHIDTransport(unittest.TestCase):
     def test_read_returns_none_on_bt_success_quirk(self):
         """bytes_read<0 mais error='success' → quirk BT macOS → None."""
         device = MagicMock()
-        with patch("swigi.transport.lib") as lib_mock, \
-             patch("swigi.transport.hid_err", return_value="success"):
+        with (
+            patch("swigi.transport.lib") as lib_mock,
+            patch("swigi.transport.hid_err", return_value="success"),
+        ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
             transport = HIDTransport(b"/dev/hidraw0", 0xB35B)
@@ -90,8 +95,10 @@ class TestHIDTransport(unittest.TestCase):
     def test_read_returns_none_on_empty_error(self):
         """bytes_read<0 et error='' → None (pas d'exception)."""
         device = MagicMock()
-        with patch("swigi.transport.lib") as lib_mock, \
-             patch("swigi.transport.hid_err", return_value=""):
+        with (
+            patch("swigi.transport.lib") as lib_mock,
+            patch("swigi.transport.hid_err", return_value=""),
+        ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
             transport = HIDTransport(b"/dev/hidraw0", 0xB35B)
@@ -117,8 +124,10 @@ class TestHIDTransport(unittest.TestCase):
 
     def test_write_raises_on_failure(self):
         device = MagicMock()
-        with patch("swigi.transport.lib") as lib_mock, \
-             patch("swigi.transport.hid_err", return_value="write fail"):
+        with (
+            patch("swigi.transport.lib") as lib_mock,
+            patch("swigi.transport.hid_err", return_value="write fail"),
+        ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_write.return_value = -1
             transport = HIDTransport(b"/dev/hidraw0", 0xB35B)

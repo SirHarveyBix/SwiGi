@@ -38,6 +38,7 @@ from swigi.bettermouse import (  # noqa: E402
 
 # ── Helpers de construction plist ──────────────────────────────────────────────
 
+
 def _make_mice_data(product="MX Master 4", vendor="Logitech"):
     """Construit le payload mice (inner plist)."""
     return plistlib.dumps(
@@ -102,6 +103,7 @@ def _write_root_plist(path, **kwargs):
 
 # ── Helpers privés ─────────────────────────────────────────────────────────────
 
+
 class TestFindGlobalApp(unittest.TestCase):
     def test_finds_global(self):
         applications = {"global_app": {"url": {"relative": "./"}, "scl": {}}}
@@ -142,20 +144,25 @@ class TestSafeUpdate(unittest.TestCase):
 
 # ── is_available ───────────────────────────────────────────────────────────────
 
+
 class TestIsAvailable(unittest.TestCase):
     def test_true_when_plist_exists_darwin(self):
         with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as temp_file:
             plist_path = temp_file.name
         try:
-            with patch("swigi.bettermouse.BM_PLIST", plist_path), \
-                 patch("swigi.bettermouse.SYSTEM", "Darwin"):
+            with (
+                patch("swigi.bettermouse.BM_PLIST", plist_path),
+                patch("swigi.bettermouse.SYSTEM", "Darwin"),
+            ):
                 self.assertTrue(is_available())
         finally:
             os.unlink(plist_path)
 
     def test_false_when_missing(self):
-        with patch("swigi.bettermouse.BM_PLIST", "/nonexistent/path.plist"), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", "/nonexistent/path.plist"),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             self.assertFalse(is_available())
 
     def test_false_on_non_darwin(self):
@@ -164,6 +171,7 @@ class TestIsAvailable(unittest.TestCase):
 
 
 # ── list_profiles ──────────────────────────────────────────────────────────────
+
 
 class TestListProfiles(unittest.TestCase):
     def test_lists_json_files_sorted(self):
@@ -190,6 +198,7 @@ class TestListProfiles(unittest.TestCase):
 
 # ── export_current ─────────────────────────────────────────────────────────────
 
+
 class TestExportCurrent(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -198,13 +207,16 @@ class TestExportCurrent(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_export_creates_json(self):
         profiles_dir = os.path.join(self.tmpdir, "profiles")
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             path = export_current("test-export")
         self.assertTrue(os.path.isfile(path))
         with open(path, encoding="utf-8") as file:
@@ -216,9 +228,11 @@ class TestExportCurrent(unittest.TestCase):
 
     def test_export_scroll_fields(self):
         profiles_dir = os.path.join(self.tmpdir, "profiles")
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             path = export_current("scroll-test")
         with open(path, encoding="utf-8") as file:
             data = json.load(file)
@@ -229,21 +243,26 @@ class TestExportCurrent(unittest.TestCase):
         self.assertFalse(scroll["vert_inv"])
 
     def test_export_raises_when_unavailable(self):
-        with patch("swigi.bettermouse.BM_PLIST", "/nonexistent.plist"), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", "/nonexistent.plist"),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             with self.assertRaises(FileNotFoundError):
                 export_current("x")
 
     def test_export_auto_name_when_none(self):
         profiles_dir = os.path.join(self.tmpdir, "profiles")
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             path = export_current(None)
         self.assertTrue(os.path.basename(path).startswith("profil-"))
 
 
 # ── apply_profile ──────────────────────────────────────────────────────────────
+
 
 class TestApplyProfile(unittest.TestCase):
     def setUp(self):
@@ -254,7 +273,12 @@ class TestApplyProfile(unittest.TestCase):
         os.makedirs(self.profiles_dir)
         # Profil de test
         profile = {
-            "meta": {"name": "test", "mouse": "MX Master 4", "bm_version": "8830", "exported_at": ""},
+            "meta": {
+                "name": "test",
+                "mouse": "MX Master 4",
+                "bm_version": "8830",
+                "exported_at": "",
+            },
             "scroll": {
                 "smooth_en": False,
                 "scl_through": True,
@@ -281,14 +305,17 @@ class TestApplyProfile(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _apply(self, profile_name="test", mouse_name=None):
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"), \
-             patch("subprocess.run"), \
-             patch("subprocess.Popen"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+            patch("subprocess.run"),
+            patch("subprocess.Popen"),
+        ):
             apply_profile(profile_name, mouse_name=mouse_name)
 
     def test_apply_patches_scroll(self):
@@ -307,7 +334,9 @@ class TestApplyProfile(unittest.TestCase):
         with open(self.plist_path, "rb") as file:
             root = plistlib.load(file)
         mice = plistlib.loads(root["mice"])["mice"]
-        mouse = next(mouse for mouse in mice if mouse["name"]["vendor"].lower() == "logitech")
+        mouse = next(
+            mouse for mouse in mice if mouse["name"]["vendor"].lower() == "logitech"
+        )
         self.assertFalse(mouse["ratchetMode"])
         self.assertFalse(mouse["hiResWheel"])
         self.assertEqual(mouse["disengagePoint"], 10)
@@ -315,18 +344,22 @@ class TestApplyProfile(unittest.TestCase):
         self.assertEqual(mouse["rpRate"], 2)
 
     def test_apply_raises_for_wrong_mouse(self):
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"), \
-             patch("subprocess.run"), \
-             patch("subprocess.Popen"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+            patch("subprocess.run"),
+            patch("subprocess.Popen"),
+        ):
             with self.assertRaises(ValueError):
                 apply_profile("test", mouse_name="MX Anywhere 3")
 
     def test_apply_missing_profile_raises(self):
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             with self.assertRaises(FileNotFoundError):
                 apply_profile("inexistant")
 
@@ -335,12 +368,16 @@ class TestApplyProfile(unittest.TestCase):
         with open(self.plist_path, "rb") as file_handle:
             original_data = file_handle.read()
 
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"), \
-             patch("swigi.bettermouse._patch_appitems", side_effect=RuntimeError("boom")), \
-             patch("subprocess.run"), \
-             patch("subprocess.Popen"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.PROFILES_DIR", self.profiles_dir),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+            patch(
+                "swigi.bettermouse._patch_appitems", side_effect=RuntimeError("boom")
+            ),
+            patch("subprocess.run"),
+            patch("subprocess.Popen"),
+        ):
             with self.assertRaises(RuntimeError):
                 apply_profile("test")
         # Plist doit être restauré
@@ -354,6 +391,7 @@ class TestApplyProfile(unittest.TestCase):
 
 # ── read_info ──────────────────────────────────────────────────────────────────
 
+
 class TestReadInfo(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -362,11 +400,14 @@ class TestReadInfo(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_returns_mouse_info(self):
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             info = read_info()
         self.assertIsNotNone(info)
         self.assertEqual(info["name"], "MX Master 4")
@@ -374,14 +415,18 @@ class TestReadInfo(unittest.TestCase):
         self.assertTrue(info["ratchet"])
 
     def test_returns_none_when_unavailable(self):
-        with patch("swigi.bettermouse.BM_PLIST", "/nonexistent.plist"), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", "/nonexistent.plist"),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             self.assertIsNone(read_info())
 
     def test_returns_none_when_no_logitech(self):
         _write_root_plist(self.plist_path, vendor="Razer")
-        with patch("swigi.bettermouse.BM_PLIST", self.plist_path), \
-             patch("swigi.bettermouse.SYSTEM", "Darwin"):
+        with (
+            patch("swigi.bettermouse.BM_PLIST", self.plist_path),
+            patch("swigi.bettermouse.SYSTEM", "Darwin"),
+        ):
             self.assertIsNone(read_info())
 
 

@@ -4,6 +4,7 @@ macOS uniquement. No-op silencieux sur Windows/Linux.
 Toutes les opérations de lecture/écriture plist sont protégées par try/except
 avec rollback automatique avant toute modification du fichier BetterMouse.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,9 @@ def list_profiles() -> list[str]:
     os.makedirs(PROFILES_DIR, exist_ok=True)
     try:
         return sorted(
-            filename[:-5] for filename in os.listdir(PROFILES_DIR) if filename.endswith(".json")
+            filename[:-5]
+            for filename in os.listdir(PROFILES_DIR)
+            if filename.endswith(".json")
         )
     except OSError:
         return []
@@ -78,18 +81,24 @@ def read_info() -> dict | None:
         root = _decode_root()
         mice = plistlib.loads(root["mice"]).get("mice", [])
         mouse = next(
-            (mouse for mouse in mice if mouse.get("name", {}).get("vendor", "").lower() == "logitech"),
+            (
+                mouse
+                for mouse in mice
+                if mouse.get("name", {}).get("vendor", "").lower() == "logitech"
+            ),
             None,
         )
         if not mouse:
             return None
         return {
-            "name":         mouse.get("name", {}).get("product", "?"),
-            "vendor":       mouse.get("name", {}).get("vendor", "?"),
-            "hireswheel":   mouse.get("hiResWheel", False),
-            "ratchet":      mouse.get("ratchetMode", False),
-            "dpi_en":       mouse.get("dpiEn", False),
-            "polling_hz":   _polling_hz(mouse.get("rpRateList", 0), mouse.get("rpRate", 0)),
+            "name": mouse.get("name", {}).get("product", "?"),
+            "vendor": mouse.get("name", {}).get("vendor", "?"),
+            "hireswheel": mouse.get("hiResWheel", False),
+            "ratchet": mouse.get("ratchetMode", False),
+            "dpi_en": mouse.get("dpiEn", False),
+            "polling_hz": _polling_hz(
+                mouse.get("rpRateList", 0), mouse.get("rpRate", 0)
+            ),
         }
     except Exception as error:
         log.debug("read_info échoué : %s", error)
@@ -111,7 +120,11 @@ def export_current(name: str | None = None) -> str:
     appitems = plistlib.loads(root["appitems"]).get("apps", {})
 
     mouse = next(
-        (mouse for mouse in mice if mouse.get("name", {}).get("vendor", "").lower() == "logitech"),
+        (
+            mouse
+            for mouse in mice
+            if mouse.get("name", {}).get("vendor", "").lower() == "logitech"
+        ),
         {},
     )
     global_app = _find_global_app(appitems) or {}
@@ -167,7 +180,7 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
         raise FileNotFoundError("BetterMouse plist introuvable")
 
     name = os.path.basename(name)
-    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", name):
         raise ValueError(f"Nom de profil invalide : {name!r}")
     path = os.path.join(PROFILES_DIR, f"{name}.json")
     if not os.path.isfile(path):
@@ -178,7 +191,11 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
 
     # Vérification souris (optionnelle si mouse_name fourni) — comparaison case-insensitive
     profile_mouse = profile.get("meta", {}).get("mouse") or ""
-    if mouse_name and profile_mouse not in ("", "?") and profile_mouse.lower() != mouse_name.lower():
+    if (
+        mouse_name
+        and profile_mouse not in ("", "?")
+        and profile_mouse.lower() != mouse_name.lower()
+    ):
         raise ValueError(
             f"Profil pour '{profile['meta']['mouse']}', souris connectée : '{mouse_name}'"
         )
@@ -237,17 +254,20 @@ def _patch_appitems(root: dict, scroll: dict) -> None:
     if global_app is None:
         return
     scroll_settings = global_app.setdefault("scl", {})
-    _safe_update(scroll_settings, {
-        "smoothEn":   scroll.get("smooth_en"),
-        "sclThrough": scroll.get("scl_through"),
-        "duration":   scroll.get("duration"),
-        "brake":      scroll.get("brake"),
-        "panelLpf":   scroll.get("panel_lpf"),
-        "lpfDura":    scroll.get("lpf_dura"),
-        "vertInvEn":  scroll.get("vert_inv"),
-        "horiInvEn":  scroll.get("hori_inv"),
-        "horiSpeed":  scroll.get("hori_speed"),
-    })
+    _safe_update(
+        scroll_settings,
+        {
+            "smoothEn":   scroll.get("smooth_en"),
+            "sclThrough": scroll.get("scl_through"),
+            "duration":   scroll.get("duration"),
+            "brake":      scroll.get("brake"),
+            "panelLpf":   scroll.get("panel_lpf"),
+            "lpfDura":    scroll.get("lpf_dura"),
+            "vertInvEn":  scroll.get("vert_inv"),
+            "horiInvEn":  scroll.get("hori_inv"),
+            "horiSpeed":  scroll.get("hori_speed"),
+        },
+    )
     root["appitems"] = plistlib.dumps(appitems_raw, fmt=plistlib.FMT_BINARY)
 
 
@@ -258,15 +278,18 @@ def _patch_mice(root: dict, hardware_settings: dict) -> None:
     mice = mice_raw.get("mice", [])
     for mouse in mice:
         if mouse.get("name", {}).get("vendor", "").lower() == "logitech":
-            _safe_update(mouse, {
-                "ratchetMode":    hardware_settings.get("ratchet"),
-                "hiResWheel":     hardware_settings.get("hireswheel"),
-                "disengagePoint": hardware_settings.get("disengage_point"),
-                "torque":         hardware_settings.get("torque"),
-                "dpiEn":          hardware_settings.get("dpi_en"),
-                "dpiIndex":       hardware_settings.get("dpi_index"),
-                "rpRate":         hardware_settings.get("polling_rate"),
-            })
+            _safe_update(
+                mouse,
+                {
+                    "ratchetMode":    hardware_settings.get("ratchet"),
+                    "hiResWheel":     hardware_settings.get("hireswheel"),
+                    "disengagePoint": hardware_settings.get("disengage_point"),
+                    "torque":         hardware_settings.get("torque"),
+                    "dpiEn":          hardware_settings.get("dpi_en"),
+                    "dpiIndex":       hardware_settings.get("dpi_index"),
+                    "rpRate":         hardware_settings.get("polling_rate"),
+                },
+            )
             break
     root["mice"] = plistlib.dumps(mice_raw, fmt=plistlib.FMT_BINARY)
 

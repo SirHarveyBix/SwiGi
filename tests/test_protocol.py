@@ -39,6 +39,7 @@ class MockTransport:
 
 class TestProtocol(unittest.TestCase):
     """Teste la construction et le parsing des messages HID++ 2.0 via MockTransport."""
+
     def test_build_message(self):
         device_number = 0xFF
         request_id = 0x090A
@@ -67,8 +68,14 @@ class TestProtocol(unittest.TestCase):
 
         # Simuler une réponse HID++ valide
         # Byte 0: REPORT_LONG (0x11), Byte 1: device_number (0xFF), Byte 2-3: request_id (0x090A), rest: payload
-        response_payload = b"\x02\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-        response_message = struct.pack("!BB", REPORT_LONG, device_number) + struct.pack("!H", resolved_request_id) + response_payload
+        response_payload = (
+            b"\x02\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        )
+        response_message = (
+            struct.pack("!BB", REPORT_LONG, device_number)
+            + struct.pack("!H", resolved_request_id)
+            + response_payload
+        )
         transport.responses_to_read.append(response_message)
 
         reply = protocol.hidpp_request(transport, device_number, request_id, 0x01)
@@ -92,7 +99,12 @@ class TestProtocol(unittest.TestCase):
         resolved_request_id = (request_id & 0xFFF0) | SW_ID  # 0x090A
 
         # Erreur HID++ 1.0 : REPORT_SHORT (0x10), device_number (0xFF), sub ID (0x8F), request_id (0x090A)
-        error_message = struct.pack("!BB", 0x10, device_number) + b"\x8f" + struct.pack("!H", resolved_request_id) + b"\x00\x00"
+        error_message = (
+            struct.pack("!BB", 0x10, device_number)
+            + b"\x8f"
+            + struct.pack("!H", resolved_request_id)
+            + b"\x00\x00"
+        )
         transport.responses_to_read.append(error_message)
 
         reply = protocol.hidpp_request(transport, device_number, request_id, 0x01)
@@ -105,7 +117,12 @@ class TestProtocol(unittest.TestCase):
         resolved_request_id = (request_id & 0xFFF0) | SW_ID  # 0x090A
 
         # Erreur HID++ 2.0 : received_data[0] = 0xFF, received_data[1:3] = request_id
-        error_message = struct.pack("!BB", REPORT_LONG, device_number) + b"\xff" + struct.pack("!H", resolved_request_id) + (b"\x00" * 15)
+        error_message = (
+            struct.pack("!BB", REPORT_LONG, device_number)
+            + b"\xff"
+            + struct.pack("!H", resolved_request_id)
+            + (b"\x00" * 15)
+        )
         transport.responses_to_read.append(error_message)
 
         reply = protocol.hidpp_request(transport, device_number, request_id, 0x01)
@@ -129,8 +146,13 @@ class TestDrainTransport(unittest.TestCase):
 class TestSendChangeHost(unittest.TestCase):
     def _make_response(self, device_number, feature_index, host):
         from swigi.constants import CHANGE_HOST_FN_SET, SW_ID
+
         request_id = (feature_index << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
-        return struct.pack("!BB", REPORT_LONG, device_number) + struct.pack("!H", request_id) + b"\x00" * 16
+        return (
+            struct.pack("!BB", REPORT_LONG, device_number)
+            + struct.pack("!H", request_id)
+            + b"\x00" * 16
+        )
 
     def test_send_writes_5_times(self):
         transport = MockTransport()
@@ -145,21 +167,26 @@ class TestSendChangeHost(unittest.TestCase):
 
     def test_send_first_write_failure_raises(self):
         from swigi.transport import TransportError
+
         class FailFirstTransport(MockTransport):
             def write(self, message):
                 raise TransportError("dead")
+
         fail_transport = FailFirstTransport()
         with self.assertRaises(TransportError):
             protocol.send_change_host(fail_transport, 0xFF, 0x09, 0)
 
     def test_send_retry_failure_is_success(self):
         from swigi.transport import TransportError
+
         call_count = [0]
+
         class FailAfterFirstTransport(MockTransport):
             def write(self, message):
                 call_count[0] += 1
                 if call_count[0] > 1:
                     raise TransportError("disconnected — switch succeeded")
+
         fail_transport = FailAfterFirstTransport()
         protocol.send_change_host(fail_transport, 0xFF, 0x09, 0)
         self.assertEqual(call_count[0], 2)
@@ -169,8 +196,14 @@ class TestResolveFeature(unittest.TestCase):
     def test_resolve_feature_found(self):
         transport = MockTransport()
         from swigi.constants import FEATURE_ROOT, SW_ID, REPORT_LONG
-        request_id = ((FEATURE_ROOT << 8) | 0x00 | SW_ID)
-        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([0x05]) + b"\x00" * 15
+
+        request_id = (FEATURE_ROOT << 8) | 0x00 | SW_ID
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([0x05])
+            + b"\x00" * 15
+        )
         transport.responses_to_read.append(response)
         result = protocol.resolve_feature(transport, 0xFF, 0x0005)
         self.assertEqual(result, 0x05)
@@ -185,8 +218,13 @@ class TestGetCurrentHost(unittest.TestCase):
     def test_get_current_host(self):
         transport = MockTransport()
         feature_index = 0x09
-        request_id = ((feature_index << 8) | 0x00 | SW_ID)
-        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([3, 1]) + b"\x00" * 14
+        request_id = (feature_index << 8) | 0x00 | SW_ID
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([3, 1])
+            + b"\x00" * 14
+        )
         transport.responses_to_read.append(response)
         host = protocol.get_current_host(transport, 0xFF, feature_index)
         self.assertEqual(host, 1)
@@ -200,9 +238,14 @@ class TestGetCurrentHost(unittest.TestCase):
         """currentHost=0 est une valeur valide (falsy en Python mais pas None)."""
         transport = MockTransport()
         feature_index = 0x09
-        request_id = ((feature_index << 8) | 0x00 | SW_ID)
+        request_id = (feature_index << 8) | 0x00 | SW_ID
         # numHosts=3, currentHost=0 → valide
-        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([3, 0]) + b"\x00" * 14
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([3, 0])
+            + b"\x00" * 14
+        )
         transport.responses_to_read.append(response)
         host = protocol.get_current_host(transport, 0xFF, feature_index)
         self.assertEqual(host, 0)
@@ -212,9 +255,14 @@ class TestGetCurrentHost(unittest.TestCase):
         """currentHost >= numHosts → invalide → None."""
         transport = MockTransport()
         feature_index = 0x09
-        request_id = ((feature_index << 8) | 0x00 | SW_ID)
+        request_id = (feature_index << 8) | 0x00 | SW_ID
         # numHosts=3, currentHost=5 → invalide
-        response = struct.pack("!BB", REPORT_LONG, 0xFF) + struct.pack("!H", request_id) + bytes([3, 5]) + b"\x00" * 14
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([3, 5])
+            + b"\x00" * 14
+        )
         transport.responses_to_read.append(response)
         host = protocol.get_current_host(transport, 0xFF, feature_index)
         self.assertIsNone(host)
@@ -245,7 +293,9 @@ class TestGetDeviceName(unittest.TestCase):
         """get_device_name ne boucle pas indéfiniment si name_len == 0 ou très grand."""
         transport = MagicMock()
         # Simuler la réponse à la requête 0x00 (get count) avec name_len=0
-        with patch("swigi.protocol.hidpp_request", return_value=b"\x00" + b"\x00" * 15) as mock_req:
+        with patch(
+            "swigi.protocol.hidpp_request", return_value=b"\x00" + b"\x00" * 15
+        ) as mock_req:
             result = get_device_name(transport, 0xFF, 0x04)
         self.assertIsNone(result)
 
@@ -254,12 +304,14 @@ class TestBuildMessageValidation(unittest.TestCase):
     def test_build_message_raises_on_oversized_parameters(self):
         """_build_message lève ValueError si parameters > 16 bytes."""
         from swigi.protocol import _build_message
+
         with self.assertRaises(ValueError):
             _build_message(0xFF, 0x0411, b"\x01" * 17)  # 17 bytes > 16 max
 
     def test_build_message_accepts_max_parameters(self):
         """_build_message accepte exactement 16 bytes de parameters."""
         from swigi.protocol import _build_message
+
         result = _build_message(0xFF, 0x0411, b"\x01" * 16)
         self.assertEqual(len(result), 20)  # 1 (report_id) + 1 (device) + 18 (data) = 20
 

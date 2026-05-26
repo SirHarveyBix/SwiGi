@@ -28,6 +28,7 @@ from swigi.transport import TransportError  # noqa: E402
 
 # ── _clean_name ────────────────────────────────────────────────────────────────
 
+
 class TestCleanName(unittest.TestCase):
     def test_removes_null_bytes(self):
         self.assertEqual(_clean_name("MX Keys\x00\x00", 0xB35B), "MX Keys")
@@ -50,12 +51,17 @@ class TestCleanName(unittest.TestCase):
 
 # ── DeviceInfo.close ───────────────────────────────────────────────────────────
 
-class TestDeviceInfoClose(unittest.TestCase):
 
+class TestDeviceInfoClose(unittest.TestCase):
     def _make_device_info(self):
         transport = MagicMock()
         transport.is_open = True
-        return DeviceInfo(transport=transport, name="MX Keys S", product_id=0xB35B, change_host_index=5), transport
+        return DeviceInfo(
+            transport=transport,
+            name="MX Keys S",
+            product_id=0xB35B,
+            change_host_index=5,
+        ), transport
 
     def test_close_calls_transport_close(self):
         device_info, transport = self._make_device_info()
@@ -75,6 +81,7 @@ class TestDeviceInfoClose(unittest.TestCase):
 
 # ── find_all_devices ───────────────────────────────────────────────────────────
 
+
 def _make_hid_node(product_id, usage_page=0xFF00, usage=0x0002, path=b"/dev/hid0"):
     """Construit un faux nœud de liste chaînée HID."""
     device_info = MagicMock()
@@ -89,7 +96,6 @@ def _make_hid_node(product_id, usage_page=0xFF00, usage=0x0002, path=b"/dev/hid0
 
 
 class TestFindAllDevices(unittest.TestCase):
-
     def setUp(self):
         _mock_loader.lib.reset_mock()
 
@@ -105,7 +111,9 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_wrong_usage_pair_skipped(self):
-        enumeration_node = _make_hid_node(product_id=0xB35B, usage_page=0x0099, usage=0x9999)
+        enumeration_node = _make_hid_node(
+            product_id=0xB35B, usage_page=0x0099, usage=0x9999
+        )
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
@@ -120,28 +128,34 @@ class TestFindAllDevices(unittest.TestCase):
     def test_no_device_type_feature_skipped(self):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
-        with patch("swigi.discovery.HIDTransport"), \
-             patch("swigi.discovery.resolve_feature", return_value=None):
+        with (
+            patch("swigi.discovery.HIDTransport"),
+            patch("swigi.discovery.resolve_feature", return_value=None),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
     def test_no_change_host_feature_skipped(self):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
-        with patch("swigi.discovery.HIDTransport"), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, None]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD), \
-             patch("swigi.discovery.get_device_name", return_value="MX Keys S"):
+        with (
+            patch("swigi.discovery.HIDTransport"),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, None]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
+            patch("swigi.discovery.get_device_name", return_value="MX Keys S"),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
     def test_wrong_device_type_skipped(self):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
-        with patch("swigi.discovery.HIDTransport"), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE), \
-             patch("swigi.discovery.get_device_name", return_value="MX Master 4"):
+        with (
+            patch("swigi.discovery.HIDTransport"),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE),
+            patch("swigi.discovery.get_device_name", return_value="MX Master 4"),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
@@ -149,10 +163,12 @@ class TestFindAllDevices(unittest.TestCase):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD), \
-             patch("swigi.discovery.get_device_name", return_value="MX Keys S"):
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
+            patch("swigi.discovery.get_device_name", return_value="MX Keys S"),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].name, "MX Keys S")
@@ -160,13 +176,17 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result[0].change_host_index, 9)
 
     def test_found_mouse(self):
-        enumeration_node = _make_hid_node(product_id=0xB042, usage_page=0x0001, usage=0x0002)
+        enumeration_node = _make_hid_node(
+            product_id=0xB042, usage_page=0x0001, usage=0x0002
+        )
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery.resolve_feature", side_effect=[3, 11]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE), \
-             patch("swigi.discovery.get_device_name", return_value="MX Master 4"):
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery.resolve_feature", side_effect=[3, 11]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE),
+            patch("swigi.discovery.get_device_name", return_value="MX Master 4"),
+        ):
             result = find_all_devices(DEVICE_TYPE_MOUSE)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].name, "MX Master 4")
@@ -197,10 +217,12 @@ class TestFindAllDevices(unittest.TestCase):
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node1
 
         mock_transport = MagicMock()
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, 9, 5, 9]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD), \
-             patch("swigi.discovery.get_device_name", return_value="MX Keys S"):
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, 9, 5, 9]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
+            patch("swigi.discovery.get_device_name", return_value="MX Keys S"),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
 
         self.assertEqual(len(result), 1)
@@ -208,16 +230,20 @@ class TestFindAllDevices(unittest.TestCase):
     def test_transport_error_during_resolve_skipped(self):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
-        with patch("swigi.discovery.HIDTransport"), \
-             patch("swigi.discovery.resolve_feature", side_effect=TransportError("dead")):
+        with (
+            patch("swigi.discovery.HIDTransport"),
+            patch(
+                "swigi.discovery.resolve_feature", side_effect=TransportError("dead")
+            ),
+        ):
             result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
 
 # ── find_device ────────────────────────────────────────────────────────────────
 
-class TestFindDevice(unittest.TestCase):
 
+class TestFindDevice(unittest.TestCase):
     def test_returns_first_result(self):
         mock_device_info = MagicMock()
         with patch("swigi.discovery.find_all_devices", return_value=[mock_device_info]):
@@ -232,6 +258,7 @@ class TestFindDevice(unittest.TestCase):
 
 # ── Drain transport au démarrage ───────────────────────────────────────────────
 
+
 class TestFindAllDevicesDrainsTransport(unittest.TestCase):
     """Vérifie que _drain_transport est appelé après ouverture du transport HID."""
 
@@ -244,11 +271,13 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
 
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD), \
-             patch("swigi.discovery.get_device_name", return_value="MX Keys S"), \
-             patch("swigi.discovery._drain_transport") as mock_drain:
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
+            patch("swigi.discovery.get_device_name", return_value="MX Keys S"),
+            patch("swigi.discovery._drain_transport") as mock_drain,
+        ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
         mock_drain.assert_called_once_with(mock_transport)
@@ -259,12 +288,16 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
 
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery.resolve_feature", side_effect=[3, 11]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE), \
-             patch("swigi.discovery.get_device_name", return_value="MX Master 4"), \
-             patch("swigi.discovery._drain_transport") as mock_drain:
-            result = find_all_devices(DEVICE_TYPE_KEYBOARD)  # cherche clavier → souris ignorée
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery.resolve_feature", side_effect=[3, 11]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE),
+            patch("swigi.discovery.get_device_name", return_value="MX Master 4"),
+            patch("swigi.discovery._drain_transport") as mock_drain,
+        ):
+            result = find_all_devices(
+                DEVICE_TYPE_KEYBOARD
+            )  # cherche clavier → souris ignorée
 
         # Drain appelé même si le périphérique est filtré ensuite
         mock_drain.assert_called_once_with(mock_transport)
@@ -275,8 +308,10 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
 
-        with patch("swigi.discovery.HIDTransport", side_effect=OSError("no device")), \
-             patch("swigi.discovery._drain_transport") as mock_drain:
+        with (
+            patch("swigi.discovery.HIDTransport", side_effect=OSError("no device")),
+            patch("swigi.discovery._drain_transport") as mock_drain,
+        ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
         mock_drain.assert_not_called()
@@ -298,18 +333,22 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
             call_order.append("get_device_name")
             return "MX Keys S"
 
-        with patch("swigi.discovery.HIDTransport", return_value=mock_transport), \
-             patch("swigi.discovery._drain_transport", side_effect=record_drain), \
-             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]), \
-             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD), \
-             patch("swigi.discovery.get_device_name", side_effect=record_get_name):
+        with (
+            patch("swigi.discovery.HIDTransport", return_value=mock_transport),
+            patch("swigi.discovery._drain_transport", side_effect=record_drain),
+            patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
+            patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
+            patch("swigi.discovery.get_device_name", side_effect=record_get_name),
+        ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
         self.assertIn("drain", call_order)
         self.assertIn("get_device_name", call_order)
         drain_idx = call_order.index("drain")
         name_idx = call_order.index("get_device_name")
-        self.assertLess(drain_idx, name_idx, "drain doit être appelé AVANT get_device_name")
+        self.assertLess(
+            drain_idx, name_idx, "drain doit être appelé AVANT get_device_name"
+        )
 
 
 if __name__ == "__main__":

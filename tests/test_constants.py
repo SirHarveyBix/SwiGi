@@ -4,6 +4,7 @@ from swigi import constants
 
 class TestConstants(unittest.TestCase):
     """Vérifie l'intégrité des constantes HID++ et des messages pré-construits."""
+
     def test_logitech_vid(self):
         self.assertEqual(constants.LOGITECH_VID, 0x046D)
 
@@ -20,8 +21,12 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(constants.MSG_LONG_LEN, 20)
 
     def test_msg_lengths_mapping(self):
-        self.assertEqual(constants.MSG_LENGTHS[constants.REPORT_SHORT], constants.MSG_SHORT_LEN)
-        self.assertEqual(constants.MSG_LENGTHS[constants.REPORT_LONG], constants.MSG_LONG_LEN)
+        self.assertEqual(
+            constants.MSG_LENGTHS[constants.REPORT_SHORT], constants.MSG_SHORT_LEN
+        )
+        self.assertEqual(
+            constants.MSG_LENGTHS[constants.REPORT_LONG], constants.MSG_LONG_LEN
+        )
 
     def test_ping_msg_format(self):
         self.assertEqual(len(constants.PING_MESSAGE), 20)

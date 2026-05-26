@@ -16,6 +16,7 @@ Options :
   python swigi.py -v     # verbose
   python swigi.py --log-file swigi.log
 """
+
 import sys
 from swigi.main import main
 

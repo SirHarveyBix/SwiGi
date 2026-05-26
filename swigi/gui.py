@@ -49,7 +49,7 @@ def notify(message: str, subtitle: str = "") -> None:
 
     def _escape_string(text: str) -> str:
         text = text.replace("\\", "\\\\").replace('"', '\\"')
-        return ''.join(char for char in text if char >= ' ' or char in '\t')
+        return "".join(char for char in text if char >= " " or char in "\t")
 
     script = f'display notification "{_escape_string(message)}" with title "SwiGi"'
     if subtitle:
@@ -70,19 +70,26 @@ if HAS_RUMPS and _rumps:
         def __init__(self, state: dict, stop_event: threading.Event):
             initial_keyboard = state.get("keyboard")
             initial_mouse = state.get("mouse")
-            super().__init__("⌨️" if (initial_keyboard and initial_mouse) else "⌨", quit_button=None)
+            super().__init__("⌨️" )
             try:
                 from AppKit import NSApplication
+
                 NSApplication.sharedApplication().setActivationPolicy_(1)
             except Exception:
                 pass
             self._state = state
             self._stop_event = stop_event
 
-            self._keyboard_item    = _rumps.MenuItem(f"Clavier : {initial_keyboard or '—'} {'✅' if initial_keyboard else '❌'}")
-            self._mouse_item = _rumps.MenuItem(f"Souris : {initial_mouse or '—'} {'✅' if initial_mouse else '❌'}")
+            self._keyboard_item = _rumps.MenuItem(
+                f"Clavier : {initial_keyboard or '—'} {'✅' if initial_keyboard else '❌'}"
+            )
+            self._mouse_item = _rumps.MenuItem(
+                f"Souris : {initial_mouse or '—'} {'✅' if initial_mouse else '❌'}"
+            )
             self._count_item = _rumps.MenuItem("Basculements : 0")
-            self._notify_item = _rumps.MenuItem("Notifications", callback=self._toggle_notify)
+            self._notify_item = _rumps.MenuItem(
+                "Notifications", callback=self._toggle_notify
+            )
             self._notify_item.state = prefs.get("notifications", True)
             self._mouse_follow_item = _rumps.MenuItem(
                 "Souris suit le clavier", callback=self._toggle_mouse_follow
@@ -102,17 +109,25 @@ if HAS_RUMPS and _rumps:
 
             # Section BetterMouse — uniquement si installé
             from swigi.bettermouse import is_available
+
             if is_available():
                 self._better_mouse_auto_item = _rumps.MenuItem(
                     "Appliquer profil BetterMouse auto",
                     callback=self._better_mouse_toggle_auto,
                 )
-                self._better_mouse_auto_item.state = bool(prefs.get("better_mouse_auto_apply", False))
-                self._better_mouse_profile_menu = _rumps.MenuItem("Profil BetterMouse à appliquer")
+                self._better_mouse_auto_item.state = bool(
+                    prefs.get("better_mouse_auto_apply", False)
+                )
+                self._better_mouse_profile_menu = _rumps.MenuItem(
+                    "Profil BetterMouse à appliquer"
+                )
                 self._rebuild_profile_menu()
                 menu_items += [
                     None,
-                    _rumps.MenuItem("Exporter config BetterMouse", callback=self._better_mouse_export),
+                    _rumps.MenuItem(
+                        "Exporter config BetterMouse",
+                        callback=self._better_mouse_export,
+                    ),
                     self._better_mouse_profile_menu,
                     self._better_mouse_auto_item,
                 ]
@@ -133,7 +148,11 @@ if HAS_RUMPS and _rumps:
             # Support multi-clavier : construire le nom depuis state["keyboards"] si disponible
             keyboards = self._state.get("keyboards")
             if keyboards:
-                actifs = [d["name"] for d in keyboards.values() if d.get("ok") and d.get("name")]
+                actifs = [
+                    d["name"]
+                    for d in keyboards.values()
+                    if d.get("ok") and d.get("name")
+                ]
                 keyboard = ", ".join(actifs) if actifs else None
                 # Garder state["keyboard"] cohérent pour le reste du code
                 self._state["keyboard"] = actifs[0] if actifs else None
@@ -141,8 +160,12 @@ if HAS_RUMPS and _rumps:
                 keyboard = self._state.get("keyboard")
             mouse = self._state.get("mouse")
             switches = self._state.get("switches", 0)
-            self._keyboard_item.title = f"Clavier : {keyboard or '—'} {'✅' if keyboard else '❌'}"
-            self._mouse_item.title = f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
+            self._keyboard_item.title = (
+                f"Clavier : {keyboard or '—'} {'✅' if keyboard else '❌'}"
+            )
+            self._mouse_item.title = (
+                f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
+            )
             self._count_item.title = f"Basculements : {switches}"
             self.title = "⌨️" if (keyboard and mouse) else "⌨"
 
@@ -169,6 +192,7 @@ if HAS_RUMPS and _rumps:
 
         def _better_mouse_export(self, _):
             from swigi.bettermouse import export_current
+
             mouse_name = self._state.get("mouse") or "souris"
             default_name = mouse_name.replace(" ", "-").lower()
             try:
@@ -196,16 +220,20 @@ if HAS_RUMPS and _rumps:
             active = prefs.get("better_mouse_profile")
 
             # Entrée "aucun"
-            none_item = _rumps.MenuItem("(aucun)", callback=self._better_mouse_select_profile)
-            none_item.state = (active is None)
+            none_item = _rumps.MenuItem(
+                "(aucun)", callback=self._better_mouse_select_profile
+            )
+            none_item.state = active is None
             self._better_mouse_profile_menu["(aucun)"] = none_item
 
             profiles = list_profiles()
             if profiles:
                 self._better_mouse_profile_menu[None] = _rumps.separator  # séparateur
                 for name in profiles:
-                    item = _rumps.MenuItem(name, callback=self._better_mouse_select_profile)
-                    item.state = (name == active)
+                    item = _rumps.MenuItem(
+                        name, callback=self._better_mouse_select_profile
+                    )
+                    item.state = name == active
                     self._better_mouse_profile_menu[name] = item
 
         def _better_mouse_select_profile(self, sender):
@@ -217,7 +245,7 @@ if HAS_RUMPS and _rumps:
             for key, item in list(self._better_mouse_profile_menu.items()):
                 if key is None:
                     continue
-                item.state = (item.title == (name or "(aucun)"))
+                item.state = item.title == (name or "(aucun)")
             log.info("BetterMouse : profil sélectionné → %s", name or "(aucun)")
 
         # ── BetterMouse — toggle auto-apply ──────────────────────────────

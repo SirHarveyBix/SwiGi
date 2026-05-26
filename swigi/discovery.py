@@ -13,7 +13,12 @@ from swigi.constants import (
     LOGITECH_VID,
 )
 from swigi.hidapi_loader import lib
-from swigi.protocol import get_device_name, get_device_type, resolve_feature, _drain_transport
+from swigi.protocol import (
+    get_device_name,
+    get_device_type,
+    resolve_feature,
+    _drain_transport,
+)
 from swigi.transport import HIDTransport, TransportError
 
 log = logging.getLogger("swigi.discovery")
@@ -64,7 +69,9 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
         if (usage_page, usage) not in DIRECT_USAGE_PAIRS:
             continue
         compatibility_score = 100 if usage_page in (0xFF00, 0xFF43, 0xFF0C) else 0
-        candidates.append((compatibility_score, device_info.path, product_id, usage_page, usage))
+        candidates.append(
+            (compatibility_score, device_info.path, product_id, usage_page, usage)
+        )
     lib.hid_free_enumeration(enumeration_head)
     candidates.sort(key=lambda x: -x[0])
 
@@ -80,27 +87,45 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
         try:
             transport = HIDTransport(path, product_id)
         except OSError:
-            log.debug("Ouverture échouée pid=0x%04X up=0x%04X u=0x%04X", product_id, usage_page, usage)
+            log.debug(
+                "Ouverture échouée pid=0x%04X up=0x%04X u=0x%04X",
+                product_id,
+                usage_page,
+                usage,
+            )
             continue
         # Vide le buffer kernel avant toute requête HID++ — évite de lire une réponse
         # stale d'une session précédente (cause du nom corrompu après reconnexion BT).
         _drain_transport(transport)
         try:
-            feature_index = resolve_feature(transport, DEVICE_NUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME)
+            feature_index = resolve_feature(
+                transport, DEVICE_NUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME
+            )
             if feature_index is None:
                 transport.close()
                 continue
-            device_type = get_device_type(transport, DEVICE_NUMBER_DIRECT, feature_index)
+            device_type = get_device_type(
+                transport, DEVICE_NUMBER_DIRECT, feature_index
+            )
             raw_name = get_device_name(transport, DEVICE_NUMBER_DIRECT, feature_index)
             name = _clean_name(raw_name, product_id)
-            is_mouse = device_type in (DEVICE_TYPE_MOUSE, DEVICE_TYPE_TRACKPAD, DEVICE_TYPE_TRACKBALL)
-            if device_type_wanted == DEVICE_TYPE_KEYBOARD and device_type != DEVICE_TYPE_KEYBOARD:
+            is_mouse = device_type in (
+                DEVICE_TYPE_MOUSE,
+                DEVICE_TYPE_TRACKPAD,
+                DEVICE_TYPE_TRACKBALL,
+            )
+            if (
+                device_type_wanted == DEVICE_TYPE_KEYBOARD
+                and device_type != DEVICE_TYPE_KEYBOARD
+            ):
                 transport.close()
                 continue
             if device_type_wanted == DEVICE_TYPE_MOUSE and not is_mouse:
                 transport.close()
                 continue
-            change_host_index = resolve_feature(transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST)
+            change_host_index = resolve_feature(
+                transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST
+            )
             if change_host_index is None:
                 transport.close()
                 continue
