@@ -115,7 +115,11 @@ def run_daemon(
     last_response = time.time()
     last_switch_time = 0.0
     last_mouse_probe = 0.0
+    mouse_hunt_deadline = 0.0   # probe rapide (1s) tant que ce timestamp n'est pas dépassé
     WATCHDOG_TIMEOUT = 10.0
+    MOUSE_HUNT_WINDOW = 30.0    # secondes de probe rapide après reconnexion clavier
+    MOUSE_HUNT_INTERVAL = 1.0
+    MOUSE_PROBE_INTERVAL = 5.0
 
     while not stop_event.is_set():
         # ── Watchdog ──
@@ -131,6 +135,8 @@ def run_daemon(
                 kb = kb_new
                 state["kb"] = kb.name
                 log.info("Watchdog reconnexion clavier : %s", kb.name)
+                _resync_pending_host_from_keyboard(kb, state)
+                mouse_hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
             mouse_new = find_device(DEVICE_TYPE_MOUSE)
             if mouse_new:
                 mouse = mouse_new
@@ -138,6 +144,8 @@ def run_daemon(
                 log.info("Watchdog reconnexion souris : %s", mouse.name)
                 if not _check_and_apply_pending_host(mouse, state):
                     _apply_bm_profile_if_needed(mouse.name)
+            elif state.get("mouse") is None:
+                log.info("Watchdog : souris introuvable — probe rapide actif (%ds)", int(MOUSE_HUNT_WINDOW))
             last_response = time.time()
             continue
 
@@ -177,6 +185,7 @@ def run_daemon(
             last_response = time.time()
 
             _resync_pending_host_from_keyboard(kb, state)
+            mouse_hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
 
             if mouse.transport.is_open:
                 mouse.close()
@@ -186,12 +195,13 @@ def run_daemon(
             if new_mouse:
                 mouse = new_mouse
                 state["mouse"] = mouse.name
-                log.debug("Souris prête : %s", mouse.name)
+                log.info("Souris prête : %s", mouse.name)
                 if not _check_and_apply_pending_host(mouse, state):
                     _apply_bm_profile_if_needed(mouse.name)
                     notify(f"{mouse.name} reconnectée", "Souris")
             else:
-                log.debug("Souris introuvable, nouvelle tentative au prochain événement")
+                log.info("Souris introuvable après reconnexion clavier — probe toutes les %ds pendant %ds",
+                         int(MOUSE_HUNT_INTERVAL), int(MOUSE_HUNT_WINDOW))
             continue
 
         # ── Lecture réponses (fenêtre 80ms) ──
@@ -284,7 +294,9 @@ def run_daemon(
         time.sleep(0.01)
 
         # Sonde périodique : reconnecter la souris si absente et clavier OK
-        if state.get("mouse") is None and time.time() - last_mouse_probe > 5.0:
+        in_hunt = time.time() < mouse_hunt_deadline
+        probe_interval = MOUSE_HUNT_INTERVAL if in_hunt else MOUSE_PROBE_INTERVAL
+        if state.get("mouse") is None and time.time() - last_mouse_probe > probe_interval:
             last_mouse_probe = time.time()
             new_mouse = find_device(DEVICE_TYPE_MOUSE)
             if new_mouse:
@@ -296,6 +308,8 @@ def run_daemon(
                 if not _check_and_apply_pending_host(mouse, state):
                     _apply_bm_profile_if_needed(mouse.name)
                     notify(f"{mouse.name} reconnectée", "Souris")
+            elif in_hunt:
+                log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(MOUSE_HUNT_INTERVAL))
 
     log.info("Arrêt. Total : %d basculements.", total_switches)
     kb.close()
