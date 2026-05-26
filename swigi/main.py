@@ -107,10 +107,10 @@ def _main_inner(args) -> int:
 
     mice = find_all_devices(DEVICE_TYPE_MOUSE)
     if not mice:
-        log.error("Souris introuvable ! Vérifie la connexion Bluetooth.")
-        for kb in keyboards:
-            kb.close()
-        return 1
+        log.warning(
+            "Souris introuvable au démarrage — probe loop cherchera automatiquement."
+            " (Normal si la souris est connectée à un autre Mac.)"
+        )
     for mouse in mice:
         log.info("Souris :  %s (PID=0x%04X, CHANGE_HOST idx=%d)", mouse.name, mouse.pid, mouse.change_host_idx)
         notify(f"{mouse.name} connectée", "Souris")

@@ -55,12 +55,14 @@ Deux claviers MX Keys (même PID=0xB35B) connectés au même Mac :
 `state["pending_host"]` = `(target_host, deadline)` mémorisé après chaque switch.
 
 Quand la souris se reconnecte au Mac de destination :
+
 1. `_check_and_apply_pending_host` compare `get_current_host()` avec `target_host`
 2. Si désync → envoie CHANGE_HOST correctif
 3. Si sync → efface `pending_host`
 4. TTL = 60s → abandon si la souris ne revient pas dans ce délai
 
 Cas particulier — reconnexion clavier après switch :
+
 - `_resync_pending_host_from_keyboard` recale `pending_host` sur l'hôte RÉEL du clavier
 - Évite les fausses corrections si le clavier revient sur un autre hôte
 
@@ -68,23 +70,23 @@ Cas particulier — reconnexion clavier après switch :
 
 ## 6. Cas limites et edge cases découverts
 
-| Cas | Comportement |
-|-----|-------------|
-| Clavier déconnecté 30s, revenu sur même hôte | Resync pending_host → souris suit correctement |
-| Clavier revenu sur hôte différent (switch manuel) | pending_host recalé → pas de fausse correction |
-| Deux switches rapides (A→B→A en < 2s) | second pending_host écrase le premier → OK |
-| Souris disparue pendant le TTL | pending_host expiré après 60s → abandon |
-| macOS BT retourne réponses paddées (32 octets) | MSG_LENGTHS check accepte len >= (fix 2026-05-26) |
-| 2 souris connectées simultanément | _send_to_all_mice envoie à toutes, probe reçoit toutes |
+| Cas                                               | Comportement                                            |
+| ------------------------------------------------- | ------------------------------------------------------- |
+| Clavier déconnecté 30s, revenu sur même hôte      | Resync pending_host → souris suit correctement          |
+| Clavier revenu sur hôte différent (switch manuel) | pending_host recalé → pas de fausse correction          |
+| Deux switches rapides (A→B→A en < 2s)             | second pending_host écrase le premier → OK              |
+| Souris disparue pendant le TTL                    | pending_host expiré après 60s → abandon                 |
+| macOS BT retourne réponses paddées (32 octets)    | MSG_LENGTHS check accepte len >= (fix 2026-05-26)       |
+| 2 souris connectées simultanément                 | \_send_to_all_mice envoie à toutes, probe reçoit toutes |
 
 ---
 
 ## 7. Conformité constitution
 
-| Principe | Impact | Mesure |
-|----------|--------|--------|
-| Simplicité | ✅ | Pas de réseau, pas de coordination inter-Macs |
-| Portabilité | ✅ | Fonctionne aussi Linux/Windows (mêmes principes) |
-| Robustesse | ✅ | Reconnexion auto, pending_host avec TTL, backoff exp. |
-| Non-intrusivité | ✅ | Mode non-exclusif, coexiste avec Logi Options+ |
-| Réactivité | ✅ | Probe hunt 1s×30s post-reconnect, no busy-wait |
+| Principe        | Impact | Mesure                                                |
+| --------------- | ------ | ----------------------------------------------------- |
+| Simplicité      | ✅     | Pas de réseau, pas de coordination inter-Macs         |
+| Portabilité     | ✅     | Fonctionne aussi Linux/Windows (mêmes principes)      |
+| Robustesse      | ✅     | Reconnexion auto, pending_host avec TTL, backoff exp. |
+| Non-intrusivité | ✅     | Mode non-exclusif, coexiste avec Logi Options+        |
+| Réactivité      | ✅     | Probe hunt 1s×30s post-reconnect, no busy-wait        |

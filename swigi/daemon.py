@@ -102,6 +102,13 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         log.debug("pending_host : lecture hôte souris impossible, prochaine tentative au reconnect")
         return False
 
+    # Pendant le I/O (~500ms), un nouveau switch peut avoir modifié pending_host.
+    # Si c'est le cas, abandonner : le nouveau switch est la vérité à jour.
+    pending_now = state.get("pending_host")
+    if pending_now is None or pending_now[0] != target_host:
+        log.debug("pending_host modifié pendant I/O — abandon (switch plus récent en cours)")
+        return False
+
     if current == target_host:
         log.debug("Sync confirmée : souris sur hôte %d ✓", target_host)
         state["pending_host"] = None
@@ -266,9 +273,7 @@ def _watch_keyboard(
                 log.debug("%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay)
 
             if kb_new is None:
-                if not stop_event.is_set():
-                    log.warning("%s Le clavier n'est pas revenu, nouvelle tentative...", prefix)
-                continue
+                continue  # stop_event levé pendant reconnect — la boucle externe sort
 
             kb = kb_new
             prefix = f"[{kb.name}]"
@@ -305,10 +310,15 @@ def _watch_keyboard(
             last_response = time.time()
 
             # Notification CHANGE_HOST
+            # Format HID++ 2.0 fn0x00 notification : raw[4]=numHosts, raw[5]=newHost (base 0)
             if feat == kb.change_host_idx and sw_id == 0 and len(raw) > 5:
+                num_hosts = raw[4] if raw[4] > 0 else 3  # fallback 3 si firmware ne renseigne pas
                 target_host = raw[5]
-                if not (0 <= target_host <= 2):
-                    log.warning("%s Hôte cible invalide : %d (ignoré)", prefix, target_host)
+                if not (0 <= target_host < num_hosts):
+                    log.warning(
+                        "%s Hôte cible invalide : %d (numHosts=%d, ignoré)",
+                        prefix, target_host, num_hosts,
+                    )
                     continue
                 last_switch_time = time.time()
                 log.info("─" * 50)
@@ -348,8 +358,12 @@ def _mice_probe_loop(
     log.debug("Probe souris : thread démarré")
 
     while not stop_event.is_set():
-        # Attendre le prochain probe (hunt_trigger court-circuite le timeout)
-        triggered = hunt_trigger.wait(timeout=MOUSE_PROBE_INTERVAL)
+        # Timeout adaptatif : 1s en hunt (détection rapide post-switch), 5s en veille.
+        # BUG FIX : le timeout doit être calculé AVANT wait(), sinon le tour suivant
+        # attend toujours 5s même en hunt mode (bug : intervalle réel = 6s au lieu de 1s).
+        in_hunt = time.time() < hunt_deadline
+        timeout = MOUSE_HUNT_INTERVAL if in_hunt else MOUSE_PROBE_INTERVAL
+        triggered = hunt_trigger.wait(timeout=timeout)
         if triggered:
             hunt_trigger.clear()
             hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
@@ -400,15 +414,6 @@ def _mice_probe_loop(
 
         if in_hunt and not mice:
             log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(MOUSE_HUNT_INTERVAL))
-
-        # En mode hunt : attendre l'intervalle court avant le prochain cycle
-        if in_hunt:
-            # Mettre hunt_trigger en mode "expire vite" pour le prochain tour
-            # On utilise un sleep court puis reboucle
-            for _ in range(int(MOUSE_HUNT_INTERVAL * 10)):
-                if stop_event.is_set() or hunt_trigger.is_set():
-                    break
-                time.sleep(0.1)
 
     log.debug("Probe souris : thread arrêté")
     with mouse_lock:

@@ -59,9 +59,11 @@ bash install_mac.sh
 C'est tout. SwiGi démarre et se relancera automatiquement à chaque démarrage de ton Mac.
 
 > **Alternative :** Si le dépôt est déjà cloné sur ta machine, tu peux aussi utiliser :
+>
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
 > ```
+>
 > ⚠️ Cette commande nécessite que les fichiers SwiGi soient déjà présents localement — elle ne peut pas fonctionner seule.
 
 ---
@@ -249,19 +251,19 @@ bash install_mac.sh
 
 ### ❓ Problèmes fréquents
 
-| Problème                         | Solution                                                         |
-| -------------------------------- | ---------------------------------------------------------------- |
-| « Clavier introuvable »          | Vérifie que le clavier est connecté en Bluetooth (pas en USB)    |
-| « Souris introuvable »           | Idem pour la souris                                              |
-| Rien ne se passe sur macOS       | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service |
-| L'icône n'apparaît pas (installation) | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"` |
-| L'icône n'apparaît pas (général) | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Souris ne revient pas après switch | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log` |
-| `hidapi introuvable` sur macOS   | Lance `brew install hidapi`                                      |
-| `hidapi introuvable` sur Windows | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py` |
-| SwiGi se lance mais ne fait rien | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`     |
-| Permission perdue après update Homebrew Python | Ré-autoriser le nouveau binaire dans Surveillance des entrées. Trouver le chemin avec `which python3`. |
-| Logs : où les trouver | `tail -50 ~/Library/Logs/swigi.log` ou `cat ~/Library/Logs/swigi.log` |
+| Problème                                       | Solution                                                                                                                                                                                          |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| « Clavier introuvable »                        | Vérifie que le clavier est connecté en Bluetooth (pas en USB)                                                                                                                                     |
+| « Souris introuvable »                         | Idem pour la souris                                                                                                                                                                               |
+| Rien ne se passe sur macOS                     | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service                                                                                            |
+| L'icône n'apparaît pas (installation)          | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"`                                      |
+| L'icône n'apparaît pas (général)               | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
+| Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log`                                                                |
+| `hidapi introuvable` sur macOS                 | Lance `brew install hidapi`                                                                                                                                                                       |
+| `hidapi introuvable` sur Windows               | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py`                                                                                                                                  |
+| SwiGi se lance mais ne fait rien               | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`                                                                                                                                      |
+| Permission perdue après update Homebrew Python | Ré-autoriser le nouveau binaire dans Surveillance des entrées. Trouver le chemin avec `which python3`.                                                                                            |
+| Logs : où les trouver                          | `tail -50 ~/Library/Logs/swigi.log` ou `cat ~/Library/Logs/swigi.log`                                                                                                                             |
 
 ---
 
@@ -304,11 +306,11 @@ La boucle principale passe ~80 ms bloquée dans `hid_read_timeout` (appel systè
 
 ### Appareils testés
 
-| Appareil                                      | OS              | Connexion |
-| --------------------------------------------- | --------------- | --------- |
-| MX Keys S + MX Vertical                       | macOS (Sequoia) | Bluetooth |
-| MX Keys S + MX Vertical                       | Windows 11      | Bluetooth |
-| 2× MX Keys S (PID=0xB35B) + MX Master 4      | macOS 13+       | Bluetooth |
+| Appareil                                | OS              | Connexion |
+| --------------------------------------- | --------------- | --------- |
+| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth |
+| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth |
 
 _Validé en production : 3 Macs simultanément, multi-clavier._
 
@@ -357,9 +359,11 @@ bash install_mac.sh
 This installs hidapi, starts SwiGi, and sets it to launch automatically at login.
 
 > **Alternative:** If the repo is already cloned on your machine, you can also use:
+>
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
 > ```
+>
 > ⚠️ This command requires SwiGi files to already be present locally — it cannot work standalone.
 
 **Manual install:**
@@ -436,19 +440,19 @@ bash install_mac.sh
 
 ### ❓ Troubleshooting
 
-| Problem                       | Fix                                                     |
-| ----------------------------- | ------------------------------------------------------- |
-| "Keyboard not found"          | Make sure keyboard is connected via Bluetooth (not USB) |
-| "Mouse not found"             | Same for mouse                                          |
-| Nothing happens on macOS      | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service |
-| Menu bar icon missing (install) | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"` |
-| Menu bar icon missing (general) | 1) `python3` in Input Monitoring. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Mouse doesn't come back after switch | SwiGi must run on **all 3 Macs simultaneously** (see above). Check logs: `tail -50 ~/Library/Logs/swigi.log` |
-| `hidapi not found` on macOS   | Run `brew install hidapi`                               |
-| `hidapi not found` on Windows | Check `hidapi.dll` is in the same folder as `swigi.py`  |
-| SwiGi starts but does nothing | Run with `-v` for details: `python3 swigi.py -v`        |
-| Permission lost after Homebrew Python update | Re-authorize the new binary in Input Monitoring. Find the path with `which python3`. |
-| Where to find logs | `tail -50 ~/Library/Logs/swigi.log` |
+| Problem                                      | Fix                                                                                                                                                                                     |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Keyboard not found"                         | Make sure keyboard is connected via Bluetooth (not USB)                                                                                                                                 |
+| "Mouse not found"                            | Same for mouse                                                                                                                                                                          |
+| Nothing happens on macOS                     | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service                                                                                              |
+| Menu bar icon missing (install)              | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"`                                              |
+| Menu bar icon missing (general)              | 1) `python3` in Input Monitoring. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
+| Mouse doesn't come back after switch         | SwiGi must run on **all 3 Macs simultaneously** (see above). Check logs: `tail -50 ~/Library/Logs/swigi.log`                                                                            |
+| `hidapi not found` on macOS                  | Run `brew install hidapi`                                                                                                                                                               |
+| `hidapi not found` on Windows                | Check `hidapi.dll` is in the same folder as `swigi.py`                                                                                                                                  |
+| SwiGi starts but does nothing                | Run with `-v` for details: `python3 swigi.py -v`                                                                                                                                        |
+| Permission lost after Homebrew Python update | Re-authorize the new binary in Input Monitoring. Find the path with `which python3`.                                                                                                    |
+| Where to find logs                           | `tail -50 ~/Library/Logs/swigi.log`                                                                                                                                                     |
 
 ### How it works
 
@@ -475,11 +479,11 @@ The main loop spends ~80ms blocked in `hid_read_timeout` (a kernel syscall), the
 
 ### Tested
 
-| Device                                          | OS              | Connection |
-| ----------------------------------------------- | --------------- | ---------- |
-| MX Keys S + MX Vertical                         | macOS (Sequoia) | Bluetooth  |
-| MX Keys S + MX Vertical                         | Windows 11      | Bluetooth  |
-| 2× MX Keys S (PID=0xB35B) + MX Master 4        | macOS 13+       | Bluetooth  |
+| Device                                  | OS              | Connection |
+| --------------------------------------- | --------------- | ---------- |
+| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth  |
+| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth  |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth  |
 
 _Validated in production: 3 Macs simultaneously, multi-keyboard._
 
@@ -497,14 +501,14 @@ If SwiGi saves you time / Si SwiGi t'économise du temps :
 
 ## 📋 Historique des correctifs
 
-| Version    | Symptôme                                                                 | Fix                                                                   |
-| ---------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)        | MSG_LENGTHS check accepte len >= au lieu de ==                        |
-| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O)    | I/O sorti du lock dans probe loop                                     |
-| 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                       | Backoff exponentiel 0.5s→5s                                           |
-| 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                    | Détection + message d'erreur clair, git clone recommandé              |
-| 2026-05-26 | launchctl load/unload déprécié macOS 13+                                 | Remplacé par bootstrap/bootout                                        |
-| 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)            | tempfile + os.replace()                                               |
+| Version    | Symptôme                                                             | Fix                                                      |
+| ---------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
+| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)    | MSG_LENGTHS check accepte len >= au lieu de ==           |
+| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O) | I/O sorti du lock dans probe loop                        |
+| 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                    | Backoff exponentiel 0.5s→5s                              |
+| 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                 | Détection + message d'erreur clair, git clone recommandé |
+| 2026-05-26 | launchctl load/unload déprécié macOS 13+                             | Remplacé par bootstrap/bootout                           |
+| 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)        | tempfile + os.replace()                                  |
 
 ---
 

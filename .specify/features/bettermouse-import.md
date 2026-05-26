@@ -12,11 +12,11 @@ Chaque Mac a SwiGi + BetterMouse qui tournent indépendamment. Quand la souris a
 
 **Exemple concret :**
 
-| Machine | Hôte | Profil actif |
-|---------|------|-------------|
-| Mac bureau | 0 | config-bureau.json (sensibilité haute, ratchet ON) |
-| MacBook | 1 | config-laptop.json (sensibilité basse, hi-res scroll) |
-| Mac mini | 2 | config-bureau.json (même profil que le bureau) |
+| Machine    | Hôte | Profil actif                                          |
+| ---------- | ---- | ----------------------------------------------------- |
+| Mac bureau | 0    | config-bureau.json (sensibilité haute, ratchet ON)    |
+| MacBook    | 1    | config-laptop.json (sensibilité basse, hi-res scroll) |
+| Mac mini   | 2    | config-bureau.json (même profil que le bureau)        |
 
 Mac mini **choisit** d'utiliser le profil exporté depuis Mac bureau — pas le sien propre.
 
@@ -33,6 +33,7 @@ Mac mini **choisit** d'utiliser le profil exporté depuis Mac bureau — pas le 
 ```
 
 Chaque Mac stocke localement :
+
 ```
 ~/.swigi_profiles/
     config-bureau.json   ← snapshot BetterMouse exporté
@@ -114,6 +115,7 @@ Quitter
 BetterMouse n'a pas d'API publique (pas d'AppleScript dictionary, pas d'URL scheme documenté). Deux approches possibles :
 
 ### Option A — Écriture plist + redémarrage BetterMouse (brute force)
+
 ```python
 import subprocess, shutil, plistlib
 
@@ -135,11 +137,13 @@ subprocess.Popen(["open", "-a", "BetterMouse"])
 **Avantages :** Fonctionne avec toute version BetterMouse. Aucune permission spéciale.
 
 **Risques :**
+
 - Changements non sauvegardés dans BetterMouse perdus (mitigé par backup auto)
 - Si la structure plist change entre versions → patcher échoue silencieusement (try/except + fallback backup restore)
 - Délai ~1s le temps que BetterMouse redémarre
 
 ### Option B — Lecture seule + notification utilisateur
+
 Si l'écriture plist est jugée trop risquée : SwiGi lit le profil et notifie "Profil config-bureau chargé — applique dans BetterMouse si besoin". Moins puissant mais zéro risque.
 
 **Recommandation : implémenter Option A avec backup automatique et rollback sur erreur.**
@@ -364,37 +368,39 @@ if prefs.get("bm_auto_apply") and prefs.get("bm_profile"):
 
 ## 9. Risques et mitigations
 
-| Risque | Probabilité | Mitigation |
-|--------|-------------|------------|
-| Structure plist change entre versions BM | Moyen | try/except + rollback backup automatique |
-| BetterMouse relancé pendant une session active | Faible | Délai ~1s acceptable, même comportement qu'un redémarrage manuel |
-| Plusieurs souris Logitech → mauvaise cible | Possible | Matcher `mice[i].name.product == swigi_mouse.name` |
-| Profil d'une autre souris appliqué | Possible | Vérifier `profile.meta.mouse == swigi_mouse.name` avant apply |
-| BetterMouse absent sur ce Mac | Certain (Windows/Linux) | Guard `if SYSTEM == "Darwin" and is_available()` |
-| Clé de licence dans plist | Oui (Paddle-*) | Jamais incluse dans l'export JSON |
+| Risque                                         | Probabilité             | Mitigation                                                       |
+| ---------------------------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| Structure plist change entre versions BM       | Moyen                   | try/except + rollback backup automatique                         |
+| BetterMouse relancé pendant une session active | Faible                  | Délai ~1s acceptable, même comportement qu'un redémarrage manuel |
+| Plusieurs souris Logitech → mauvaise cible     | Possible                | Matcher `mice[i].name.product == swigi_mouse.name`               |
+| Profil d'une autre souris appliqué             | Possible                | Vérifier `profile.meta.mouse == swigi_mouse.name` avant apply    |
+| BetterMouse absent sur ce Mac                  | Certain (Windows/Linux) | Guard `if SYSTEM == "Darwin" and is_available()`                 |
+| Clé de licence dans plist                      | Oui (Paddle-\*)         | Jamais incluse dans l'export JSON                                |
 
 ---
 
 ## 10. Conformité constitution
 
-| Principe        | Impact | Mesure |
-|-----------------|--------|--------|
-| Simplicité      | ✅ | Module opt-in, chargé uniquement si BetterMouse présent |
-| Portabilité     | ⚠️ macOS-only | Guard `SYSTEM == "Darwin"` — no-op Windows/Linux |
-| Robustesse      | ✅ | Backup avant écriture plist, rollback sur erreur |
-| Non-intrusivité | ⚠️ | Écriture plist + redémarrage BetterMouse — opt-in explicite (toggle OFF par défaut) |
-| Réactivité      | ✅ | Apply ~1s (BetterMouse restart), acceptable post-switch |
+| Principe        | Impact        | Mesure                                                                              |
+| --------------- | ------------- | ----------------------------------------------------------------------------------- |
+| Simplicité      | ✅            | Module opt-in, chargé uniquement si BetterMouse présent                             |
+| Portabilité     | ⚠️ macOS-only | Guard `SYSTEM == "Darwin"` — no-op Windows/Linux                                    |
+| Robustesse      | ✅            | Backup avant écriture plist, rollback sur erreur                                    |
+| Non-intrusivité | ⚠️            | Écriture plist + redémarrage BetterMouse — opt-in explicite (toggle OFF par défaut) |
+| Réactivité      | ✅            | Apply ~1s (BetterMouse restart), acceptable post-switch                             |
 
 ---
 
 ## 11. Phases d'implémentation
 
 **Phase 1 — Export + menu bar** (pas d'application automatique)
+
 - `bettermouse.py` : `is_available()`, `export_current()`, `list_profiles()`
 - `gui.py` : bouton export, sous-menu sélection profil (stocké dans prefs)
 - Toggle auto-apply = OFF par défaut
 
 **Phase 2 — Application automatique**
+
 - `bettermouse.py` : `apply_profile()`
 - `daemon.py` / `gui.py` : déclenchement post-reconnect souris
 - Test sur machine réelle requis avant activation par défaut
