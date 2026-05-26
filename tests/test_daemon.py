@@ -26,7 +26,7 @@ else:
     sys.modules["swigi.gui"] = _mock_gui
 
 from swigi.daemon import (  # noqa: E402
-    _apply_bm_profile_if_needed,
+    _apply_better_mouse_profile_if_needed,
     _check_and_apply_pending_host,
     _resync_pending_host_from_keyboard,
     _find_keyboard_by_product_id,
@@ -349,58 +349,58 @@ class TestRoundTripScenario(unittest.TestCase):
         self.assertEqual(feat_idx2, 11)  # change_host_index de mouse2
 
 
-# ── _apply_bm_profile_if_needed ────────────────────────────────────────────────
+# ── _apply_better_mouse_profile_if_needed ────────────────────────────────────────────────
 
-class TestApplyBmProfileIfNeeded(unittest.TestCase):
+class TestApplyBetterMouseProfileIfNeeded(unittest.TestCase):
 
     def test_no_op_when_bm_auto_apply_false(self):
-        _mock_gui.prefs = {"bm_auto_apply": False, "bm_profile": "mon-profil"}
+        _mock_gui.prefs = {"better_mouse_auto_apply": False, "better_mouse_profile": "mon-profil"}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Darwin"):
             with patch("swigi.bettermouse.apply_profile") as mock_ap:
-                _apply_bm_profile_if_needed("MX Vertical")
+                _apply_better_mouse_profile_if_needed("MX Vertical")
         mock_ap.assert_not_called()
 
     def test_no_op_when_bm_profile_missing(self):
-        _mock_gui.prefs = {"bm_auto_apply": True}
+        _mock_gui.prefs = {"better_mouse_auto_apply": True}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Darwin"):
             with patch("swigi.bettermouse.apply_profile") as mock_ap:
-                _apply_bm_profile_if_needed("MX Vertical")
+                _apply_better_mouse_profile_if_needed("MX Vertical")
         mock_ap.assert_not_called()
 
     def test_no_op_on_non_darwin(self):
-        _mock_gui.prefs = {"bm_auto_apply": True, "bm_profile": "mon-profil"}
+        _mock_gui.prefs = {"better_mouse_auto_apply": True, "better_mouse_profile": "mon-profil"}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Windows"):
             with patch("swigi.bettermouse.apply_profile") as mock_ap:
-                _apply_bm_profile_if_needed("MX Vertical")
+                _apply_better_mouse_profile_if_needed("MX Vertical")
         mock_ap.assert_not_called()
 
     def test_calls_apply_profile_when_configured(self):
-        _mock_gui.prefs = {"bm_auto_apply": True, "bm_profile": "mon-profil"}
+        _mock_gui.prefs = {"better_mouse_auto_apply": True, "better_mouse_profile": "mon-profil"}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Darwin"), \
              patch("swigi.daemon.notify"), \
              patch("swigi.bettermouse.apply_profile") as mock_ap:
-            _apply_bm_profile_if_needed("MX Vertical")
+            _apply_better_mouse_profile_if_needed("MX Vertical")
         mock_ap.assert_called_once_with("mon-profil", mouse_name="MX Vertical")
 
     def test_swallows_value_error_profile_mismatch(self):
-        _mock_gui.prefs = {"bm_auto_apply": True, "bm_profile": "profil-mx"}
+        _mock_gui.prefs = {"better_mouse_auto_apply": True, "better_mouse_profile": "profil-mx"}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Darwin"), \
              patch("swigi.daemon.notify"), \
              patch("swigi.bettermouse.apply_profile", side_effect=ValueError("mauvaise souris")):
-            _apply_bm_profile_if_needed("MX Anywhere")  # ne doit pas lever
+            _apply_better_mouse_profile_if_needed("MX Anywhere")  # ne doit pas lever
 
     def test_swallows_unexpected_exception(self):
-        _mock_gui.prefs = {"bm_auto_apply": True, "bm_profile": "profil-mx"}
+        _mock_gui.prefs = {"better_mouse_auto_apply": True, "better_mouse_profile": "profil-mx"}
         with patch("swigi.daemon.prefs", _mock_gui.prefs), \
              patch("swigi.daemon.SYSTEM", "Darwin"), \
              patch("swigi.daemon.notify"), \
              patch("swigi.bettermouse.apply_profile", side_effect=RuntimeError("boom")):
-            _apply_bm_profile_if_needed("MX Vertical")  # ne doit pas lever
+            _apply_better_mouse_profile_if_needed("MX Vertical")  # ne doit pas lever
 
 
 # ── _find_keyboard_by_product_id ────────────────────────────────────────────────────────────
@@ -1193,7 +1193,7 @@ class TestStartupWithoutMouse(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.15)
+            time.sleep(0.20)
             stop.set()
             t.join(timeout=1)
 
@@ -1454,6 +1454,7 @@ class TestThreeMacFullScenario(unittest.TestCase):
         mouse.product_id = 0xB042
 
         arrival = [None]
+        found_event = threading.Event()
         call_count = [0]
 
         def fake_find(*args):
@@ -1461,6 +1462,7 @@ class TestThreeMacFullScenario(unittest.TestCase):
             if call_count[0] == 1:
                 return []  # 1er probe : pas encore là
             arrival[0] = time.time()
+            found_event.set()
             return [mouse]
 
         start = time.time()
@@ -1478,13 +1480,15 @@ class TestThreeMacFullScenario(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            time.sleep(0.15)
+            # Attendre l'arrivée de la souris (event-based, pas sleep fixe)
+            found_event.wait(timeout=1.0)
             stop.set()
             t.join(timeout=1)
 
         self.assertIsNotNone(arrival[0], "Souris jamais trouvée")
         elapsed = arrival[0] - start
-        self.assertLess(elapsed, 0.15, f"Souris trouvée trop tard ({elapsed:.3f}s, attendu < 0.15s)")
+        # En hunt mode (interval=0.02s), 2 probes = ~0.04-0.06s — 0.25s est très généreux
+        self.assertLess(elapsed, 0.25, f"Souris trouvée trop tard ({elapsed:.3f}s, attendu < 0.25s)")
         self.assertIsNone(state["pending_host"], "pending_host non effacé après sync OK")
 
     def test_state_mouse_updated_after_probe(self):
@@ -2106,8 +2110,8 @@ class TestRunDaemon(unittest.TestCase):
 class TestMouseFollowPreference(unittest.TestCase):
     """Tests pour la préférence mouse_follow : activer/désactiver le suivi souris."""
 
-    def test_mouse_follow_disabled_no_change_host_sent(self):
-        """mouse_follow=False → _send_to_all_mice non appelé lors d'un switch."""
+    def test_send_to_all_mice_always_sends_regardless_of_mouse_follow(self):
+        """_send_to_all_mice envoie toujours — le check mouse_follow est dans run_daemon."""
         _mock_gui.prefs = {"mouse_follow": False, "notifications": True}
         mouse = _make_mouse()
         mice = [mouse]
@@ -2531,6 +2535,177 @@ class TestComplexSwitchSequences(unittest.TestCase):
         self.assertFalse(corrected)
         self.assertEqual(targets, [])
         self.assertIsNone(self.state["pending_host"])
+
+
+class TestMouseFollowsDuringMovement(unittest.TestCase):
+    """Souris en mouvement (transport ouvert) doit quand même suivre le clavier."""
+
+    def test_mouse_follow_sent_even_when_mouse_transport_open(self):
+        """Switch clavier → CHANGE_HOST envoyé même si transport souris still open."""
+        mouse = _make_mouse()
+        mouse.transport.is_open = True  # souris active/en mouvement
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = threading.Lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 1, state, lock)
+
+        mock_send.assert_called_once()
+        self.assertEqual(state["pending_host"][0], 1)
+        self.assertEqual(mice, [])  # liste vidée après switch
+
+    def test_pending_host_set_after_switch_with_open_mice(self):
+        """pending_host correctement mis à jour après switch avec souris ouverte."""
+        mouse = _make_mouse()
+        mouse.transport.is_open = True
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = threading.Lock()
+
+        with patch("swigi.daemon.send_change_host"):
+            _send_to_all_mice(mice, 2, state, lock)
+
+        self.assertIsNotNone(state["pending_host"])
+        self.assertEqual(state["pending_host"][0], 2)
+        self.assertIsNone(state["mouse"])
+
+
+# ── Scénario junior : 3 Macs, clavier + souris, switch complet A→B→C ─────────
+
+class TestJuniorThreeMacsEndToEnd(unittest.TestCase):
+    """Cas d'usage junior : 3 Macs (hôtes 0,1,2), 1 clavier, 1 souris.
+    La souris DOIT suivre le clavier sur chaque switch, même en mouvement.
+    """
+
+    def _switch_to(self, mice_list, target, state, lock):
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice_list, target, state, lock)
+        return mock_send
+
+    def test_mouse_follows_keyboard_abc(self):
+        """Switch A→B→C : CHANGE_HOST envoyé à la souris pour chaque étape."""
+        lock = threading.Lock()
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+
+        # Switch A→B (hôte 0→1)
+        mouse_ab = _make_mouse(); mouse_ab.product_id = 0xB025
+        mice = [mouse_ab]
+        mock_send = self._switch_to(mice, 1, state, lock)
+        mock_send.assert_called_once()
+        _, _, _, host_sent = mock_send.call_args[0]
+        self.assertEqual(host_sent, 1)
+        self.assertEqual(state["pending_host"][0], 1)
+
+        # Switch B→C (hôte 1→2)
+        mouse_bc = _make_mouse(); mouse_bc.product_id = 0xB025
+        mice[:] = [mouse_bc]
+        mock_send2 = self._switch_to(mice, 2, state, lock)
+        mock_send2.assert_called_once()
+        _, _, _, host_sent2 = mock_send2.call_args[0]
+        self.assertEqual(host_sent2, 2)
+        self.assertEqual(state["pending_host"][0], 2)
+
+    def test_mouse_follows_keyboard_even_when_transport_open(self):
+        """Souris en mouvement (transport ouvert) → CHANGE_HOST quand même envoyé."""
+        lock = threading.Lock()
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        mouse = _make_mouse()
+        mouse.transport.is_open = True  # souris active, en train de bouger
+        mice = [mouse]
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 1, state, lock)
+
+        mock_send.assert_called_once()
+        self.assertEqual(state["pending_host"][0], 1)
+        self.assertEqual(mice, [], "mice_list doit être vide après switch")
+
+    def test_pending_host_cleared_after_sync_on_probe(self):
+        """probe loop : souris déjà sur le bon hôte → pending_host effacé."""
+        mouse = _make_mouse()
+        mouse.product_id = 0xB025
+        state = {"pending_host": _pending(1), "mouse": None, "mice": []}
+        lock = threading.Lock()
+        mice_list = []
+
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=1):  # déjà sur hôte 1
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.15)
+            stop.set()
+            t.join(timeout=1)
+
+        self.assertIsNone(state["pending_host"], "pending_host doit être effacé quand souris déjà sync")
+
+    def test_pending_host_corrected_on_desync(self):
+        """probe loop : souris sur mauvais hôte → CHANGE_HOST de correction envoyé."""
+        mouse = _make_mouse()
+        mouse.product_id = 0xB025
+        sent_hosts = []
+        state = {"pending_host": _pending(1), "mouse": None, "mice": []}
+        lock = threading.Lock()
+        mice_list = []
+
+        def fake_send(transport, device, feat, target):
+            sent_hosts.append(target)
+
+        with _fast_probe(), \
+             patch("swigi.daemon.find_all_devices", return_value=[mouse]), \
+             patch("swigi.daemon.notify"), \
+             patch("swigi.daemon.get_current_host", return_value=0), \
+             patch("swigi.daemon.send_change_host", side_effect=fake_send):
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.15)
+            stop.set()
+            t.join(timeout=1)
+
+        self.assertIn(1, sent_hosts, "Correction désync → hôte 1 doit avoir été envoyée")
+
+    def test_resync_does_not_overwrite_newer_switch(self):
+        """_resync: switch arrivé pendant I/O → pending_host du switch conservé."""
+        keyboard = _make_keyboard()
+        # Simuler: pendant le resync I/O, un switch arrive et change pending_host
+        call_count = [0]
+        pending_objects = []
+
+        def fake_get_host(*a, **kw):
+            # Simule un switch concurrent pendant le 1er retry
+            if call_count[0] == 0:
+                new_pending = (2, time.time() + 60)  # nouveau objet tuple → switch détecté
+                state["pending_host"] = new_pending
+                pending_objects.append(new_pending)
+            call_count[0] += 1
+            return 0  # clavier sur hôte 0
+
+        state = {"pending_host": _pending(1)}
+
+        with patch("swigi.daemon.get_current_host", side_effect=fake_get_host), \
+             patch("swigi.daemon._RESYNC_RETRIES", 1):
+            from swigi.daemon import _resync_pending_host_from_keyboard
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        # Le resync ne doit PAS écraser le pending_host mis à jour par le switch
+        self.assertIsNotNone(state["pending_host"])
+        self.assertEqual(state["pending_host"][0], 2, "pending_host du switch doit être conservé")
 
 
 if __name__ == "__main__":

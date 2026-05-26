@@ -1,7 +1,7 @@
 import struct
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Mock hidapi_loader AVANT d'importer protocol/transport
 # Cela permet de lancer les tests sans hidapi installé
@@ -16,6 +16,7 @@ else:
 
 from swigi import protocol  # noqa: E402
 from swigi.constants import REPORT_LONG, SW_ID  # noqa: E402
+from swigi.protocol import get_device_name  # noqa: E402
 
 
 class MockTransport:
@@ -237,6 +238,30 @@ class TestHidppRequestPaddedResponse(unittest.TestCase):
         transport.responses_to_read.append(response_message)
         reply = protocol.hidpp_request(transport, device_number, request_id)
         self.assertIsNotNone(reply)
+
+
+class TestGetDeviceName(unittest.TestCase):
+    def test_get_device_name_no_infinite_loop_on_malformed_device(self):
+        """get_device_name ne boucle pas indéfiniment si name_len == 0 ou très grand."""
+        transport = MagicMock()
+        # Simuler la réponse à la requête 0x00 (get count) avec name_len=0
+        with patch("swigi.protocol.hidpp_request", return_value=b"\x00" + b"\x00" * 15) as mock_req:
+            result = get_device_name(transport, 0xFF, 0x04)
+        self.assertIsNone(result)
+
+
+class TestBuildMessageValidation(unittest.TestCase):
+    def test_build_message_raises_on_oversized_parameters(self):
+        """_build_message lève ValueError si parameters > 16 bytes."""
+        from swigi.protocol import _build_message
+        with self.assertRaises(ValueError):
+            _build_message(0xFF, 0x0411, b"\x01" * 17)  # 17 bytes > 16 max
+
+    def test_build_message_accepts_max_parameters(self):
+        """_build_message accepte exactement 16 bytes de parameters."""
+        from swigi.protocol import _build_message
+        result = _build_message(0xFF, 0x0411, b"\x01" * 16)
+        self.assertEqual(len(result), 20)  # 1 (report_id) + 1 (device) + 18 (data) = 20
 
 
 if __name__ == "__main__":

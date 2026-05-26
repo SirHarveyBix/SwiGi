@@ -48,7 +48,7 @@ class _KeyboardReconnected:
 
 # ── Fonctions helper ──────────────────────────────────────────────────────────
 
-def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
+def _apply_better_mouse_profile_if_needed(mouse_name: str | None = None) -> None:
     """Applique le profil BetterMouse configuré si auto-apply est activé.
 
     No-op si BetterMouse absent, profil non configuré, ou toggle désactivé.
@@ -57,15 +57,15 @@ def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
     if SYSTEM != "Darwin":
         return
     with _prefs_lock:
-        bm_auto = prefs.get("bm_auto_apply")
-        bm_profile = prefs.get("bm_profile")
-    if not bm_auto or not bm_profile:
+        better_mouse_auto = prefs.get("better_mouse_auto_apply")
+        better_mouse_profile = prefs.get("better_mouse_profile")
+    if not better_mouse_auto or not better_mouse_profile:
         return
     try:
         from swigi.bettermouse import apply_profile
-        apply_profile(bm_profile, mouse_name=mouse_name)
-        notify(f"Profil {bm_profile} appliqué", "BetterMouse")
-        log.info("BetterMouse : profil '%s' appliqué", bm_profile)
+        apply_profile(better_mouse_profile, mouse_name=mouse_name)
+        notify(f"Profil {better_mouse_profile} appliqué", "BetterMouse")
+        log.info("BetterMouse : profil '%s' appliqué", better_mouse_profile)
     except ValueError as error:
         log.warning("BetterMouse : profil ignoré (souris différente) : %s", error)
     except Exception as error:
@@ -99,6 +99,9 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
 
     # Le stack BT macOS peut prendre 150–300ms après reconnexion avant que
     # getHostInfo réponde correctement — retry avec backoff linéaire.
+    # Snapshot de pending_host avant I/O : si un switch survient pendant les retries,
+    # la valeur change d'objet → comparaison d'identité détecte la modification.
+    pending_before_io = state.get("pending_host")
     keyboard_host = None
     for attempt in range(_RESYNC_RETRIES):
         if attempt > 0:
@@ -113,8 +116,13 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
             break
 
     if keyboard_host is not None:
-        state["pending_host"] = (keyboard_host, time.time() + _PENDING_HOST_TTL)
-        log.debug("pending_host recalé sur hôte clavier : %d", keyboard_host)
+        # Ne pas écraser un pending_host plus récent issu d'un switch pendant l'I/O.
+        # _send_to_all_mice crée un nouveau tuple → l'identité d'objet change.
+        if state.get("pending_host") is pending_before_io:
+            state["pending_host"] = (keyboard_host, time.time() + _PENDING_HOST_TTL)
+            log.debug("pending_host recalé sur hôte clavier : %d", keyboard_host)
+        else:
+            log.debug("pending_host modifié pendant resync I/O — resync ignorée (switch plus récent)")
     else:
         state["pending_host"] = None
         log.warning("pending_host effacé — hôte clavier illisible après %d essais", _RESYNC_RETRIES)
@@ -273,8 +281,7 @@ def _watch_keyboard(
             log.info("%s Watchdog : aucune réponse depuis %ds, reconnexion...",
                      prefix, int(WATCHDOG_TIMEOUT))
             keyboard.close()
-            state_lock = state.get("_state_lock") or nullcontext()
-            with state_lock:
+            with state.get("_state_lock") or nullcontext():
                 state["keyboards"][keyboard.product_id]["ok"] = False
 
             delay = _KEYBOARD_RECONNECT_INITIAL_DELAY
@@ -298,8 +305,7 @@ def _watch_keyboard(
             if new_keyboard:
                 keyboard = new_keyboard
                 prefix = f"[{keyboard.name}]"
-                state_lock = state.get("_state_lock") or nullcontext()
-                with state_lock:
+                with state.get("_state_lock") or nullcontext():
                     state["keyboards"][keyboard.product_id] = {"name": keyboard.name, "ok": True}
                 # Compatibilité GUI : mettre à jour le premier clavier actif
                 _update_keyboard_state(state)
@@ -355,8 +361,7 @@ def _watch_keyboard(
             keyboard_reconnected_at = None
 
             keyboard.close()
-            state_lock = state.get("_state_lock") or nullcontext()
-            with state_lock:
+            with state.get("_state_lock") or nullcontext():
                 state["keyboards"][keyboard.product_id]["ok"] = False
             _update_keyboard_state(state)
 
@@ -384,8 +389,7 @@ def _watch_keyboard(
 
             keyboard = new_keyboard
             prefix = f"[{keyboard.name}]"
-            state_lock = state.get("_state_lock") or nullcontext()
-            with state_lock:
+            with state.get("_state_lock") or nullcontext():
                 state["keyboards"][keyboard.product_id] = {"name": keyboard.name, "ok": True}
             _update_keyboard_state(state)
             log.info("%s Reconnexion OK", prefix)
@@ -399,6 +403,7 @@ def _watch_keyboard(
             continue
 
         # ── Lecture réponses (fenêtre 80ms) ──
+        raw_bytes = None
         deadline = time.time() + 0.08
         while time.time() < deadline and not stop_event.is_set():
             try:
@@ -437,7 +442,8 @@ def _watch_keyboard(
             if software_id == 0:
                 log.debug("%s Notification : feature_index=0x%02X [%s]", prefix, feature_index, raw_bytes[:10].hex())
 
-        time.sleep(0.01)
+        if raw_bytes is None:
+            time.sleep(0.01)
 
     log.info("%s Thread arrêté.", prefix)
     keyboard.close()
@@ -502,16 +508,17 @@ def _mice_probe_loop(
                     new_mouse.close()
 
             # Retirer les souris mortes non retrouvées par find_all_devices
-            for mouse in [x for x in list(mice) if not x.transport.is_open and x.product_id not in found_by_product_id]:
+            dead = [x for x in mice if not x.transport.is_open and x.product_id not in found_by_product_id]
+            for mouse in dead:
                 log.info("Souris retirée : %s (plus disponible)", mouse.name)
-                mice.remove(mouse)
+            mice[:] = [x for x in mice if x not in dead]
 
         # Pass 2 : HID I/O hors du lock (get_current_host peut prendre ~500ms)
         for new_mouse in new_mice:
             log.info("Souris détectée : %s (Product ID=0x%04X)", new_mouse.name, new_mouse.product_id)
             notify(f"{new_mouse.name} connectée", "Souris")
             if not _check_and_apply_pending_host(new_mouse, state):
-                _apply_bm_profile_if_needed(new_mouse.name)
+                _apply_better_mouse_profile_if_needed(new_mouse.name)
 
         # Pass 2b : vérifier pending_host sur les souris existantes (pas seulement nouvelles).
         # Corrige le cas où get_current_host retourne None au premier essai (BT timing)
@@ -544,8 +551,7 @@ def _update_keyboard_state(state: dict) -> None:
 
     Compatibilité GUI : state["keyboard"] doit rester valide pour le timer de rafraîchissement.
     """
-    state_lock = state.get("_state_lock") or nullcontext()
-    with state_lock:
+    with state.get("_state_lock") or nullcontext():
         keyboards = dict(state.get("keyboards", {}))
         new_keyboard = None
         for product_id_data in keyboards.values():

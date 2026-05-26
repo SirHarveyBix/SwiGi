@@ -49,14 +49,14 @@ def _load_hidapi() -> ctypes.CDLL:
             if os.path.isdir(directory):
                 try:
                     os.add_dll_directory(directory)
-                except Exception:
-                    pass
+                except Exception as error:
+                    log.debug("add_dll_directory échoué : %s", error)
         scripts_dir = os.path.join(sys.prefix, "Scripts")
         if os.path.isdir(scripts_dir):
             try:
                 os.add_dll_directory(scripts_dir)
-            except Exception:
-                pass
+            except Exception as error:
+                log.debug("add_dll_directory échoué : %s", error)
     else:  # Linux
         local_names = ["libhidapi-hidraw.so.0", "libhidapi-hidraw.so", "libhidapi.so.0", "libhidapi.so"]
         system_names = local_names + ["libhidapi-libusb.so.0", "libhidapi-libusb.so"]

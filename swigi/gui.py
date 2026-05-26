@@ -103,22 +103,22 @@ if HAS_RUMPS and _rumps:
             # Section BetterMouse — uniquement si installé
             from swigi.bettermouse import is_available
             if is_available():
-                self._bm_auto_item = _rumps.MenuItem(
+                self._better_mouse_auto_item = _rumps.MenuItem(
                     "Appliquer profil BetterMouse auto",
-                    callback=self._bm_toggle_auto,
+                    callback=self._better_mouse_toggle_auto,
                 )
-                self._bm_auto_item.state = bool(prefs.get("bm_auto_apply", False))
-                self._bm_profile_menu = _rumps.MenuItem("Profil BetterMouse à appliquer")
+                self._better_mouse_auto_item.state = bool(prefs.get("better_mouse_auto_apply", False))
+                self._better_mouse_profile_menu = _rumps.MenuItem("Profil BetterMouse à appliquer")
                 self._rebuild_profile_menu()
                 menu_items += [
                     None,
-                    _rumps.MenuItem("Exporter config BetterMouse", callback=self._bm_export),
-                    self._bm_profile_menu,
-                    self._bm_auto_item,
+                    _rumps.MenuItem("Exporter config BetterMouse", callback=self._better_mouse_export),
+                    self._better_mouse_profile_menu,
+                    self._better_mouse_auto_item,
                 ]
             else:
-                self._bm_auto_item = None
-                self._bm_profile_menu = None
+                self._better_mouse_auto_item = None
+                self._better_mouse_profile_menu = None
 
             menu_items += [
                 None,
@@ -167,7 +167,7 @@ if HAS_RUMPS and _rumps:
 
         # ── BetterMouse — export ───────────────────────────────────────────
 
-        def _bm_export(self, _):
+        def _better_mouse_export(self, _):
             from swigi.bettermouse import export_current
             mouse_name = self._state.get("mouse") or "souris"
             default_name = mouse_name.replace(" ", "-").lower()
@@ -185,36 +185,36 @@ if HAS_RUMPS and _rumps:
 
         def _rebuild_profile_menu(self):
             """Reconstruit le sous-menu 'Profil BetterMouse à appliquer' depuis PROFILES_DIR."""
-            if self._bm_profile_menu is None:
+            if self._better_mouse_profile_menu is None:
                 return
             from swigi.bettermouse import list_profiles
 
             # Vider le sous-menu existant
-            for key in list(self._bm_profile_menu.keys()):
-                del self._bm_profile_menu[key]
+            for key in list(self._better_mouse_profile_menu.keys()):
+                del self._better_mouse_profile_menu[key]
 
-            active = prefs.get("bm_profile")
+            active = prefs.get("better_mouse_profile")
 
             # Entrée "aucun"
-            none_item = _rumps.MenuItem("(aucun)", callback=self._bm_select_profile)
+            none_item = _rumps.MenuItem("(aucun)", callback=self._better_mouse_select_profile)
             none_item.state = (active is None)
-            self._bm_profile_menu["(aucun)"] = none_item
+            self._better_mouse_profile_menu["(aucun)"] = none_item
 
             profiles = list_profiles()
             if profiles:
-                self._bm_profile_menu[None] = _rumps.separator  # séparateur
+                self._better_mouse_profile_menu[None] = _rumps.separator  # séparateur
                 for name in profiles:
-                    item = _rumps.MenuItem(name, callback=self._bm_select_profile)
+                    item = _rumps.MenuItem(name, callback=self._better_mouse_select_profile)
                     item.state = (name == active)
-                    self._bm_profile_menu[name] = item
+                    self._better_mouse_profile_menu[name] = item
 
-        def _bm_select_profile(self, sender):
+        def _better_mouse_select_profile(self, sender):
             name = sender.title if sender.title != "(aucun)" else None
             with _prefs_lock:
-                prefs["bm_profile"] = name
+                prefs["better_mouse_profile"] = name
             save_prefs(prefs)
             # Mettre à jour les checkmarks
-            for key, item in self._bm_profile_menu.items():
+            for key, item in list(self._better_mouse_profile_menu.items()):
                 if key is None:
                     continue
                 item.state = (item.title == (name or "(aucun)"))
@@ -222,10 +222,10 @@ if HAS_RUMPS and _rumps:
 
         # ── BetterMouse — toggle auto-apply ──────────────────────────────
 
-        def _bm_toggle_auto(self, sender):
+        def _better_mouse_toggle_auto(self, sender):
             enabled = not bool(sender.state)
             with _prefs_lock:
-                prefs["bm_auto_apply"] = enabled
+                prefs["better_mouse_auto_apply"] = enabled
             save_prefs(prefs)
             sender.state = enabled
             log.info("BetterMouse auto-apply : %s", "ON" if enabled else "OFF")

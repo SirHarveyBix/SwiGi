@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -166,6 +167,8 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
         raise FileNotFoundError("BetterMouse plist introuvable")
 
     name = os.path.basename(name)
+    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        raise ValueError(f"Nom de profil invalide : {name!r}")
     path = os.path.join(PROFILES_DIR, f"{name}.json")
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Profil introuvable : {path}")
@@ -173,8 +176,9 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
     with open(path, encoding="utf-8") as file:
         profile = json.load(file)
 
-    # Vérification souris (optionnelle si mouse_name fourni)
-    if mouse_name and profile.get("meta", {}).get("mouse") not in (None, "?", mouse_name):
+    # Vérification souris (optionnelle si mouse_name fourni) — comparaison case-insensitive
+    profile_mouse = profile.get("meta", {}).get("mouse") or ""
+    if mouse_name and profile_mouse not in ("", "?") and profile_mouse.lower() != mouse_name.lower():
         raise ValueError(
             f"Profil pour '{profile['meta']['mouse']}', souris connectée : '{mouse_name}'"
         )
@@ -210,6 +214,13 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+        # Nettoyer le backup après succès
+        try:
+            os.unlink(backup)
+            log.debug("Backup supprimé : %s", backup)
+        except OSError:
+            pass
 
     except Exception as error:
         log.error("Patch BetterMouse échoué, rollback : %s", error)

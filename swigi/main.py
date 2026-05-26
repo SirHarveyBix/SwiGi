@@ -160,7 +160,7 @@ def _main_inner(arguments) -> int:
                         old.close()
                     keyboards = new_keyboards
                     state["keyboards"] = {keyboard.product_id: {"name": keyboard.name, "ok": True} for keyboard in keyboards}
-                    state["keyboard"] = keyboards[0].name
+                    state["keyboard"] = keyboards[0].name if keyboards else None
                 new_mice = find_all_devices(DEVICE_TYPE_MOUSE)
                 if new_mice:
                     for old in mice:

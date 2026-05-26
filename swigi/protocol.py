@@ -19,6 +19,8 @@ log = logging.getLogger("swigi.protocol")
 
 
 def _build_message(device_number: int, request_id: int, parameters: bytes) -> bytes:
+    if len(parameters) > 16:
+        raise ValueError(f"parameters trop longs : {len(parameters)} bytes (max 16)")
     data = struct.pack("!H", request_id) + parameters
     return struct.pack("!BB18s", REPORT_LONG, device_number, data)
 
@@ -49,8 +51,11 @@ def hidpp_request(
     transport.write(message)
 
     deadline = time.time() + timeout / 1000
-    while time.time() < deadline:
-        remaining_ms = max(1, int((deadline - time.time()) * 1000))
+    while True:
+        now = time.time()
+        if now >= deadline:
+            break
+        remaining_ms = max(1, int((deadline - now) * 1000))
         raw_bytes = transport.read(min(timeout, remaining_ms))
         if not raw_bytes or len(raw_bytes) < 4:
             continue
@@ -110,7 +115,10 @@ def get_device_name(transport: HIDTransport, device_number: int, feature_index: 
         reply = hidpp_request(transport, device_number, (feature_index << 8) | 0x10, len(chars), timeout=500)
         if not reply:
             break
-        chars.extend(reply[: name_len - len(chars)])
+        to_read = name_len - len(chars)
+        if to_read <= 0:
+            break
+        chars.extend(reply[:to_read])
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
