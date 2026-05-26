@@ -101,9 +101,9 @@ def _main_inner(args) -> int:
     if not keyboards:
         log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
         return 1
-    for kb in keyboards:
-        log.info("Clavier : %s (PID=0x%04X, CHANGE_HOST idx=%d)", kb.name, kb.pid, kb.change_host_idx)
-        notify(f"{kb.name} connecté", "Clavier")
+    for keyboard in keyboards:
+        log.info("Clavier : %s (PID=0x%04X, CHANGE_HOST idx=%d)", keyboard.name, keyboard.pid, keyboard.change_host_idx)
+        notify(f"{keyboard.name} connecté", "Clavier")
 
     mice = find_all_devices(DEVICE_TYPE_MOUSE)
     if not mice:
@@ -116,16 +116,16 @@ def _main_inner(args) -> int:
         notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
-    kb_names = ", ".join(kb.name for kb in keyboards)
-    log.info("Prêt. Appuie sur Easy-Switch sur %s.", kb_names)
+    keyboard_names = ", ".join(keyboard.name for keyboard in keyboards)
+    log.info("Prêt. Appuie sur Easy-Switch sur %s.", keyboard_names)
     if not HAS_RUMPS:
         log.info("Ctrl+C pour quitter.")
 
     state: dict = {
-        "kb": keyboards[0].name,
-        "kbs": {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards},
+        "keyboard": keyboards[0].name,
+        "keyboards": {keyboard.pid: {"name": keyboard.name, "ok": True} for keyboard in keyboards},
         "mouse": mice[0].name if mice else None,
-        "mice": [m.name for m in mice],
+        "mice": [mouse.name for mouse in mice],
         "switches": 0,
         "pending_host": None,
     }
@@ -157,23 +157,23 @@ def _main_inner(args) -> int:
                 keyboards_new = find_all_devices(DEVICE_TYPE_KEYBOARD)
                 if keyboards_new:
                     keyboards = keyboards_new
-                    state["kbs"] = {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards}
-                    state["kb"] = keyboards[0].name
+                    state["keyboards"] = {keyboard.pid: {"name": keyboard.name, "ok": True} for keyboard in keyboards}
+                    state["keyboard"] = keyboards[0].name
                 mice_new = find_all_devices(DEVICE_TYPE_MOUSE)
                 if mice_new:
                     mice = mice_new
-                    state["mice"] = [m.name for m in mice]
+                    state["mice"] = [mouse.name for mouse in mice]
                     state["mouse"] = mice[0].name
 
     if HAS_RUMPS and SwiGiMenuBar:
         # Daemon en thread background, menu bar sur thread principal (requis AppKit)
-        t = threading.Thread(
+        daemon_thread = threading.Thread(
             target=_daemon_loop, args=(keyboards, mice, state, stop_event), daemon=True
         )
-        t.start()
+        daemon_thread.start()
         SwiGiMenuBar(state, stop_event).run()
         stop_event.set()
-        t.join(timeout=3)
+        daemon_thread.join(timeout=3)
     else:
         _daemon_loop(keyboards, mice, state, stop_event)
 

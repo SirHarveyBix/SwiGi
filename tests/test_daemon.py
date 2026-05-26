@@ -623,7 +623,7 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
         self.assertIn(1, hosts)
         self.assertIn(2, hosts)
 
-        names = {e.kb_name for e in switch_events}
+        names = {e.keyboard_name for e in switch_events}
         self.assertIn("MX Keys S", names)
         self.assertIn("MX Keys Mini", names)
 
@@ -1510,8 +1510,8 @@ class TestUpdateKbState(unittest.TestCase):
 
     def test_first_active_kb_name_set(self):
         state = {"kbs": {0xB35B: {"name": "MX Keys S", "ok": True}}}
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertEqual(state["kb"], "MX Keys S")
 
     def test_skips_down_kb_returns_active(self):
@@ -1519,20 +1519,20 @@ class TestUpdateKbState(unittest.TestCase):
             0xB35B: {"name": "MX Keys S", "ok": False},
             0xB361: {"name": "MX Keys Mini", "ok": True},
         }}
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertEqual(state["kb"], "MX Keys Mini")
 
     def test_all_down_sets_none(self):
         state = {"kbs": {0xB35B: {"name": "MX Keys S", "ok": False}}}
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertIsNone(state["kb"])
 
     def test_empty_kbs_sets_none(self):
         state = {"kbs": {}}
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertIsNone(state["kb"])
 
     def test_with_state_lock(self):
@@ -1540,14 +1540,14 @@ class TestUpdateKbState(unittest.TestCase):
             "_state_lock": threading.Lock(),
             "kbs": {0xB35B: {"name": "MX Keys S", "ok": True}},
         }
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertEqual(state["kb"], "MX Keys S")
 
     def test_no_kbs_key_sets_none(self):
         state = {}
-        from swigi.daemon import _update_kb_state
-        _update_kb_state(state)
+        from swigi.daemon import _update_keyboard_state
+        _update_keyboard_state(state)
         self.assertIsNone(state["kb"])
 
 

@@ -25,11 +25,11 @@ def _build_msg(devnumber: int, request_id: int, params: bytes) -> bytes:
 
 def _pack_params(params: list | tuple) -> bytes:
     parts = []
-    for p in params:
-        if isinstance(p, int):
-            parts.append(struct.pack("B", p))
+    for param in params:
+        if isinstance(param, int):
+            parts.append(struct.pack("B", param))
         else:
-            parts.append(bytes(p))
+            parts.append(bytes(param))
     return b"".join(parts)
 
 

@@ -45,10 +45,10 @@ def _load_hidapi() -> ctypes.CDLL:
     elif SYSTEM == "Windows":
         local_names = ["hidapi.dll", "libhidapi-0.dll"]
         system_names = ["hidapi.dll", "libhidapi-0.dll"]
-        for d in search_dirs:
-            if os.path.isdir(d):
+        for directory in search_dirs:
+            if os.path.isdir(directory):
                 try:
-                    os.add_dll_directory(d)
+                    os.add_dll_directory(directory)
                 except Exception:
                     pass
         scripts_dir = os.path.join(sys.prefix, "Scripts")
@@ -61,9 +61,9 @@ def _load_hidapi() -> ctypes.CDLL:
         local_names = ["libhidapi-hidraw.so.0", "libhidapi-hidraw.so", "libhidapi.so.0", "libhidapi.so"]
         system_names = local_names + ["libhidapi-libusb.so.0", "libhidapi-libusb.so"]
 
-    for d in search_dirs:
+    for directory in search_dirs:
         for name in local_names:
-            path = os.path.join(d, name)
+            path = os.path.join(directory, name)
             if os.path.isfile(path):
                 try:
                     lib = ctypes.CDLL(path)

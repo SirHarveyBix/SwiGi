@@ -68,9 +68,9 @@ if HAS_RUMPS and _rumps:
 
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            kb0 = state.get("kb")
+            keyboard0 = state.get("keyboard")
             mouse0 = state.get("mouse")
-            super().__init__("⌨️" if (kb0 and mouse0) else "⌨", quit_button=None)
+            super().__init__("⌨️" if (keyboard0 and mouse0) else "⌨", quit_button=None)
             try:
                 from AppKit import NSApplication
                 NSApplication.sharedApplication().setActivationPolicy_(1)
@@ -79,7 +79,7 @@ if HAS_RUMPS and _rumps:
             self._state = state
             self._stop_event = stop_event
 
-            self._kb_item    = _rumps.MenuItem(f"Clavier : {kb0 or '—'} {'✅' if kb0 else '❌'}")
+            self._keyboard_item    = _rumps.MenuItem(f"Clavier : {keyboard0 or '—'} {'✅' if keyboard0 else '❌'}")
             self._mouse_item = _rumps.MenuItem(f"Souris : {mouse0 or '—'} {'✅' if mouse0 else '❌'}")
             self._count_item = _rumps.MenuItem("Basculements : 0")
             self._notify_item = _rumps.MenuItem("Notifications", callback=self._toggle_notify)
@@ -90,7 +90,7 @@ if HAS_RUMPS and _rumps:
             self._mouse_follow_item.state = prefs.get("mouse_follow", True)
 
             menu_items = [
-                self._kb_item,
+                self._keyboard_item,
                 self._mouse_item,
                 None,
                 self._count_item,

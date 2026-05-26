@@ -51,11 +51,11 @@ def _decode_root() -> dict:
 
 def _find_global_app(apps: dict) -> dict | None:
     """Retourne le profil global (url.relative == './')."""
-    for v in apps.values():
-        if isinstance(v, dict):
-            url = v.get("url", {})
+    for value in apps.values():
+        if isinstance(value, dict):
+            url = value.get("url", {})
             if isinstance(url, dict) and url.get("relative") == "./":
-                return v
+                return value
     return None
 
 
@@ -90,8 +90,8 @@ def read_info() -> dict | None:
             "dpi_en":       mouse.get("dpiEn", False),
             "polling_hz":   _polling_hz(mouse.get("rpRateList", 0), mouse.get("rpRate", 0)),
         }
-    except Exception as e:
-        log.debug("read_info échoué : %s", e)
+    except Exception as error:
+        log.debug("read_info échoué : %s", error)
         return None
 
 
