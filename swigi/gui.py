@@ -119,7 +119,15 @@ if HAS_RUMPS and _rumps:
 
         @_rumps.timer(2)
         def _refresh(self, _):
-            kb = self._state.get("kb")
+            # Support multi-clavier : construire le nom depuis state["kbs"] si disponible
+            kbs = self._state.get("kbs")
+            if kbs:
+                actifs = [d["name"] for d in kbs.values() if d.get("ok") and d.get("name")]
+                kb = ", ".join(actifs) if actifs else None
+                # Garder state["kb"] cohérent pour le reste du code
+                self._state["kb"] = actifs[0] if actifs else None
+            else:
+                kb = self._state.get("kb")
             mouse = self._state.get("mouse")
             switches = self._state.get("switches", 0)
             self._kb_item.title    = f"Clavier : {kb or '—'} {'✅' if kb else '❌'}"

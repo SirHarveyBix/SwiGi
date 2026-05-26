@@ -1,4 +1,6 @@
+import dataclasses
 import logging
+import queue
 import threading
 import time
 
@@ -10,7 +12,7 @@ from swigi.constants import (
     PING_MSG,
 )
 from swigi.constants import SYSTEM
-from swigi.discovery import DeviceInfo, find_device
+from swigi.discovery import DeviceInfo, find_all_devices
 from swigi.gui import notify, prefs
 from swigi.protocol import get_current_host, send_change_host
 from swigi.transport import TransportError
@@ -19,6 +21,23 @@ log = logging.getLogger("swigi.daemon")
 
 _PENDING_HOST_TTL = 60.0  # secondes avant abandon de la correction pending
 
+
+# ── Structures d'événements inter-threads ─────────────────────────────────────
+
+@dataclasses.dataclass
+class _SwitchEvent:
+    """Un clavier a demandé un basculement d'hôte."""
+    target_host: int
+    kb_name: str
+
+
+@dataclasses.dataclass
+class _KbReconnected:
+    """Un clavier vient de se reconnecter."""
+    kb_name: str
+
+
+# ── Fonctions helper ──────────────────────────────────────────────────────────
 
 def _apply_bm_profile_if_needed(mouse_name: str | None = None) -> None:
     """Applique le profil BetterMouse configuré si auto-apply est activé.
@@ -101,51 +120,104 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
     return True
 
 
-def run_daemon(
+def _find_kb_by_pid(pid: int) -> DeviceInfo | None:
+    """Cherche un clavier par son PID exact.
+
+    Utilisé lors de la reconnexion pour retrouver LE bon clavier (pas le premier venu).
+    Ferme tous les autres candidats.
+    Retourne None si aucun clavier avec ce PID n'est disponible.
+    """
+    candidates = find_all_devices(DEVICE_TYPE_KEYBOARD)
+    result = None
+    for kb in candidates:
+        if kb.pid == pid and result is None:
+            result = kb
+        else:
+            # Fermer les candidats qui ne correspondent pas (ou les doublons)
+            kb.close()
+    return result
+
+
+def _send_to_all_mice(
+    mice: list[DeviceInfo],
+    target_host: int,
+    state: dict,
+    mouse_lock: threading.Lock,
+) -> None:
+    """Envoie CHANGE_HOST à toutes les souris disponibles.
+
+    Thread-safe : acquiert mouse_lock avant d'accéder à la liste.
+    Souris avec transport fermé : skippée (sera traitée au prochain reconnect).
+    Met à jour state["pending_host"] et state["mice"].
+    """
+    with mouse_lock:
+        # Travailler sur une copie de la liste pour éviter les modifications concurrentes
+        for mouse in list(mice):
+            if not mouse.transport.is_open:
+                log.debug("[%s] Transport fermé — skip (sera reconnectée par probe)", mouse.name)
+                continue
+            try:
+                send_change_host(
+                    mouse.transport,
+                    DEVNUMBER_DIRECT,
+                    mouse.change_host_idx,
+                    target_host,
+                )
+                log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
+                mouse.close()
+            except (TransportError, OSError) as e:
+                log.warning("[%s] CHANGE_HOST échoué : %s", mouse.name, e)
+                mouse.close()
+
+        # Mémoriser l'hôte cible pour correction au reconnect des souris absentes
+        state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
+        # Effacer la liste des souris actives (toutes viennent d'être fermées)
+        state["mouse"] = None
+        state["mice"] = []
+
+
+def _watch_keyboard(
     kb: DeviceInfo,
-    mouse: DeviceInfo,
+    event_q: queue.Queue,
     state: dict,
     stop_event: threading.Event,
+    hunt_trigger: threading.Event,
 ) -> None:
-    state["kb"] = kb.name
-    state["mouse"] = mouse.name
-    state.setdefault("pending_host", None)
+    """Thread dédié à la surveillance d'un clavier.
 
-    total_switches = 0
+    - Ping + lecture des événements (fenêtre 80ms)
+    - Watchdog 10s sans réponse → reconnexion par PID
+    - Sur CHANGE_HOST → envoie _SwitchEvent dans event_q
+    - Sur reconnect → envoie _KbReconnected dans event_q
+    """
+    prefix = f"[{kb.name}]"
     last_response = time.time()
     last_switch_time = 0.0
-    last_mouse_probe = 0.0
-    mouse_hunt_deadline = 0.0   # probe rapide (1s) tant que ce timestamp n'est pas dépassé
     WATCHDOG_TIMEOUT = 10.0
-    MOUSE_HUNT_WINDOW = 30.0    # secondes de probe rapide après reconnexion clavier
-    MOUSE_HUNT_INTERVAL = 1.0
-    MOUSE_PROBE_INTERVAL = 5.0
+
+    log.info("%s Surveillance démarrée (PID=0x%04X)", prefix, kb.pid)
 
     while not stop_event.is_set():
         # ── Watchdog ──
         if time.time() - last_response > WATCHDOG_TIMEOUT:
-            log.info("Watchdog : aucune réponse depuis %ds, reconnexion...", int(WATCHDOG_TIMEOUT))
+            log.info("%s Watchdog : aucune réponse depuis %ds, reconnexion...",
+                     prefix, int(WATCHDOG_TIMEOUT))
             kb.close()
-            mouse.close()
-            state["kb"] = None
-            state["mouse"] = None
+            state["kbs"][kb.pid]["ok"] = False
             time.sleep(1.0)
-            kb_new = find_device(DEVICE_TYPE_KEYBOARD)
+
+            kb_new = _find_kb_by_pid(kb.pid)
             if kb_new:
                 kb = kb_new
-                state["kb"] = kb.name
-                log.info("Watchdog reconnexion clavier : %s", kb.name)
+                kb.name = kb.name  # nom potentiellement mis à jour
+                prefix = f"[{kb.name}]"
+                state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
+                # Compatibilité GUI : mettre à jour le premier clavier actif
+                _update_kb_state(state)
+                log.info("%s Watchdog reconnexion OK", prefix)
                 _resync_pending_host_from_keyboard(kb, state)
-                mouse_hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
-            mouse_new = find_device(DEVICE_TYPE_MOUSE)
-            if mouse_new:
-                mouse = mouse_new
-                state["mouse"] = mouse.name
-                log.info("Watchdog reconnexion souris : %s", mouse.name)
-                if not _check_and_apply_pending_host(mouse, state):
-                    _apply_bm_profile_if_needed(mouse.name)
-            elif state.get("mouse") is None:
-                log.info("Watchdog : souris introuvable — probe rapide actif (%ds)", int(MOUSE_HUNT_WINDOW))
+                hunt_trigger.set()
+                event_q.put(_KbReconnected(kb.name))
             last_response = time.time()
             continue
 
@@ -154,54 +226,41 @@ def run_daemon(
             kb.transport.write(PING_MSG)
         except (TransportError, OSError):
             switch_triggered = time.time() - last_switch_time <= 3.0
-            log.info("Clavier déconnecté%s", " (post-switch)" if switch_triggered else "")
+            log.info("%s Déconnecté%s", prefix, " (post-switch)" if switch_triggered else "")
             if not switch_triggered:
                 notify(f"{kb.name} déconnecté", "Clavier")
             kb.close()
-            state["kb"] = None
-            if switch_triggered:
-                mouse.close()
-                state["mouse"] = None
+            state["kbs"][kb.pid]["ok"] = False
+            _update_kb_state(state)
 
+            # Reconnexion : chercher CE clavier (même PID)
             kb_new = None
             for attempt in range(600):
                 if stop_event.is_set():
                     break
                 time.sleep(0.1)
-                kb_new = find_device(DEVICE_TYPE_KEYBOARD)
+                kb_new = _find_kb_by_pid(kb.pid)
                 if kb_new is not None:
                     break
                 if attempt % 100 == 99:
-                    log.debug("Reconnexion : tentative %d/600...", attempt + 1)
+                    log.debug("%s Reconnexion : tentative %d/600...", prefix, attempt + 1)
 
             if kb_new is None:
                 if not stop_event.is_set():
-                    log.warning("Le clavier n'est pas revenu, nouvelle tentative...")
+                    log.warning("%s Le clavier n'est pas revenu, nouvelle tentative...", prefix)
                 continue
+
             kb = kb_new
-            state["kb"] = kb.name
-            log.info("Reconnexion clavier : %s", kb.name)
+            prefix = f"[{kb.name}]"
+            state["kbs"][kb.pid] = {"name": kb.name, "ok": True}
+            _update_kb_state(state)
+            log.info("%s Reconnexion OK", prefix)
             notify(f"{kb.name} reconnecté", "Clavier")
             last_response = time.time()
 
             _resync_pending_host_from_keyboard(kb, state)
-            mouse_hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
-
-            if mouse.transport.is_open:
-                mouse.close()
-            state["mouse"] = None
-            log.debug("Reconnexion proactive de la souris...")
-            new_mouse = find_device(DEVICE_TYPE_MOUSE)
-            if new_mouse:
-                mouse = new_mouse
-                state["mouse"] = mouse.name
-                log.info("Souris prête : %s", mouse.name)
-                if not _check_and_apply_pending_host(mouse, state):
-                    _apply_bm_profile_if_needed(mouse.name)
-                    notify(f"{mouse.name} reconnectée", "Souris")
-            else:
-                log.info("Souris introuvable après reconnexion clavier — probe toutes les %ds pendant %ds",
-                         int(MOUSE_HUNT_INTERVAL), int(MOUSE_HUNT_WINDOW))
+            hunt_trigger.set()
+            event_q.put(_KbReconnected(kb.name))
             continue
 
         # ── Lecture réponses (fenêtre 80ms) ──
@@ -228,89 +287,202 @@ def run_daemon(
                 target_host = raw[5]
                 last_switch_time = time.time()
                 log.info("─" * 50)
-                log.info("★ Easy-Switch : %s → hôte %d", kb.name, target_host)
-
-                if not mouse.transport.is_open:
-                    log.debug("Transport souris fermé, reconnexion...")
-                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
-                    if new_mouse:
-                        mouse = new_mouse
-                        state["mouse"] = mouse.name
-                    else:
-                        log.info("Souris indisponible — basculera au prochain Easy-Switch")
-                        state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
-                        break
-
-                try:
-                    send_change_host(
-                        mouse.transport,
-                        DEVNUMBER_DIRECT,
-                        mouse.change_host_idx,
-                        target_host,
-                    )
-                    log.info("★ CHANGE_HOST → %s → hôte %d", mouse.name, target_host)
-                    total_switches += 1
-                    state["switches"] = total_switches
-                    state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
-                    mouse.close()
-                    state["mouse"] = None
-
-                except (TransportError, OSError):
-                    log.warning("CHANGE_HOST souris échoué, reconnexion...")
-                    mouse.close()
-                    state["mouse"] = None
-                    time.sleep(0.5)
-                    new_mouse = find_device(DEVICE_TYPE_MOUSE)
-                    if new_mouse:
-                        mouse = new_mouse
-                        state["mouse"] = mouse.name
-                        try:
-                            send_change_host(
-                                mouse.transport,
-                                DEVNUMBER_DIRECT,
-                                mouse.change_host_idx,
-                                target_host,
-                            )
-                            log.info(
-                                "★ CHANGE_HOST → %s → hôte %d (après reconnexion)",
-                                mouse.name,
-                                target_host,
-                            )
-                            total_switches += 1
-                            state["switches"] = total_switches
-                        except (TransportError, OSError) as e:
-                            log.warning("Retry CHANGE_HOST échoué : %s", e)
-                    # Dans tous les cas : mémoriser l'hôte cible pour correction au reconnect
-                    state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
-                    if state.get("mouse"):
-                        mouse.close()
-                        state["mouse"] = None
-
+                log.info("%s ★ Easy-Switch → hôte %d", prefix, target_host)
+                event_q.put(_SwitchEvent(target_host, kb.name))
                 break
 
             if sw_id == 0:
-                log.debug("Notification : feat=0x%02X [%s]", feat, raw[:10].hex())
+                log.debug("%s Notification : feat=0x%02X [%s]", prefix, feat, raw[:10].hex())
 
         time.sleep(0.01)
 
-        # Sonde périodique : reconnecter la souris si absente et clavier OK
-        in_hunt = time.time() < mouse_hunt_deadline
-        probe_interval = MOUSE_HUNT_INTERVAL if in_hunt else MOUSE_PROBE_INTERVAL
-        if state.get("mouse") is None and time.time() - last_mouse_probe > probe_interval:
-            last_mouse_probe = time.time()
-            new_mouse = find_device(DEVICE_TYPE_MOUSE)
-            if new_mouse:
-                if mouse.transport.is_open:
-                    mouse.close()
-                mouse = new_mouse
-                state["mouse"] = mouse.name
-                log.info("Souris reconnectée automatiquement : %s", mouse.name)
-                if not _check_and_apply_pending_host(mouse, state):
-                    _apply_bm_profile_if_needed(mouse.name)
-                    notify(f"{mouse.name} reconnectée", "Souris")
-            elif in_hunt:
-                log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(MOUSE_HUNT_INTERVAL))
-
-    log.info("Arrêt. Total : %d basculements.", total_switches)
+    log.info("%s Thread arrêté.", prefix)
     kb.close()
-    mouse.close()
+
+
+def _mice_probe_loop(
+    mice: list[DeviceInfo],
+    state: dict,
+    stop_event: threading.Event,
+    hunt_trigger: threading.Event,
+    mouse_lock: threading.Lock,
+) -> None:
+    """Thread dédié à la surveillance et reconnexion des souris.
+
+    - En mode hunt (après un reconnect clavier) : probe toutes les 1s pendant 30s
+    - Mode normal : probe toutes les 5s
+    - Ajoute les nouvelles souris trouvées, retire celles qui ont disparu
+    - Applique pending_host aux nouvelles souris connectées
+    """
+    MOUSE_HUNT_INTERVAL = 1.0
+    MOUSE_PROBE_INTERVAL = 5.0
+    MOUSE_HUNT_WINDOW = 30.0
+
+    hunt_deadline = 0.0
+
+    log.debug("Probe souris : thread démarré")
+
+    while not stop_event.is_set():
+        # Attendre le prochain probe (hunt_trigger court-circuite le timeout)
+        triggered = hunt_trigger.wait(timeout=MOUSE_PROBE_INTERVAL)
+        if triggered:
+            hunt_trigger.clear()
+            hunt_deadline = time.time() + MOUSE_HUNT_WINDOW
+            log.debug("Probe souris : mode hunt activé (%ds)", int(MOUSE_HUNT_WINDOW))
+
+        if stop_event.is_set():
+            break
+
+        in_hunt = time.time() < hunt_deadline
+
+        # Probe les souris disponibles
+        found = find_all_devices(DEVICE_TYPE_MOUSE)
+        found_pids = {m.pid for m in found}
+
+        with mouse_lock:
+            existing_pids = {m.pid for m in mice}
+
+            # Nouvelles souris détectées
+            for m in found:
+                if m.pid not in existing_pids:
+                    log.info("Souris détectée : %s (PID=0x%04X)", m.name, m.pid)
+                    notify(f"{m.name} connectée", "Souris")
+                    mice.append(m)
+                    existing_pids.add(m.pid)
+                    # Appliquer pending_host si nécessaire
+                    if not _check_and_apply_pending_host(m, state):
+                        _apply_bm_profile_if_needed(m.name)
+                else:
+                    # Fermer les doublons (déjà dans la liste)
+                    m.close()
+
+            # Tenter de rouvrir les souris avec transport fermé
+            to_remove = []
+            for m in mice:
+                if not m.transport.is_open:
+                    if m.pid in found_pids:
+                        # La souris est disponible mais transport fermé — rouvrir
+                        # (déjà géré ci-dessus en tant que nouvelle souris si pid non connu)
+                        pass
+                    else:
+                        # Souris disparue
+                        to_remove.append(m)
+
+            for m in to_remove:
+                log.info("Souris retirée : %s (plus disponible)", m.name)
+                mice.remove(m)
+
+            # Mettre à jour state["mice"] et state["mouse"]
+            active = [m for m in mice if m.transport.is_open]
+            state["mice"] = [m.name for m in active]
+            state["mouse"] = active[0].name if active else None
+
+        if in_hunt and not mice:
+            log.debug("Probe (hunt) : souris introuvable, retry dans %ds", int(MOUSE_HUNT_INTERVAL))
+
+        # En mode hunt : attendre l'intervalle court avant le prochain cycle
+        if in_hunt:
+            # Mettre hunt_trigger en mode "expire vite" pour le prochain tour
+            # On utilise un sleep court puis reboucle
+            for _ in range(int(MOUSE_HUNT_INTERVAL * 10)):
+                if stop_event.is_set() or hunt_trigger.is_set():
+                    break
+                time.sleep(0.1)
+
+    log.debug("Probe souris : thread arrêté")
+    with mouse_lock:
+        for m in mice:
+            m.close()
+
+
+def _update_kb_state(state: dict) -> None:
+    """Met à jour state["kb"] avec le nom du premier clavier actif.
+
+    Compatibilité GUI : state["kb"] doit rester valide pour le timer de rafraîchissement.
+    """
+    kbs = state.get("kbs", {})
+    for pid_data in kbs.values():
+        if pid_data.get("ok"):
+            state["kb"] = pid_data["name"]
+            return
+    state["kb"] = None
+
+
+# ── Point d'entrée principal ──────────────────────────────────────────────────
+
+def run_daemon(
+    keyboards: list[DeviceInfo],
+    mice: list[DeviceInfo],
+    state: dict,
+    stop_event: threading.Event,
+) -> None:
+    """Lance le daemon multi-clavier multi-souris.
+
+    - Un thread _watch_keyboard par clavier
+    - Un thread _mice_probe_loop pour toutes les souris
+    - Boucle principale : lit la queue d'événements et dispatche
+    """
+    # Initialiser l'état
+    state["kbs"] = {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards}
+    state["mouse"] = mice[0].name if mice else None
+    state["mice"] = [m.name for m in mice]
+    state.setdefault("pending_host", None)
+    state.setdefault("switches", 0)
+
+    # Compatibilité GUI : state["kb"] = nom du premier clavier
+    state["kb"] = keyboards[0].name if keyboards else None
+
+    # Structures de communication inter-threads
+    event_q: queue.Queue = queue.Queue()
+    mouse_lock = threading.Lock()
+    hunt_trigger = threading.Event()
+
+    # Copie mutable de la liste des souris (partagée entre threads via mouse_lock)
+    mice_list = list(mice)
+
+    # Spawner un thread par clavier
+    kb_threads = []
+    for kb in keyboards:
+        t = threading.Thread(
+            target=_watch_keyboard,
+            args=(kb, event_q, state, stop_event, hunt_trigger),
+            name=f"kb-{kb.pid:04X}",
+            daemon=True,
+        )
+        t.start()
+        kb_threads.append(t)
+        log.info("Thread clavier démarré : %s (PID=0x%04X)", kb.name, kb.pid)
+
+    # Thread probe souris
+    probe_thread = threading.Thread(
+        target=_mice_probe_loop,
+        args=(mice_list, state, stop_event, hunt_trigger, mouse_lock),
+        name="mice-probe",
+        daemon=True,
+    )
+    probe_thread.start()
+    log.info("Thread probe souris démarré (%d souris initiales)", len(mice_list))
+
+    # ── Boucle principale : dispatcher d'événements ──
+    while not stop_event.is_set():
+        try:
+            event = event_q.get(timeout=1.0)
+        except queue.Empty:
+            continue
+
+        if isinstance(event, _SwitchEvent):
+            log.info("★ Switch reçu de [%s] → hôte %d", event.kb_name, event.target_host)
+            _send_to_all_mice(mice_list, event.target_host, state, mouse_lock)
+            state["switches"] = state.get("switches", 0) + 1
+            hunt_trigger.set()  # probe rapide pour reconnecter les souris après switch
+
+        elif isinstance(event, _KbReconnected):
+            log.info("Clavier reconnecté : %s", event.kb_name)
+            _update_kb_state(state)
+
+    log.info("Arrêt du daemon. Total : %d basculements.", state.get("switches", 0))
+
+    # Attendre les threads
+    for t in kb_threads:
+        t.join(timeout=3)
+    probe_thread.join(timeout=3)

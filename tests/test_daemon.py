@@ -21,6 +21,8 @@ from swigi.daemon import (  # noqa: E402
     _apply_bm_profile_if_needed,
     _check_and_apply_pending_host,
     _resync_pending_host_from_keyboard,
+    _find_kb_by_pid,
+    _send_to_all_mice,
 )
 from swigi.transport import TransportError  # noqa: E402
 
@@ -371,6 +373,237 @@ class TestApplyBmProfileIfNeeded(unittest.TestCase):
              patch("swigi.daemon.notify"), \
              patch("swigi.bettermouse.apply_profile", side_effect=RuntimeError("boom")):
             _apply_bm_profile_if_needed("MX Vertical")  # ne doit pas lever
+
+
+# ── _find_kb_by_pid ────────────────────────────────────────────────────────────
+
+class TestFindKbByPid(unittest.TestCase):
+
+    def test_returns_kb_with_matching_pid(self):
+        """find_kb_by_pid retourne le clavier dont le PID correspond."""
+        kb1 = _make_kb(name="MX Keys S")
+        kb1.pid = 0xB35B
+        kb2 = _make_kb(name="MX Keys Mini")
+        kb2.pid = 0xB361
+
+        with patch("swigi.daemon.find_all_devices", return_value=[kb1, kb2]):
+            result = _find_kb_by_pid(0xB35B)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.pid, 0xB35B)
+        self.assertEqual(result.name, "MX Keys S")
+
+    def test_closes_non_matching_candidates(self):
+        """Les claviers dont le PID ne correspond pas doivent être fermés."""
+        kb1 = _make_kb(name="MX Keys S")
+        kb1.pid = 0xB35B
+        kb2 = _make_kb(name="MX Keys Mini")
+        kb2.pid = 0xB361
+
+        with patch("swigi.daemon.find_all_devices", return_value=[kb1, kb2]):
+            result = _find_kb_by_pid(0xB35B)
+
+        # kb2 ne correspond pas, doit être fermé
+        kb2.close.assert_called_once()
+        # kb1 correspond, ne doit pas être fermé par find_kb_by_pid
+        kb1.close.assert_not_called()
+
+    def test_returns_none_when_pid_not_found(self):
+        """Retourne None si aucun clavier avec ce PID n'est disponible."""
+        kb1 = _make_kb(name="MX Keys S")
+        kb1.pid = 0xB35B
+
+        with patch("swigi.daemon.find_all_devices", return_value=[kb1]):
+            result = _find_kb_by_pid(0xDEAD)
+
+        self.assertIsNone(result)
+        kb1.close.assert_called_once()
+
+    def test_returns_none_when_no_keyboards(self):
+        """Retourne None si find_all_devices retourne une liste vide."""
+        with patch("swigi.daemon.find_all_devices", return_value=[]):
+            result = _find_kb_by_pid(0xB35B)
+
+        self.assertIsNone(result)
+
+
+# ── _send_to_all_mice ──────────────────────────────────────────────────────────
+
+class TestSendToAllMice(unittest.TestCase):
+
+    def _make_lock(self):
+        import threading
+        return threading.Lock()
+
+    def test_sends_to_single_mouse(self):
+        """Avec une seule souris, envoie CHANGE_HOST et ferme le transport."""
+        mouse = _make_mouse(change_host_idx=9, name="MX Vertical")
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 1, state, lock)
+
+        mock_send.assert_called_once()
+        mouse.close.assert_called_once()
+        self.assertIsNone(state["mouse"])
+        self.assertEqual(state["mice"], [])
+
+    def test_sends_to_all_mice_when_multiple(self):
+        """Avec 2 souris, envoie CHANGE_HOST aux deux et ferme les deux transports."""
+        mouse1 = _make_mouse(change_host_idx=9, name="MX Vertical")
+        mouse2 = _make_mouse(change_host_idx=11, name="MX Master 4")
+        mice = [mouse1, mouse2]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical", "MX Master 4"]}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 2, state, lock)
+
+        self.assertEqual(mock_send.call_count, 2)
+        mouse1.close.assert_called_once()
+        mouse2.close.assert_called_once()
+
+    def test_skips_mouse_with_closed_transport(self):
+        """Souris avec transport fermé : skippée, pas d'envoi CHANGE_HOST."""
+        mouse_open = _make_mouse(change_host_idx=9, name="MX Vertical")
+        mouse_closed = _make_mouse(change_host_idx=11, name="MX Master 4")
+        mouse_closed.transport.is_open = False
+
+        mice = [mouse_open, mouse_closed]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical", "MX Master 4"]}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice, 1, state, lock)
+
+        # Seule la souris avec transport ouvert reçoit la commande
+        self.assertEqual(mock_send.call_count, 1)
+        # La souris fermée ne reçoit pas de close supplémentaire
+        mouse_closed.close.assert_not_called()
+
+    def test_updates_pending_host_in_state(self):
+        """Met à jour state["pending_host"] avec le bon hôte cible."""
+        mouse = _make_mouse()
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host"):
+            _send_to_all_mice(mice, 2, state, lock)
+
+        self.assertIsNotNone(state["pending_host"])
+        self.assertEqual(state["pending_host"][0], 2)
+
+    def test_send_failure_closes_mouse(self):
+        """Si send_change_host échoue, la souris est quand même fermée."""
+        mouse = _make_mouse()
+        mice = [mouse]
+        state = {"pending_host": None, "mouse": "MX Vertical", "mice": ["MX Vertical"]}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host", side_effect=TransportError("dead")):
+            _send_to_all_mice(mice, 1, state, lock)
+
+        mouse.close.assert_called_once()
+
+
+# ── Test 2 claviers → 2 events dans la queue ──────────────────────────────────
+
+class TestTwoKeyboardsEvents(unittest.TestCase):
+
+    def test_two_keyboards_fire_independent_events(self):
+        """2 claviers qui switchent indépendamment → 2 _SwitchEvent dans la queue."""
+        import queue as q_module
+        import threading
+        from swigi.daemon import _SwitchEvent
+
+        event_q = q_module.Queue()
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        kb1 = _make_kb(change_host_idx=5, name="MX Keys S")
+        kb1.pid = 0xB35B
+        kb2 = _make_kb(change_host_idx=7, name="MX Keys Mini")
+        kb2.pid = 0xB361
+
+        state = {
+            "kbs": {
+                kb1.pid: {"name": kb1.name, "ok": True},
+                kb2.pid: {"name": kb2.name, "ok": True},
+            },
+            "pending_host": None,
+        }
+
+        # Simuler un événement CHANGE_HOST : construire un message HID++ long
+        import struct
+        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
+
+        def _make_switch_msg(change_host_idx, target_host):
+            """Construit un message HID++ REPORT_LONG simulant un CHANGE_HOST."""
+            msg = bytearray(MSG_LONG_LEN)
+            msg[0] = REPORT_LONG
+            msg[2] = change_host_idx  # feature index
+            msg[3] = 0x00              # sw_id = 0 (notification)
+            msg[5] = target_host
+            return bytes(msg)
+
+        # Configurer kb1 : ping OK, puis retourne un event switch hôte 1
+        switch_msg1 = _make_switch_msg(5, 1)
+        read_calls1 = [switch_msg1, None]
+        kb1.transport.read.side_effect = read_calls1
+        kb1.transport.write.return_value = None
+        kb1.transport.is_open = True
+
+        # Configurer kb2 : ping OK, puis retourne un event switch hôte 2
+        switch_msg2 = _make_switch_msg(7, 2)
+        read_calls2 = [switch_msg2, None]
+        kb2.transport.read.side_effect = read_calls2
+        kb2.transport.write.return_value = None
+        kb2.transport.is_open = True
+
+        from swigi.daemon import _watch_keyboard
+
+        # Lancer les deux threads de surveillance
+        t1 = threading.Thread(
+            target=_watch_keyboard,
+            args=(kb1, event_q, state, stop_event, hunt_trigger),
+            daemon=True,
+        )
+        t2 = threading.Thread(
+            target=_watch_keyboard,
+            args=(kb2, event_q, state, stop_event, hunt_trigger),
+            daemon=True,
+        )
+        t1.start()
+        t2.start()
+
+        # Attendre que les events arrivent (timeout 2s)
+        events = []
+        deadline = time.time() + 2.0
+        while len(events) < 2 and time.time() < deadline:
+            try:
+                ev = event_q.get(timeout=0.1)
+                events.append(ev)
+            except q_module.Empty:
+                pass
+
+        stop_event.set()
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+
+        # Vérifier qu'on a bien reçu 2 SwitchEvents indépendants
+        switch_events = [e for e in events if isinstance(e, _SwitchEvent)]
+        self.assertEqual(len(switch_events), 2)
+
+        hosts = {e.target_host for e in switch_events}
+        self.assertIn(1, hosts)
+        self.assertIn(2, hosts)
+
+        names = {e.kb_name for e in switch_events}
+        self.assertIn("MX Keys S", names)
+        self.assertIn("MX Keys Mini", names)
 
 
 if __name__ == "__main__":

@@ -33,8 +33,23 @@ class DeviceInfo:
             pass
 
 
-def find_device(device_type_wanted: int) -> DeviceInfo | None:
-    """Cherche périphérique Logitech BT. 0=clavier, 3=souris, 4=trackpad, 5=trackball."""
+def _clean_name(raw: str | None, pid: int) -> str:
+    """Filtre les null bytes et espaces parasites du nom HID.
+
+    Retourne un fallback lisible si le nom est vide après nettoyage.
+    """
+    if not raw:
+        return f"Logitech-0x{pid:04X}"
+    cleaned = raw.replace("\x00", "").strip()
+    return cleaned if cleaned else f"Logitech-0x{pid:04X}"
+
+
+def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
+    """Retourne TOUS les périphériques Logitech BT du type voulu.
+
+    0=clavier, 3=souris, 4=trackpad, 5=trackball.
+    Contrairement à find_device, ne s'arrête pas au premier résultat.
+    """
     head = lib.hid_enumerate(LOGITECH_VID, 0)
     candidates = []
     node = head
@@ -53,6 +68,7 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
     lib.hid_free_enumeration(head)
     candidates.sort(key=lambda x: -x[0])
 
+    results = []
     for score, path, pid, up, usage in candidates:
         try:
             t = HIDTransport(path, pid)
@@ -65,7 +81,8 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
                 t.close()
                 continue
             dt = get_device_type(t, DEVNUMBER_DIRECT, feat)
-            name = get_device_name(t, DEVNUMBER_DIRECT, feat) or f"Logitech-0x{pid:04X}"
+            raw_name = get_device_name(t, DEVNUMBER_DIRECT, feat)
+            name = _clean_name(raw_name, pid)
             is_mouse = dt in (DEVICE_TYPE_MOUSE, DEVICE_TYPE_TRACKPAD, DEVICE_TYPE_TRACKBALL)
             if device_type_wanted == DEVICE_TYPE_KEYBOARD and dt != DEVICE_TYPE_KEYBOARD:
                 t.close()
@@ -77,8 +94,17 @@ def find_device(device_type_wanted: int) -> DeviceInfo | None:
             if ch is None:
                 t.close()
                 continue
-            return DeviceInfo(t, name, pid, ch)
+            results.append(DeviceInfo(t, name, pid, ch))
         except (TransportError, OSError):
             t.close()
             continue
-    return None
+    return results
+
+
+def find_device(device_type_wanted: int) -> DeviceInfo | None:
+    """Cherche périphérique Logitech BT. 0=clavier, 3=souris, 4=trackpad, 5=trackball.
+
+    Retourne le premier résultat de find_all_devices — conservé pour compatibilité.
+    """
+    results = find_all_devices(device_type_wanted)
+    return results[0] if results else None

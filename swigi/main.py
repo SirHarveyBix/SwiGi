@@ -9,7 +9,7 @@ import time
 
 from swigi.constants import DEVICE_TYPE_KEYBOARD, DEVICE_TYPE_MOUSE
 from swigi.daemon import run_daemon
-from swigi.discovery import find_device
+from swigi.discovery import find_all_devices
 from swigi.gui import HAS_RUMPS, SwiGiMenuBar, notify
 
 log = logging.getLogger("swigi.main")
@@ -97,27 +97,38 @@ def _main_inner(args) -> int:
 
     log.info("SwiGi — recherche des périphériques...")
 
-    kb = find_device(DEVICE_TYPE_KEYBOARD)
-    if kb is None:
+    keyboards = find_all_devices(DEVICE_TYPE_KEYBOARD)
+    if not keyboards:
         log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
         return 1
-    log.info("Clavier : %s (CHANGE_HOST idx=%d)", kb.name, kb.change_host_idx)
-    notify(f"{kb.name} connecté", "Clavier")
+    for kb in keyboards:
+        log.info("Clavier : %s (PID=0x%04X, CHANGE_HOST idx=%d)", kb.name, kb.pid, kb.change_host_idx)
+        notify(f"{kb.name} connecté", "Clavier")
 
-    mouse = find_device(DEVICE_TYPE_MOUSE)
-    if mouse is None:
+    mice = find_all_devices(DEVICE_TYPE_MOUSE)
+    if not mice:
         log.error("Souris introuvable ! Vérifie la connexion Bluetooth.")
-        kb.close()
+        for kb in keyboards:
+            kb.close()
         return 1
-    log.info("Souris :  %s (CHANGE_HOST idx=%d)", mouse.name, mouse.change_host_idx)
-    notify(f"{mouse.name} connectée", "Souris")
+    for mouse in mice:
+        log.info("Souris :  %s (PID=0x%04X, CHANGE_HOST idx=%d)", mouse.name, mouse.pid, mouse.change_host_idx)
+        notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
-    log.info("Prêt. Appuie sur Easy-Switch sur %s.", kb.name)
+    kb_names = ", ".join(kb.name for kb in keyboards)
+    log.info("Prêt. Appuie sur Easy-Switch sur %s.", kb_names)
     if not HAS_RUMPS:
         log.info("Ctrl+C pour quitter.")
 
-    state: dict = {"kb": kb.name, "mouse": mouse.name, "switches": 0, "pending_host": None}
+    state: dict = {
+        "kb": keyboards[0].name,
+        "kbs": {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards},
+        "mouse": mice[0].name,
+        "mice": [m.name for m in mice],
+        "switches": 0,
+        "pending_host": None,
+    }
     stop_event = threading.Event()
 
     def _on_stop(sig, frame):
@@ -133,34 +144,38 @@ def _main_inner(args) -> int:
     signal.signal(signal.SIGINT, _on_stop)
     signal.signal(signal.SIGTERM, _on_stop)
 
-    def _daemon_loop(kb, mouse, state, stop_event):
+    def _daemon_loop(keyboards, mice, state, stop_event):
         while not stop_event.is_set():
             try:
-                run_daemon(kb, mouse, state, stop_event)
+                run_daemon(keyboards, mice, state, stop_event)
             except Exception:
                 log.exception("Crash inattendu — redémarrage dans 5s...")
                 notify("SwiGi a crashé — redémarrage...", "Erreur")
                 if stop_event.is_set():
                     break
                 time.sleep(5)
-                kb_new = find_device(DEVICE_TYPE_KEYBOARD)
-                if kb_new:
-                    kb = kb_new
-                    state["kb"] = kb.name
-                mouse_new = find_device(DEVICE_TYPE_MOUSE)
-                if mouse_new:
-                    mouse = mouse_new
-                    state["mouse"] = mouse.name
+                keyboards_new = find_all_devices(DEVICE_TYPE_KEYBOARD)
+                if keyboards_new:
+                    keyboards = keyboards_new
+                    state["kbs"] = {kb.pid: {"name": kb.name, "ok": True} for kb in keyboards}
+                    state["kb"] = keyboards[0].name
+                mice_new = find_all_devices(DEVICE_TYPE_MOUSE)
+                if mice_new:
+                    mice = mice_new
+                    state["mice"] = [m.name for m in mice]
+                    state["mouse"] = mice[0].name
 
     if HAS_RUMPS and SwiGiMenuBar:
         # Daemon en thread background, menu bar sur thread principal (requis AppKit)
-        t = threading.Thread(target=_daemon_loop, args=(kb, mouse, state, stop_event), daemon=True)
+        t = threading.Thread(
+            target=_daemon_loop, args=(keyboards, mice, state, stop_event), daemon=True
+        )
         t.start()
         SwiGiMenuBar(state, stop_event).run()
         stop_event.set()
         t.join(timeout=3)
     else:
-        _daemon_loop(kb, mouse, state, stop_event)
+        _daemon_loop(keyboards, mice, state, stop_event)
 
     return 0
 
