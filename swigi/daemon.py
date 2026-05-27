@@ -20,7 +20,7 @@ from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
 
-_PENDING_HOST_TTL = 5.0       # switch BT LE = 1-3s, 5s max
+_PENDING_HOST_TTL = 12.0      # couvre _MANUAL_SWITCH_GRACE (8s) + marges BT LE
 
 # Délai de stabilité après reconnexion clavier (rejet des connexions fantômes BT).
 # Un clavier en transit vers un autre Mac peut être brièvement connectable depuis ce Mac.
@@ -83,11 +83,11 @@ _RESYNC_RETRY_DELAY = (
 )
 
 # Constantes probe souris — module-level pour être patchables dans les tests.
-_MOUSE_HUNT_INTERVAL = 1.0  # secondes entre probes en mode hunt
-_MOUSE_PROBE_INTERVAL = 5.0  # secondes entre probes en mode normal
-_MOUSE_HUNT_WINDOW = 30.0  # durée du mode hunt après un trigger
-_MANUAL_SWITCH_GRACE = 3.0    # après 3s sans souris visible = switch confirmé ou manuel
-_CHANGE_HOST_CONFIRM_WINDOW = 5.0  # fenêtre pour confirmer switch réussi (aucune souris visible)
+_MOUSE_HUNT_INTERVAL = 1.0         # secondes entre probes en mode hunt
+_MOUSE_PROBE_INTERVAL = 5.0        # secondes entre probes en mode normal
+_MOUSE_HUNT_WINDOW = 30.0          # durée du mode hunt après un trigger
+_MANUAL_SWITCH_GRACE = 8.0         # délai avant lequel un reconnect souris peut être un switch manuel
+_CHANGE_HOST_CONFIRM_WINDOW = 12.0  # fenêtre pour confirmer switch réussi (aucune souris visible)
 
 # Constantes reconnexion clavier — module-level pour être patchables dans les tests.
 _KEYBOARD_RECONNECT_INITIAL_DELAY = (
@@ -261,12 +261,16 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         )
         return False
 
-    # Vérifier si la désync est due à un switch manuel (grace period expirée).
-    # Si le dernier CHANGE_HOST remonte à plus de _MANUAL_SWITCH_GRACE secondes,
-    # et que la souris est sur un hôte différent, c'est probablement un switch manuel.
+    # Switch manuel : si des souris étaient connectées au switch (had_mice=True) ET que la
+    # souris actuelle est sur le mauvais hôte ET que le délai grace est dépassé → switch manuel.
+    # Cas had_mice=False : aucune souris n'était là au switch → toujours corriger dans le TTL
+    # (la souris se connecte en retard, ce n'est PAS un switch manuel).
+    # Pass 1b efface pending dès que la souris disparaît (switch réussi) — cette vérification
+    # ne s'applique qu'aux cas où Pass 1b n'a pas pu se déclencher (BT kernel delay, etc.)
+    had_mice_at_switch = state.get("last_change_host_had_mice", True)
     last_ch = state.get("last_change_host_at", 0.0)
     elapsed_since_ch = time.time() - last_ch
-    if current != target_host and elapsed_since_ch > _MANUAL_SWITCH_GRACE:
+    if had_mice_at_switch and current != target_host and elapsed_since_ch > _MANUAL_SWITCH_GRACE:
         log.info(
             "Switch manuel détecté : souris sur hôte %d (attendu hôte %d), "
             "%.0fs depuis dernier CHANGE_HOST — pending effacé",
@@ -741,24 +745,32 @@ def _mice_probe_loop(
             )
             last_ch = state.get("last_change_host_at", 0.0)
             elapsed = time.time() - last_ch
-            if elapsed < _MANUAL_SWITCH_GRACE:
+            pending = state.get("pending_host")
+            if pending is not None:
+                # pending_host actif = connexion suite à un switch SwiGi en cours
+                log.info(
+                    "[%s] Connexion post-switch (%.1fs après CHANGE_HOST — hôte cible %d en attente)",
+                    new_mouse.name,
+                    elapsed,
+                    pending[0] + 1,
+                )
+            elif last_ch == 0.0:
+                log.info("[%s] Connexion initiale (premier démarrage)", new_mouse.name)
+            elif elapsed < _MANUAL_SWITCH_GRACE:
                 last_target = state.get("last_change_host_target")
                 target_display = (last_target + 1) if isinstance(last_target, int) else "?"
                 log.info(
-                    "[%s] Connexion automatique (via SwiGi CHANGE_HOST il y a %.1fs → hôte %s)",
+                    "[%s] Connexion rapide (%.1fs après CHANGE_HOST → hôte %s — switch peut encore être en cours)",
                     new_mouse.name,
                     elapsed,
                     target_display,
                 )
             else:
-                if last_ch == 0.0:
-                    log.info("[%s] Connexion manuelle (bouton physique — premier démarrage)", new_mouse.name)
-                else:
-                    log.info(
-                        "[%s] Connexion manuelle (bouton physique — %.0fs depuis dernier CHANGE_HOST)",
-                        new_mouse.name,
-                        elapsed,
-                    )
+                log.info(
+                    "[%s] Connexion manuelle (bouton physique — %.0fs depuis dernier CHANGE_HOST)",
+                    new_mouse.name,
+                    elapsed,
+                )
             notify(f"{new_mouse.name} connectée", "Souris")
             # Race condition guard : _send_to_all_mice peut avoir fermé le transport
             # entre Pass 1 (sous lock) et maintenant (hors lock).
