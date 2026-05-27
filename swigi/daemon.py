@@ -732,13 +732,20 @@ def _mice_probe_loop(
             elapsed = time.time() - last_ch
             pending = state.get("pending_host")
             if pending is not None:
-                # pending_host actif = connexion suite à un switch SwiGi en cours
-                log.info(
-                    "[%s] Connexion post-switch (%.1fs après CHANGE_HOST — hôte cible %d en attente)",
-                    new_mouse.name,
-                    elapsed,
-                    pending[0] + 1,
-                )
+                if last_ch == 0.0:
+                    # pending_host issu de _resync_pending_host_from_keyboard au démarrage
+                    log.info(
+                        "[%s] Connexion initiale — resync clavier → hôte cible %d",
+                        new_mouse.name,
+                        pending[0] + 1,
+                    )
+                else:
+                    log.info(
+                        "[%s] Connexion post-switch (%.1fs après CHANGE_HOST — hôte cible %d en attente)",
+                        new_mouse.name,
+                        elapsed,
+                        pending[0] + 1,
+                    )
             elif last_ch == 0.0:
                 log.info("[%s] Connexion initiale (premier démarrage)", new_mouse.name)
             elif elapsed < _MANUAL_SWITCH_GRACE:
