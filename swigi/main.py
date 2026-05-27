@@ -15,6 +15,8 @@ from swigi.gui import HAS_RUMPS, SwiGiMenuBar, notify
 log = logging.getLogger("swigi.main")
 
 _LOCK_FILE = os.path.expanduser("~/.swigi.lock")
+_KEYBOARD_WAIT_INTERVAL = 3.0   # secondes entre chaque tentative de détection clavier
+_KEYBOARD_WAIT_LOG_EVERY = 10   # log toutes les N tentatives (évite le spam)
 
 
 def _acquire_lock() -> bool:
@@ -50,6 +52,26 @@ def _release_lock() -> None:
         os.remove(_LOCK_FILE)
     except OSError:
         pass
+
+
+def _wait_for_keyboard() -> list:
+    """Attend que le clavier soit disponible en BT, sans limite de temps.
+
+    Utile quand SwiGi démarre alors que le clavier est sur un autre Mac.
+    Log une fois par tranche de N tentatives pour ne pas spammer.
+    Retourne la liste des claviers dès qu'au moins un est trouvé.
+    """
+    attempt = 0
+    while True:
+        keyboards = find_all_devices(DEVICE_TYPE_KEYBOARD)
+        if keyboards:
+            return keyboards
+        attempt += 1
+        if attempt == 1:
+            log.info("Clavier introuvable — en attente de connexion BT (normal si sur autre Mac)...")
+        elif attempt % _KEYBOARD_WAIT_LOG_EVERY == 0:
+            log.debug("Attente clavier : %d tentatives (%.0fs)...", attempt, attempt * _KEYBOARD_WAIT_INTERVAL)
+        time.sleep(_KEYBOARD_WAIT_INTERVAL)
 
 
 def _log_last_commit() -> None:
@@ -127,9 +149,9 @@ def _main_inner(arguments) -> int:
 
     log.info("SwiGi — recherche des périphériques...")
 
-    keyboards = find_all_devices(DEVICE_TYPE_KEYBOARD)
+    keyboards = _wait_for_keyboard()
     if not keyboards:
-        log.error("Clavier introuvable ! Vérifie la connexion Bluetooth.")
+        log.error("Clavier introuvable après attente. Vérifie la connexion Bluetooth.")
         return 1
     for keyboard in keyboards:
         log.info(
