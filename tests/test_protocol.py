@@ -295,7 +295,7 @@ class TestGetDeviceName(unittest.TestCase):
         # Simuler la réponse à la requête 0x00 (get count) avec name_len=0
         with patch(
             "swigi.protocol.hidpp_request", return_value=b"\x00" + b"\x00" * 15
-        ) as mock_req:
+        ):
             result = get_device_name(transport, 0xFF, 0x04)
         self.assertIsNone(result)
 

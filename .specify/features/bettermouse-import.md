@@ -1,8 +1,8 @@
 # Spec : Profils BetterMouse par hôte
 
-**Version :** 0.2.0
+**Version :** 1.1.0
 **Date :** 2026-05-23
-**Statut :** Étude validée — à implémenter
+**Statut :** Implémentée ✅ (2026-05-27)
 
 ---
 
@@ -38,7 +38,7 @@ Chaque Mac stocke localement :
 ~/.swigi_profiles/
     config-bureau.json   ← snapshot BetterMouse exporté
     config-laptop.json
-~/.swigi_prefs.json      ← "bm_profile": "config-bureau", "bm_auto_apply": true
+~/.swigi_prefs.json      ← "better_mouse_profile": "config-bureau", "better_mouse_auto_apply": true
 ```
 
 Le partage entre Macs est **manuel** (AirDrop, iCloud Drive, etc.) ou via un dossier partagé configurable. SwiGi ne crée pas de réseau entre les machines.
@@ -158,7 +158,7 @@ Easy-Switch pressé (hôte 0 → hôte 1)
   → souris arrive sur hôte 1 (MacBook)
   → SwiGi MacBook : sonde détecte souris
   → state["pending_host"] vérifié (Phase 2)
-  → si bm_auto_apply == true ET bm_profile configuré :
+  → si better_mouse_auto_apply == true ET better_mouse_profile configuré :
       → lire ~/.swigi_profiles/config-laptop.json
       → patch plist BetterMouse
       → killall BetterMouse && open -a BetterMouse
@@ -323,13 +323,13 @@ def apply_profile(name: str) -> None:
 
 ```python
 # Dans SwiGiMenuBar.menu :
-_rumps.MenuItem("Exporter config BetterMouse…", callback=self._bm_export),
+_rumps.MenuItem("Exporter config BetterMouse…", callback=self._better_mouse_export),
 _rumps.MenuItem("Profil au connect", callback=None),   # sous-menu dynamique
-_rumps.MenuItem("Auto-appliquer au connect", callback=self._bm_toggle_auto),
+_rumps.MenuItem("Auto-appliquer au connect", callback=self._better_mouse_toggle_auto),
 ```
 
 ```python
-def _bm_export(self, _):
+def _better_mouse_export(self, _):
     from swigi.bettermouse import export_current, is_available
     if not is_available():
         notify("BetterMouse introuvable", "SwiGi")
@@ -342,10 +342,10 @@ def _bm_export(self, _):
     except Exception as e:
         notify(f"Export échoué : {e}", "Erreur")
 
-def _bm_toggle_auto(self, sender):
-    prefs["bm_auto_apply"] = not prefs.get("bm_auto_apply", False)
+def _better_mouse_toggle_auto(self, sender):
+    prefs["better_mouse_auto_apply"] = not prefs.get("better_mouse_auto_apply", False)
     save_prefs(prefs)
-    sender.state = prefs["bm_auto_apply"]
+    sender.state = prefs["better_mouse_auto_apply"]
 
 def _rebuild_profile_menu(self):
     from swigi.bettermouse import list_profiles
@@ -355,11 +355,11 @@ def _rebuild_profile_menu(self):
 
 ```python
 # Dans run_daemon / sonde périodique, après reconnexion souris :
-if prefs.get("bm_auto_apply") and prefs.get("bm_profile"):
+if prefs.get("better_mouse_auto_apply") and prefs.get("better_mouse_profile"):
     from swigi.bettermouse import apply_profile
     try:
-        apply_profile(prefs["bm_profile"])
-        notify(f"Profil {prefs['bm_profile']} appliqué", "BetterMouse")
+        apply_profile(prefs["better_mouse_profile"])
+        notify(f"Profil {prefs['better_mouse_profile']} appliqué", "BetterMouse")
     except Exception as e:
         log.warning("Profil BetterMouse non appliqué : %s", e)
 ```
@@ -368,14 +368,15 @@ if prefs.get("bm_auto_apply") and prefs.get("bm_profile"):
 
 ## 9. Risques et mitigations
 
-| Risque                                         | Probabilité             | Mitigation                                                       |
-| ---------------------------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| Structure plist change entre versions BM       | Moyen                   | try/except + rollback backup automatique                         |
-| BetterMouse relancé pendant une session active | Faible                  | Délai ~1s acceptable, même comportement qu'un redémarrage manuel |
-| Plusieurs souris Logitech → mauvaise cible     | Possible                | Matcher `mice[i].name.product == swigi_mouse.name`               |
-| Profil d'une autre souris appliqué             | Possible                | Vérifier `profile.meta.mouse == swigi_mouse.name` avant apply    |
-| BetterMouse absent sur ce Mac                  | Certain (Windows/Linux) | Guard `if SYSTEM == "Darwin" and is_available()`                 |
-| Clé de licence dans plist                      | Oui (Paddle-\*)         | Jamais incluse dans l'export JSON                                |
+| Risque                                                           | Probabilité             | Mitigation                                                                               |
+| ---------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| Structure plist change entre versions BM                         | Moyen                   | try/except + rollback backup automatique                                                 |
+| BetterMouse relancé pendant une session active                   | Faible                  | Délai ~1s acceptable, même comportement qu'un redémarrage manuel                         |
+| Plusieurs souris Logitech → mauvaise cible                       | Possible                | Matcher `mice[i].name.product == swigi_mouse.name`                                       |
+| Profil d'une autre souris appliqué                               | Possible                | Vérifier `profile.meta.mouse == swigi_mouse.name` avant apply                            |
+| BetterMouse absent sur ce Mac                                    | Certain (Windows/Linux) | Guard `if SYSTEM == "Darwin" and is_available()`                                         |
+| Clé de licence dans plist                                        | Oui (Paddle-\*)         | Jamais incluse dans l'export JSON                                                        |
+| Nom souris casse différente (ex: "mx vertical" vs "MX Vertical") | Probable                | Comparaison case-insensitive implémentée (`profile_mouse.lower() == mouse_name.lower()`) |
 
 ---
 
@@ -404,3 +405,11 @@ if prefs.get("bm_auto_apply") and prefs.get("bm_profile"):
 - `bettermouse.py` : `apply_profile()`
 - `daemon.py` / `gui.py` : déclenchement post-reconnect souris
 - Test sur machine réelle requis avant activation par défaut
+
+**Implémenté (2026-05-27) :**
+
+- Toutes les phases Phase 1 et Phase 2 sont implémentées et testées (206 tests verts)
+- Comparaison souris case-insensitive
+- Backup `*.swigi_bak_YYYYMMDD_HHMMSS` nettoyé automatiquement après succès
+- Validation nom de profil : regex `^[a-zA-Z0-9_\-\.]+$` (protection path traversal)
+- Rollback automatique sur exception + écriture atomique (tempfile + os.replace)

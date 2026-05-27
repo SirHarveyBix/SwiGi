@@ -1,7 +1,7 @@
 # Spec : Synchronisation multi-Mac (3 Macs, 2 claviers, 1 souris)
 
-**Version :** 1.0.0
-**Date :** 2026-05-26
+**Version :** 1.1.0
+**Date :** 2026-05-27
 **Statut :** Implémenté — validé en production
 
 ---
@@ -63,8 +63,9 @@ Quand la souris se reconnecte au Mac de destination :
 
 Cas particulier — reconnexion clavier après switch :
 
-- `_resync_pending_host_from_keyboard` recale `pending_host` sur l'hôte RÉEL du clavier
+- `_resync_pending_host_from_keyboard` lit l'hôte RÉEL du clavier et recale `pending_host`
 - Évite les fausses corrections si le clavier revient sur un autre hôte
+- **Protection race condition (2026-05-27)** : snapshot de `pending_host` pris avant l'I/O. Si un switch concurrent modifie `pending_host` pendant la lecture HID++ (comparaison par identité objet Python), le resync est silencieusement ignoré — le switch plus récent a priorité.
 
 ---
 
@@ -75,6 +76,7 @@ Cas particulier — reconnexion clavier après switch :
 | Clavier déconnecté 30s, revenu sur même hôte      | Resync pending_host → souris suit correctement          |
 | Clavier revenu sur hôte différent (switch manuel) | pending_host recalé → pas de fausse correction          |
 | Deux switches rapides (A→B→A en < 2s)             | second pending_host écrase le premier → OK              |
+| Switch pendant resync clavier (I/O concurrent)    | identité objet détecte le conflit → resync ignorée      |
 | Souris disparue pendant le TTL                    | pending_host expiré après 60s → abandon                 |
 | macOS BT retourne réponses paddées (32 octets)    | MSG_LENGTHS check accepte len >= (fix 2026-05-26)       |
 | 2 souris connectées simultanément                 | \_send_to_all_mice envoie à toutes, probe reçoit toutes |

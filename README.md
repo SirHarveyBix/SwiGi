@@ -511,6 +511,13 @@ If SwiGi saves you time / Si SwiGi t'économise du temps :
 | 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                 | Détection + message d'erreur clair, git clone recommandé |
 | 2026-05-26 | launchctl load/unload déprécié macOS 13+                             | Remplacé par bootstrap/bootout                           |
 | 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)        | tempfile + os.replace()                                  |
+| 2026-05-27 | Race condition `pending_host` : resync écrase switch concurrent      | Snapshot objet avant I/O + comparaison d'identité        |
+| 2026-05-27 | Boucle infinie `get_device_name` si device retourne nom tronqué      | Guard `to_read <= 0: break`                              |
+| 2026-05-27 | `_build_message` tronque silencieusement paramètres > 16 bytes       | `ValueError` explicite si `len(parameters) > 16`         |
+| 2026-05-27 | Profil BetterMouse rejeté si casse du nom souris différente          | Comparaison case-insensitive                             |
+| 2026-05-27 | Backups BetterMouse `.swigi_bak_*` jamais nettoyés                   | `os.unlink(backup)` après succès apply_profile           |
+| 2026-05-27 | `RuntimeError` itération dict menu bar sous changement concurrent    | `list(menu.items())` avant itération                     |
+| 2026-05-27 | Tests flaky : seuil timing `< 0.15s` trop serré (CI échoue)          | Event-based wait + seuil 0.25s                           |
 
 ---
 
