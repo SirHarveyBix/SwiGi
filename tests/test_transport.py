@@ -8,10 +8,10 @@ if "swigi.hidapi_loader" in sys.modules:
 else:
     _mock_loader = MagicMock()
     _mock_loader.lib = MagicMock()
-    _mock_loader.hid_err = MagicMock(return_value="")
+    _mock_loader.hid_error = MagicMock(return_value="")
     sys.modules["swigi.hidapi_loader"] = _mock_loader
 
-from swigi.transport import HIDTransport, TransportError  # noqa: E402
+from swigi.transport import HIDTransport, TransportError
 
 
 class TestHIDTransport(unittest.TestCase):
@@ -25,6 +25,7 @@ class TestHIDTransport(unittest.TestCase):
         return transport, lib_mock
 
     def test_init_success_is_open(self):
+        """Transport ouvert avec succès → is_open True."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -32,15 +33,17 @@ class TestHIDTransport(unittest.TestCase):
         self.assertTrue(transport.is_open)
 
     def test_init_fail_raises_oserror(self):
+        """hid_open_path échoué → OSError."""
         with (
             patch("swigi.transport.lib") as lib_mock,
-            patch("swigi.transport.hid_err", return_value="fail"),
+            patch("swigi.transport.hid_error", return_value="fail"),
         ):
             lib_mock.hid_open_path.return_value = None
             with self.assertRaises(OSError):
                 HIDTransport(b"/dev/hidraw0", 0xB35B)
 
     def test_is_open_false_after_close(self):
+        """is_open False après close."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -49,6 +52,7 @@ class TestHIDTransport(unittest.TestCase):
         self.assertFalse(transport.is_open)
 
     def test_read_returns_bytes_on_success(self):
+        """Lecture réussie retourne les octets lus."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -59,6 +63,7 @@ class TestHIDTransport(unittest.TestCase):
         self.assertEqual(len(result), 4)
 
     def test_read_returns_none_on_timeout(self):
+        """Timeout (0 octets lus) retourne None."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -68,10 +73,11 @@ class TestHIDTransport(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_read_raises_transport_error_on_negative(self):
+        """Erreur de lecture (bytes < 0) lève TransportError."""
         device = MagicMock()
         with (
             patch("swigi.transport.lib") as lib_mock,
-            patch("swigi.transport.hid_err", return_value="read error"),
+            patch("swigi.transport.hid_error", return_value="read error"),
         ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
@@ -84,7 +90,7 @@ class TestHIDTransport(unittest.TestCase):
         device = MagicMock()
         with (
             patch("swigi.transport.lib") as lib_mock,
-            patch("swigi.transport.hid_err", return_value="success"),
+            patch("swigi.transport.hid_error", return_value="success"),
         ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
@@ -97,7 +103,7 @@ class TestHIDTransport(unittest.TestCase):
         device = MagicMock()
         with (
             patch("swigi.transport.lib") as lib_mock,
-            patch("swigi.transport.hid_err", return_value=""),
+            patch("swigi.transport.hid_error", return_value=""),
         ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_read_timeout.return_value = -1
@@ -106,6 +112,7 @@ class TestHIDTransport(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_read_on_closed_raises(self):
+        """Lecture sur transport fermé lève TransportError."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -115,6 +122,7 @@ class TestHIDTransport(unittest.TestCase):
                 transport.read()
 
     def test_write_success(self):
+        """Écriture réussie ne lève pas d'exception."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -123,10 +131,11 @@ class TestHIDTransport(unittest.TestCase):
             transport.write(b"\x11\xff\x00" * 2 + b"\x00")  # pas d'exception
 
     def test_write_raises_on_failure(self):
+        """Écriture échouée (bytes < 0) lève TransportError."""
         device = MagicMock()
         with (
             patch("swigi.transport.lib") as lib_mock,
-            patch("swigi.transport.hid_err", return_value="write fail"),
+            patch("swigi.transport.hid_error", return_value="write fail"),
         ):
             lib_mock.hid_open_path.return_value = device
             lib_mock.hid_write.return_value = -1
@@ -135,6 +144,7 @@ class TestHIDTransport(unittest.TestCase):
                 transport.write(b"\x11" * 7)
 
     def test_write_on_closed_raises(self):
+        """Écriture sur transport fermé lève TransportError."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -144,6 +154,7 @@ class TestHIDTransport(unittest.TestCase):
                 transport.write(b"\x11" * 7)
 
     def test_close_idempotent(self):
+        """Appeler close deux fois ne lève pas d'exception."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -152,6 +163,7 @@ class TestHIDTransport(unittest.TestCase):
             transport.close()  # pas d'exception
 
     def test_context_manager(self):
+        """Context manager ferme le transport en sortie de with."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device
@@ -160,6 +172,7 @@ class TestHIDTransport(unittest.TestCase):
             self.assertFalse(transport.is_open)
 
     def test_del_closes_transport(self):
+        """__del__ ferme le transport."""
         device = MagicMock()
         with patch("swigi.transport.lib") as lib_mock:
             lib_mock.hid_open_path.return_value = device

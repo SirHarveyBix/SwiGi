@@ -14,7 +14,6 @@ from swigi.constants import (
 )
 from swigi.transport import HIDTransport, TransportError
 
-
 log = logging.getLogger("swigi.protocol")
 
 
@@ -170,35 +169,35 @@ def send_change_host(
 ) -> None:
     """Bascule le périphérique vers target_host (base 0).
 
-    Double drain (avant + après 1ms d'attente) pour absorber les paquets
-    in-flight sur les chips BT 5.3 haute fréquence (M3 Pro).
-    Envoie la commande 5× back-to-back sans délai.
+    Drain avant envoi, puis 2 writes (1 retry en cas d'échec sur le 2e).
     Exception sur 1er essai = erreur réelle (propagée).
     Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
     """
-    _drain_transport(transport)
-    time.sleep(0.001)  # laisse arriver les paquets BT in-flight
     _drain_transport(transport)
 
     request_id = (feature_index << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     parameters = struct.pack("B", target_host)
     message = _build_message(device_number, request_id, parameters)
-    for attempt in range(5):
+    for attempt in range(2):
         try:
             transport.write(message)
         except (TransportError, OSError):
             if attempt == 0:
                 raise  # 1er essai échoué = transport mort avant envoi
             return  # retry échoué = switch réussi, périphérique déconnecté
-    # Flush OS TX buffer : lecture courte force le BT stack à expédier les writes en attente
+    # Flush : lecture courte force le BT stack à expédier les writes en attente
     try:
         transport.read(timeout=10)
     except (TransportError, OSError):
-        pass  # souris déconnectée = commande reçue, comportement attendu
+        pass  # souris déconnectée = commande reçue
 
 
 def get_current_host(
-    transport: HIDTransport, device_number: int, feature_index: int, *, timeout: int = 500
+    transport: HIDTransport,
+    device_number: int,
+    feature_index: int,
+    *,
+    timeout: int = 500,
 ) -> int | None:
     """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
     reply = hidpp_request(

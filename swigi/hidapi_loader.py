@@ -2,6 +2,7 @@ import ctypes
 import logging
 import os
 import sys
+
 from swigi.constants import SYSTEM
 
 log = logging.getLogger("swigi.hidapi")
@@ -138,9 +139,9 @@ _lib.hid_error.restype = ctypes.c_wchar_p
 _lib.hid_error.argtypes = [ctypes.c_void_p]
 
 
-def hid_err(dev=None):
-    msg = _lib.hid_error(dev)
-    return msg if msg else "erreur hidapi inconnue"
+def hid_error(device=None):
+    error_message = _lib.hid_error(device)
+    return error_message if error_message else "erreur hidapi inconnue"
 
 
 # Exposer _lib et _DeviceInfo pour les autres modules

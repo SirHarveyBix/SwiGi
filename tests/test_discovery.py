@@ -21,31 +21,36 @@ else:
     _mock_gui.SwiGiMenuBar = None
     sys.modules["swigi.gui"] = _mock_gui
 
-from swigi.discovery import _clean_name, DeviceInfo, find_all_devices, find_device  # noqa: E402
-from swigi.constants import DEVICE_TYPE_KEYBOARD, DEVICE_TYPE_MOUSE  # noqa: E402
-from swigi.transport import TransportError  # noqa: E402
-
+from swigi.constants import DEVICE_TYPE_KEYBOARD, DEVICE_TYPE_MOUSE
+from swigi.discovery import DeviceInfo, _clean_name, find_all_devices, find_device
+from swigi.transport import TransportError
 
 # ── _clean_name ────────────────────────────────────────────────────────────────
 
 
 class TestCleanName(unittest.TestCase):
     def test_removes_null_bytes(self):
+        """Supprime les octets null du nom."""
         self.assertEqual(_clean_name("MX Keys\x00\x00", 0xB35B), "MX Keys")
 
     def test_strips_whitespace(self):
+        """Supprime les espaces en début et fin."""
         self.assertEqual(_clean_name("  MX Keys  ", 0xB35B), "MX Keys")
 
     def test_empty_after_clean_returns_fallback(self):
+        """Nom vide après nettoyage → fallback avec Product ID."""
         self.assertEqual(_clean_name("\x00\x00", 0xB35B), "Logitech-0xB35B")
 
     def test_none_returns_fallback(self):
+        """None → fallback avec Product ID."""
         self.assertEqual(_clean_name(None, 0xB35B), "Logitech-0xB35B")
 
     def test_empty_string_returns_fallback(self):
+        """Chaîne vide → fallback avec Product ID."""
         self.assertEqual(_clean_name("", 0xB35B), "Logitech-0xB35B")
 
     def test_normal_name_unchanged(self):
+        """Nom normal retourné tel quel."""
         self.assertEqual(_clean_name("MX Master 4", 0xB042), "MX Master 4")
 
 
@@ -64,16 +69,19 @@ class TestDeviceInfoClose(unittest.TestCase):
         ), transport
 
     def test_close_calls_transport_close(self):
+        """close() appelle transport.close()."""
         device_info, transport = self._make_device_info()
         device_info.close()
         transport.close.assert_called_once()
 
     def test_close_swallows_os_error(self):
+        """close() absorbe OSError sans propager."""
         device_info, transport = self._make_device_info()
         transport.close.side_effect = OSError("device gone")
         device_info.close()  # ne doit pas lever
 
     def test_close_swallows_transport_error(self):
+        """close() absorbe TransportError sans propager."""
         device_info, transport = self._make_device_info()
         transport.close.side_effect = TransportError("dead")
         device_info.close()  # ne doit pas lever
@@ -100,17 +108,20 @@ class TestFindAllDevices(unittest.TestCase):
         _mock_loader.lib.reset_mock()
 
     def test_empty_enumeration_returns_empty_list(self):
+        """Énumération vide retourne liste vide."""
         _mock_loader.lib.hid_enumerate.return_value = None
         result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
     def test_receiver_pid_skipped(self):
+        """Receivers (Bolt/Unifying) ignorés."""
         enumeration_node = _make_hid_node(product_id=0xC548)  # BOLT_PID → receveur
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         result = find_all_devices(DEVICE_TYPE_KEYBOARD)
         self.assertEqual(result, [])
 
     def test_wrong_usage_pair_skipped(self):
+        """Interfaces HID avec usage_page/usage non reconnus ignorées."""
         enumeration_node = _make_hid_node(
             product_id=0xB35B, usage_page=0x0099, usage=0x9999
         )
@@ -119,6 +130,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_transport_open_fails_skipped(self):
+        """Impossible d'ouvrir le transport → ignoré."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         with patch("swigi.discovery.HIDTransport", side_effect=OSError("no")):
@@ -126,6 +138,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_no_device_type_feature_skipped(self):
+        """Pas de feature DEVICE_TYPE_AND_NAME → ignoré."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         with (
@@ -136,6 +149,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_no_change_host_feature_skipped(self):
+        """Pas de feature CHANGE_HOST → ignoré."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         with (
@@ -148,6 +162,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_wrong_device_type_skipped(self):
+        """Device type ne correspond pas au type demandé → ignoré."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         with (
@@ -160,6 +175,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_found_keyboard(self):
+        """Clavier trouvé avec tous les attributs corrects."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
@@ -176,6 +192,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(result[0].change_host_index, 9)
 
     def test_found_mouse(self):
+        """Souris trouvée via usage_page Generic Desktop."""
         enumeration_node = _make_hid_node(
             product_id=0xB042, usage_page=0x0001, usage=0x0002
         )
@@ -228,6 +245,7 @@ class TestFindAllDevices(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
     def test_transport_error_during_resolve_skipped(self):
+        """TransportError pendant resolve_feature → ignoré."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         with (
@@ -245,12 +263,14 @@ class TestFindAllDevices(unittest.TestCase):
 
 class TestFindDevice(unittest.TestCase):
     def test_returns_first_result(self):
+        """Retourne le premier résultat de find_all_devices."""
         mock_device_info = MagicMock()
         with patch("swigi.discovery.find_all_devices", return_value=[mock_device_info]):
             result = find_device(DEVICE_TYPE_KEYBOARD)
         self.assertIs(result, mock_device_info)
 
     def test_returns_none_when_empty(self):
+        """Retourne None si aucun device trouvé."""
         with patch("swigi.discovery.find_all_devices", return_value=[]):
             result = find_device(DEVICE_TYPE_KEYBOARD)
         self.assertIsNone(result)

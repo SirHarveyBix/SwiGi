@@ -1,20 +1,30 @@
+.venv
+.vscode
 __pycache__/
+.ruff_cache
+.DS_Store
 *.pyc
-dist/
-build/
+*.egg-info/
 *.spec
 *.log
-.DS_Store
 Thumbs.db
+dist/
+build/
 python-3/
 lib/
-*.egg-info/
 
 # Couverture de tests
+.pytest_cache
 htmlcov/
 coverage.xml
 .coverage
 .coverage.*
 
+# Agents IA
 .claude
 .antigravitycli
+.copilot
+
+# IDE / OS
+*.swp
+*~

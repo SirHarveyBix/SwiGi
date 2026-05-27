@@ -1,0 +1,7 @@
+# Runtime (macOS menu bar — optionnel sur Linux/Windows)
+rumps>=0.4.0
+
+# Développement
+pytest>=7.0
+pytest-cov>=4.0
+ruff>=0.4

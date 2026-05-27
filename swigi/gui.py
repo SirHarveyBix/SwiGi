@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import threading
+
 from swigi.constants import PREFS_FILE, SYSTEM
 
 log = logging.getLogger("swigi.gui")
@@ -19,7 +20,7 @@ except ImportError:
 
 def load_prefs() -> dict:
     try:
-        with open(PREFS_FILE, "r") as prefs_file:
+        with open(PREFS_FILE) as prefs_file:
             data = json.load(prefs_file)
             data.setdefault("notifications", True)
             data.setdefault("mouse_follow", True)
@@ -59,6 +60,7 @@ def notify(message: str, subtitle: str = "") -> None:
             ["osascript", "-e", script],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
     except Exception:
         pass
@@ -69,14 +71,24 @@ if HAS_RUMPS and _rumps:
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
             initial_keyboards = state.get("keyboards") or {}
-            initial_keyboard_names = [
-                d["name"]
-                for d in initial_keyboards.values()
-                if d.get("ok") and d.get("name")
-            ] if initial_keyboards else []
-            initial_keyboard = ", ".join(initial_keyboard_names) if initial_keyboard_names else state.get("keyboard")
+            initial_keyboard_names = (
+                [
+                    keyboard_data["name"]
+                    for keyboard_data in initial_keyboards.values()
+                    if keyboard_data.get("ok") and keyboard_data.get("name")
+                ]
+                if initial_keyboards
+                else []
+            )
+            initial_keyboard = (
+                ", ".join(initial_keyboard_names)
+                if initial_keyboard_names
+                else state.get("keyboard")
+            )
             initial_mice = state.get("mice") or []
-            initial_mouse = ", ".join(initial_mice) if initial_mice else state.get("mouse")
+            initial_mouse = (
+                ", ".join(initial_mice) if initial_mice else state.get("mouse")
+            )
             super().__init__("⌨️")
             try:
                 from AppKit import NSApplication
@@ -156,7 +168,7 @@ if HAS_RUMPS and _rumps:
         def _refresh(self, _):
             # Support multi-clavier : construire le nom depuis state["keyboards"] si disponible
             # Lire sous lock pour éviter une iteration concurrente avec le thread daemon
-            state_lock = self._state.get("_state_lock")
+            state_lock = self._state.get("_lock")
             if state_lock:
                 with state_lock:
                     keyboards_copy = dict(self._state.get("keyboards") or {})
@@ -167,9 +179,9 @@ if HAS_RUMPS and _rumps:
 
             if keyboards_copy:
                 actifs = [
-                    d["name"]
-                    for d in keyboards_copy.values()
-                    if d.get("ok") and d.get("name")
+                    keyboard_data["name"]
+                    for keyboard_data in keyboards_copy.values()
+                    if keyboard_data.get("ok") and keyboard_data.get("name")
                 ]
                 keyboard = ", ".join(actifs) if actifs else None
                 # Garder state["keyboard"] cohérent pour le reste du code
@@ -177,7 +189,9 @@ if HAS_RUMPS and _rumps:
             else:
                 keyboard = self._state.get("keyboard")
 
-            mouse_display = ", ".join(mice_copy) if mice_copy else self._state.get("mouse")
+            mouse_display = (
+                ", ".join(mice_copy) if mice_copy else self._state.get("mouse")
+            )
             switches = self._state.get("switches", 0)
             self._keyboard_item.title = (
                 f"Clavier : {keyboard or '—'} {'✅' if keyboard else '❌'}"
@@ -186,7 +200,7 @@ if HAS_RUMPS and _rumps:
                 f"Souris : {mouse_display or '—'} {'✅' if mouse_display else '❌'}"
             )
             self._count_item.title = f"Basculements : {switches}"
-            # Bug 1 : toujours "⌨️" (forme emoji visible), l'état détaillé est dans les items
+            # Titre statique — l'état détaillé est dans les items du menu
             self.title = "⌨️"
 
         # ── Notifications ──────────────────────────────────────────────────
@@ -281,7 +295,9 @@ if HAS_RUMPS and _rumps:
         # ── Divers ────────────────────────────────────────────────────────
 
         def _hide_icon(self, _):
-            notify("Icône masquée — relancez SwiGi depuis le terminal ou via launchd pour réafficher")
+            notify(
+                "Icône masquée — relancez SwiGi depuis le terminal ou via launchd pour réafficher"
+            )
             try:
                 # rumps expose NSStatusItem via _status_item depuis rumps >= 0.4
                 item = getattr(self, "_status_item", None)

@@ -1,12 +1,13 @@
 import dataclasses
 import logging
+
 from swigi.constants import (
     ALL_RECEIVER_PIDS,
+    DEVICE_NUMBER_DIRECT,
     DEVICE_TYPE_KEYBOARD,
     DEVICE_TYPE_MOUSE,
     DEVICE_TYPE_TRACKBALL,
     DEVICE_TYPE_TRACKPAD,
-    DEVICE_NUMBER_DIRECT,
     DIRECT_USAGE_PAIRS,
     FEATURE_CHANGE_HOST,
     FEATURE_DEVICE_TYPE_AND_NAME,
@@ -14,10 +15,10 @@ from swigi.constants import (
 )
 from swigi.hidapi_loader import lib
 from swigi.protocol import (
+    _drain_transport,
     get_device_name,
     get_device_type,
     resolve_feature,
-    _drain_transport,
 )
 from swigi.transport import HIDTransport, TransportError
 
@@ -84,25 +85,18 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
         if product_id in seen_product_ids:
             log.debug("PID=0x%04X déjà traité (interface multiple ignorée)", product_id)
             continue
+        transport = None
         try:
             transport = HIDTransport(path, product_id)
-        except OSError:
-            log.debug(
-                "Ouverture échouée pid=0x%04X up=0x%04X u=0x%04X",
-                product_id,
-                usage_page,
-                usage,
-            )
-            continue
-        # Vide le buffer kernel avant toute requête HID++ — évite de lire une réponse
-        # stale d'une session précédente (cause du nom corrompu après reconnexion BT).
-        _drain_transport(transport)
-        try:
+            # Vide le buffer kernel avant toute requête HID++ — évite de lire une réponse
+            # stale d'une session précédente (cause du nom corrompu après reconnexion BT).
+            _drain_transport(transport)
             feature_index = resolve_feature(
                 transport, DEVICE_NUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME
             )
             if feature_index is None:
                 transport.close()
+                transport = None
                 continue
             device_type = get_device_type(
                 transport, DEVICE_NUMBER_DIRECT, feature_index
@@ -119,9 +113,11 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                 and device_type != DEVICE_TYPE_KEYBOARD
             ):
                 transport.close()
+                transport = None
                 continue
             if device_type_wanted == DEVICE_TYPE_MOUSE and not is_mouse:
                 transport.close()
+                transport = None
                 continue
 
             # Important: après les lectures de nom/type, des réponses HID++ peuvent encore
@@ -142,12 +138,16 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                     change_host_index = retry_index
             if change_host_index is None:
                 transport.close()
+                transport = None
                 continue
             seen_product_ids.add(product_id)
             results.append(DeviceInfo(transport, name, product_id, change_host_index))
+            transport = None  # ownership transférée à DeviceInfo
         except (TransportError, OSError):
-            transport.close()
-            continue
+            pass
+        finally:
+            if transport is not None:
+                transport.close()
     return results
 
 

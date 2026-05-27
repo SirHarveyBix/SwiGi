@@ -11,7 +11,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
   <a href="https://github.com/sponsors/LeeHoffka" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge&logo=github" alt="Sponsor on GitHub" height="40"></a>
 </p>
 
-🇫🇷 **Français** — tu lis ça | 🇬🇧 [English](#-english) — scroll down
+🇫🇷 **Français** | 🇬🇧 [English](#-english)
 
 ---
 
@@ -22,9 +22,9 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement       |
 | 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
 | 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
-| 🔗 **Sync garantie**             | Détecte et corrige automatiquement les désynchronisations (filets ×2) |
-| ⚡ **Faible latence**            | Polling 10ms, réponse < 300ms dans des conditions normales            |
-| 🖱️ **Souris en mouvement**       | Fonctionne même quand la souris bouge activement (drain BT + retries) |
+| 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé        |
+| ⚡ **Faible latence**            | Réponse < 300ms dans des conditions normales                          |
+| 🖱️ **Multi-souris**              | Envoie CHANGE_HOST à toutes les souris connectées simultanément       |
 | 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements |
 | ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris   |
 | 🔔 **Notifications système**     | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
@@ -46,26 +46,23 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 ### 🍎 Installation macOS
 
-**Méthode la plus simple — script automatique (recommandé)**
+**Méthode la plus simple — une seule commande (recommandé)**
 
-1. Ouvre le Terminal (`Cmd+Espace`)
-2. Clone le dépôt et lance le script d'installation :
+```bash
+curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_curl.sh | bash
+```
+
+C'est tout. SwiGi est cloné, installé, et se relancera automatiquement à chaque démarrage de ton Mac.
+
+---
+
+**Alternative — git clone manuel**
 
 ```bash
 git clone https://github.com/SirHarveyBix/SwiGi.git
 cd SwiGi
 bash install_mac.sh
 ```
-
-C'est tout. SwiGi démarre et se relancera automatiquement à chaque démarrage de ton Mac.
-
-> **Alternative :** Si le dépôt est déjà cloné sur ta machine, tu peux aussi utiliser :
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
-> ```
->
-> ⚠️ Cette commande nécessite que les fichiers SwiGi soient déjà présents localement — elle ne peut pas fonctionner seule.
 
 ---
 
@@ -132,6 +129,7 @@ macOS bloque par défaut l'accès aux périphériques d'entrée. Tu dois autoris
 1. Ouvre **Réglages Système** → **Confidentialité et sécurité** → **Surveillance des entrées**
 2. Clique sur le **+** et ajoute **python3** — son chemin exact est affiché lors de l'installation, ou retrouve-le avec `which python3` dans le Terminal
 3. Relance le service pour qu'il prenne en compte la permission :
+
    ```bash
    launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
@@ -250,6 +248,39 @@ bash install_mac.sh
 
 ---
 
+### 🐭 BetterMouse — synchronisation multi-Mac
+
+> **Optionnel** — uniquement si tu utilises [BetterMouse](https://better-mouse.com) pour configurer ta souris Logitech.
+
+SwiGi peut **exporter et appliquer automatiquement** un profil BetterMouse après chaque basculement. Le profil (scroll, polling, ratchet, DPI) est partagé via un fichier JSON dans `~/.swigi_profiles/`.
+
+**Configuration (une seule fois) :**
+
+1. Configure ta souris exactement comme tu veux dans BetterMouse
+2. Exporte le profil courant :
+
+   ```bash
+   python3 -c "from swigi.bettermouse import export_current; print(export_current('mon-profil'))"
+   ```
+
+3. Active l'application automatique dans le menu SwiGi :
+   - Icône menu bar → **BetterMouse** → **Appliquer au switch** ✓
+   - Sélectionne le profil `mon-profil`
+
+**Sync entre Macs :**
+
+Copie le fichier `~/.swigi_profiles/mon-profil.json` sur chaque Mac (via iCloud Drive, `scp`, AirDrop, git…). Chaque instance SwiGi appliquera le même profil après chaque switch.
+
+```bash
+# Depuis le Mac source :
+scp ~/.swigi_profiles/mon-profil.json user@mac2:~/.swigi_profiles/
+scp ~/.swigi_profiles/mon-profil.json user@mac3:~/.swigi_profiles/
+```
+
+> Le profil contient uniquement les réglages scroll/hardware — jamais de données sensibles (licence, etc.).
+
+---
+
 ### ❓ Problèmes fréquents
 
 | Problème                                       | Solution                                                                                                                                                                                          |
@@ -260,8 +291,7 @@ bash install_mac.sh
 | L'icône n'apparaît pas (installation)          | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"`                                      |
 | L'icône n'apparaît pas (général)               | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
 | Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log`                                                                |
-| 2 Macs OK, 3e Mac instable au retour           | Cherche `pending_host expiré` et les reconnexions clavier répétées dans les logs : c'est un signe de reconnexion BT lente (instabilité radio/Bluetooth locale).                                    |
-| Après switch manuel souris, ça rebascule mal   | SwiGi applique un **override manuel temporaire** pour éviter les boucles de correction. Si tu veux piloter la souris uniquement, décoche **Suivre la souris** dans le menu.                       |
+| 2 Macs OK, 3e Mac instable au retour           | Vérifie les reconnexions clavier répétées dans les logs : c'est un signe de reconnexion BT lente (instabilité radio/Bluetooth locale).                                                            |
 | `hidapi introuvable` sur macOS                 | Lance `brew install hidapi`                                                                                                                                                                       |
 | `hidapi introuvable` sur Windows               | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py`                                                                                                                                  |
 | SwiGi se lance mais ne fait rien               | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`                                                                                                                                      |
@@ -282,12 +312,13 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 
 ### Comment ça marche
 
-1. SwiGi envoie un « ping » régulier au clavier via Bluetooth (~10ms)
+1. SwiGi surveille le clavier via Bluetooth HID (ping régulier)
 2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST`
-3. SwiGi la capture et envoie la même commande à la souris
-4. Les deux périphériques basculent sur le même hôte
+3. SwiGi la capture et envoie **immédiatement** la même commande à toutes les souris connectées
+4. Les périphériques basculent sur le même hôte
+5. Le probe loop vérifie et confirme dans les logs que la souris est bien sur le bon hôte
 
-En cas de reconnexion Bluetooth, SwiGi recale la cible souris sur l'hôte réel du clavier (resync), mais **n'impose pas agressivement** cette cible si un switch manuel souris est détecté. Cela évite l'effet "va dans tous les sens".
+Architecture pipe unidirectionnel : clavier notifie → SwiGi envoie CHANGE_HOST → souris bascule → log confirme. Pas de correction agressive, pas de boucle de feedback.
 
 Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un package Python modulaire, aucune dépendance sauf hidapi.
 
@@ -299,13 +330,13 @@ SwiGi est extrêmement léger — conçu pour tourner 24h/24 en arrière-plan sa
 
 | Ressource | Valeur typique                                                   |
 | --------- | ---------------------------------------------------------------- |
-| CPU       | < 0,5 % (boucle bloquée 80 ms sur 90 ms en attente kernel BT)    |
+| CPU       | < 0,5 % (boucle bloquée en attente kernel BT)                    |
 | RAM       | ~10–15 Mo (Python + hidapi)                                      |
 | Disque    | 0 écriture en fonctionnement normal (logs uniquement si demandé) |
 | Réseau    | 0 octet (100 % Bluetooth local, aucune connexion internet)       |
 | Batterie  | Négligeable — équivalent à avoir le Bluetooth activé normalement |
 
-La boucle principale passe ~80 ms bloquée dans `hid_read_timeout` (appel système), puis dort 10 ms. Python ne s'exécute que quelques microsecondes par cycle. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
+La boucle principale passe la majorité du temps bloquée dans `hid_read_timeout` (appel système kernel). Python ne s'exécute que quelques microsecondes par cycle. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
 
 ---
 
@@ -336,9 +367,9 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 | 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically           |
 | 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required           |
 | 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop        |
-| 🔗 **Guaranteed sync**      | Auto-detects and fixes keyboard/mouse desync (two safety nets) |
-| ⚡ **Low latency**          | 10ms polling, < 300ms response under normal conditions         |
-| 🖱️ **Mouse in motion**      | Works even while mouse is actively moving (BT drain + retries) |
+| 🔗 **Verified sync**        | Confirms in logs that the mouse actually switched              |
+| ⚡ **Low latency**          | < 300ms response under normal conditions                       |
+| 🖱️ **Multi-mouse**          | Sends CHANGE_HOST to all connected mice simultaneously         |
 | 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |
 | ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following         |
 | 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                    |
@@ -354,23 +385,21 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 
 ### 🍎 macOS
 
-**Automatic install (recommended):**
+**One-liner install (recommended):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_curl.sh | bash
+```
+
+This clones the repo, installs hidapi, starts SwiGi, and sets it to launch automatically at login.
+
+**Alternative — manual git clone:**
 
 ```bash
 git clone https://github.com/SirHarveyBix/SwiGi.git
 cd SwiGi
 bash install_mac.sh
 ```
-
-This installs hidapi, starts SwiGi, and sets it to launch automatically at login.
-
-> **Alternative:** If the repo is already cloned on your machine, you can also use:
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_mac.sh | bash
-> ```
->
-> ⚠️ This command requires SwiGi files to already be present locally — it cannot work standalone.
 
 **Manual install:**
 
@@ -382,10 +411,12 @@ This installs hidapi, starts SwiGi, and sets it to launch automatically at login
 **macOS Permission (required once):**
 
 - **Script install (launchd):** System Settings → Privacy & Security → Input Monitoring → add **python3** (find its path with `which python3`), then restart the service:
+
   ```bash
   launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist
   ```
+
 - **Manual launch from Terminal:** System Settings → Privacy & Security → Input Monitoring → add **Terminal**
 
 > ⚠️ After every PyInstaller rebuild, remove the old SwiGi entry and re-add the new binary.
@@ -444,6 +475,39 @@ bash install_mac.sh
 
 ---
 
+### 🐭 BetterMouse — multi-Mac sync
+
+> **Optional** — only if you use [BetterMouse](https://better-mouse.com) to configure your Logitech mouse.
+
+SwiGi can **export and auto-apply** a BetterMouse profile after each switch. The profile (scroll, polling, ratchet, DPI) is shared via a JSON file in `~/.swigi_profiles/`.
+
+**Setup (once):**
+
+1. Configure your mouse exactly as you want in BetterMouse
+2. Export the current profile:
+
+   ```bash
+   python3 -c "from swigi.bettermouse import export_current; print(export_current('my-profile'))"
+   ```
+
+3. Enable auto-apply in SwiGi's menu:
+   - Menu bar icon → **BetterMouse** → **Apply on switch** ✓
+   - Select profile `my-profile`
+
+**Sync across Macs:**
+
+Copy `~/.swigi_profiles/my-profile.json` to each Mac (via iCloud Drive, `scp`, AirDrop, git…). Each SwiGi instance will apply the same profile after every switch.
+
+```bash
+# From the source Mac:
+scp ~/.swigi_profiles/my-profile.json user@mac2:~/.swigi_profiles/
+scp ~/.swigi_profiles/my-profile.json user@mac3:~/.swigi_profiles/
+```
+
+> The profile only contains scroll/hardware settings — never sensitive data (license keys, etc.).
+
+---
+
 ### ❓ Troubleshooting
 
 | Problem                                      | Fix                                                                                                                                                                                     |
@@ -462,10 +526,13 @@ bash install_mac.sh
 
 ### How it works
 
-1. SwiGi sends a ping to the keyboard over Bluetooth every ~10ms
+1. SwiGi monitors the keyboard over Bluetooth HID (regular ping)
 2. When you press Easy-Switch, the keyboard sends a `CHANGE_HOST` notification
-3. SwiGi captures it and sends the same command to the mouse
-4. Both devices switch to the same host
+3. SwiGi captures it and **immediately** sends the same command to all connected mice
+4. All devices switch to the same host
+5. The probe loop verifies and confirms in logs that the mouse is on the correct host
+
+Unidirectional pipe architecture: keyboard notifies → SwiGi sends CHANGE_HOST → mouse switches → log confirms. No aggressive correction, no feedback loop.
 
 Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python package, one dependency (hidapi).
 
@@ -475,13 +542,13 @@ SwiGi is extremely lightweight — designed to run 24/7 in the background with n
 
 | Resource | Typical value                                                        |
 | -------- | -------------------------------------------------------------------- |
-| CPU      | < 0.5% (loop blocked 80ms out of 90ms waiting in kernel BT call)     |
+| CPU      | < 0.5% (loop blocked waiting in kernel BT syscall)                   |
 | RAM      | ~10–15 MB (Python + hidapi)                                          |
 | Disk     | 0 writes during normal operation (logs only if `--log-file` is used) |
 | Network  | 0 bytes (100% local Bluetooth, no internet connection)               |
 | Battery  | Negligible — equivalent to having Bluetooth enabled normally         |
 
-The main loop spends ~80ms blocked in `hid_read_timeout` (a kernel syscall), then sleeps for 10ms. Python only executes for a few microseconds per cycle. Comparable to a background SSH agent or the native Bluetooth daemon.
+The main loop spends most of its time blocked in `hid_read_timeout` (a kernel syscall). Python only executes for a few microseconds per cycle. Comparable to a background SSH agent or the native Bluetooth daemon.
 
 ### Tested
 
@@ -511,11 +578,48 @@ If SwiGi saves you time / Si SwiGi t'économise du temps :
 | ---------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
 | 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)    | MSG_LENGTHS check accepte len >= au lieu de ==           |
 | 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O) | I/O sorti du lock dans probe loop                        |
+
+---
+
+## 🛠️ Développement
+
+### Installation de l'environnement
+
+```bash
+git clone https://github.com/SirHarveyBix/SwiGi.git
+cd SwiGi
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Lancer les tests
+
+```bash
+python -m pytest tests/ --cov=swigi --cov-report=term-missing -q
+```
+
+### Linter
+
+```bash
+ruff check swigi/ tests/
+```
+
+### Mise à jour des dépendances
+
+Les dépendances Python sont listées dans `requirements.txt`. Pour mettre à jour :
+
+```bash
+source .venv/bin/activate
+pip install --upgrade -r requirements.txt
+```
+
+> **Note :** `hidapi` n'est pas dans `requirements.txt` — c'est une bibliothèque C chargée via ctypes. Sur macOS : `brew install hidapi`. Sur Linux : `sudo apt install libhidapi-hidraw0`.
 | 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                    | Backoff exponentiel 0.5s→5s                              |
 | 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                 | Détection + message d'erreur clair, git clone recommandé |
 | 2026-05-26 | launchctl load/unload déprécié macOS 13+                             | Remplacé par bootstrap/bootout                           |
 | 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)        | tempfile + os.replace()                                  |
-| 2026-05-27 | Race condition `pending_host` : resync écrase switch concurrent      | Snapshot objet avant I/O + comparaison d'identité        |
+| 2026-05-27 | Architecture daemon trop complexe (1200L, pending_host, correction auto) | Réécriture v2 : pipe unidirectionnel ~340L, envoi immédiat |
 | 2026-05-27 | Boucle infinie `get_device_name` si device retourne nom tronqué      | Guard `to_read <= 0: break`                              |
 | 2026-05-27 | `_build_message` tronque silencieusement paramètres > 16 bytes       | `ValueError` explicite si `len(parameters) > 16`         |
 | 2026-05-27 | Profil BetterMouse rejeté si casse du nom souris différente          | Comparaison case-insensitive                             |
@@ -531,4 +635,4 @@ MIT — fais-en ce que tu veux / do whatever you want with it.
 
 ## 🙏 Crédits / Credits
 
-Inspiré par [CleverSwitch](https://github.com/MikalaiBarysevich/CleverSwitch) de MikalaiBarysevich et la doc protocole de [Solaar](https://github.com/pwr-Solaar/Solaar).
+Inspiré par [SwiGi](https://github.com/LeeHoffka/SwiGi) de LeeHoffka

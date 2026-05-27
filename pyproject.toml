@@ -1,0 +1,65 @@
+[project]
+name = "swigi"
+version = "1.1.0"
+description = "SwiGi — synchronisation Easy-Switch Logitech via Bluetooth"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Règles activées : style du projet (pas de docstrings obligatoires, pas d'annotations de type)
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "W",      # pycodestyle warnings
+    "B",      # flake8-bugbear (bugs probables)
+    "SIM",    # flake8-simplify
+    "UP",     # pyupgrade (modernisation syntaxe)
+    "PL",     # pylint subset
+    "PERF",   # performance
+    "S",      # flake8-bandit (sécurité)
+    "RUF",    # ruff-specific
+    "I",      # isort (imports)
+]
+
+ignore = [
+    # ── Style accepté dans le projet ──
+    "E501",     # line-too-long — le projet utilise 120 mais certaines lignes log/format dépassent volontairement
+    "PLR2004",  # magic-value-comparison — constantes HID++ utilisées inline (0xFF, 0x0F, etc.)
+    "PLR0912",  # too-many-branches — fonctions de dispatch/probe nécessairement ramifiées
+    "PLR0915",  # too-many-statements — idem, fonctions daemon longues par design
+    "PLC0415",  # import-outside-top-level — imports conditionnels (rumps, bettermouse, AppKit)
+
+    # ── Patterns légitimes dans ce contexte ──
+    "S110",     # try-except-pass — utilisé intentionnellement pour ignorer les erreurs de cleanup HID
+    "S603",     # subprocess-without-shell-equals-true — subprocess sûrs (osascript, killall, open)
+    "S607",     # start-process-with-partial-path — commandes macOS standard (osascript, killall, open, git)
+    "SIM105",   # suppressible-exception — try/except OSError: pass est plus clair que contextlib.suppress ici
+    "SIM117",   # multiple-with-statements — nested with pour assertRaises dans les tests est plus lisible
+    "PERF203",  # try-except-in-loop — boucles HID read/write nécessitent exception handling par itération
+    "PERF403",  # manual-dict-comprehension — _safe_update est une mutation in-place, pas une création
+    "B007",     # unused-loop-control-variable — `for _ in range(N)` drain loops
+    "RUF001",   # ambiguous-unicode-character — caractères français (×, etc.) dans les strings d'aide
+    "RUF005",   # collection-literal-concatenation — tuple concat avec + est idiomatique ici
+
+    # ── Subprocess ──
+    "PLW1510",  # subprocess-run-without-check — check=False intentionnel (killall peut échouer normalement)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests : accès aux membres privés, patterns de mock
+"tests/**" = [
+    "S101",     # assert utilisé intentionnellement dans les tests
+    "SLF001",   # accès membres privés (_drain_switch, _watch_keyboard, etc.)
+    "PLR2004",  # comparaisons à des valeurs magiques dans les assertions
+    "PLR1711",  # useless-return — `return None` explicite dans mocks pour clarté
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["swigi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

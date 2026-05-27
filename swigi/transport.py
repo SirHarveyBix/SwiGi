@@ -1,6 +1,7 @@
 import ctypes
+
 from swigi.constants import MAX_READ_SIZE
-from swigi.hidapi_loader import lib, hid_err
+from swigi.hidapi_loader import hid_error, lib
 
 
 class TransportError(Exception):
@@ -13,7 +14,7 @@ class HIDTransport:
         self.product_id = product_id
         self._device = lib.hid_open_path(path)
         if not self._device:
-            raise OSError(f"hid_open_path échoué : {hid_err()}")
+            raise OSError(f"hid_open_path échoué : {hid_error()}")
 
     @property
     def is_open(self) -> bool:
@@ -25,7 +26,7 @@ class HIDTransport:
         buffer = (ctypes.c_ubyte * MAX_READ_SIZE)()
         bytes_read = lib.hid_read_timeout(self._device, buffer, MAX_READ_SIZE, timeout)
         if bytes_read < 0:
-            error_message = hid_err(self._device) or ""
+            error_message = hid_error(self._device) or ""
             if "success" in error_message.lower() or error_message == "":
                 return None  # quirk BT macOS
             raise TransportError(f"hid_read échoué : {error_message}")
@@ -37,7 +38,7 @@ class HIDTransport:
         buffer = (ctypes.c_ubyte * len(message))(*message)
         bytes_written = lib.hid_write(self._device, buffer, len(message))
         if bytes_written < 0:
-            raise TransportError(f"hid_write échoué : {hid_err(self._device)}")
+            raise TransportError(f"hid_write échoué : {hid_error(self._device)}")
         if bytes_written != len(message):
             raise TransportError(
                 f"hid_write partiel : {bytes_written}/{len(message)} octets écrits"

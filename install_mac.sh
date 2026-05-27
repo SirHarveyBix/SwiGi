@@ -15,33 +15,41 @@ PLIST="$HOME/Library/LaunchAgents/com.swigi.plist"
 LOG="$HOME/Library/Logs/swigi.log"
 LAUNCHD_TARGET="gui/$(id -u)"
 
-echo "=== SwiGi — Installation macOS ==="
+# ── Couleurs ──────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+echo ""
+echo -e "${BOLD}╔══════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}║   🔀 SwiGi — Installation macOS     ║${RESET}"
+echo -e "${BOLD}╚══════════════════════════════════════╝${RESET}"
 echo ""
 
 # ── Vérification de la présence de swigi.py ──────────────────────────────────
 if [ ! -f "$SWIGI_PY" ]; then
-    echo "❌ swigi.py introuvable dans : $SCRIPT_DIR"
+    echo -e "${RED}✖ swigi.py introuvable dans : $SCRIPT_DIR${RESET}"
     echo ""
-    echo "   Ce script doit être lancé depuis le dossier SwiGi."
-    echo "   Si tu as utilisé curl | bash, ça ne fonctionne pas — le script"
-    echo "   ne peut pas trouver les fichiers SwiGi sans le dossier."
+    echo -e "  Ce script doit être lancé depuis le dossier SwiGi."
+    echo -e "  ${DIM}Si tu as utilisé curl | bash directement, utilise plutôt :${RESET}"
     echo ""
-    echo "   Solution :"
-    echo "     git clone https://github.com/SirHarveyBix/SwiGi.git"
-    echo "     cd SwiGi"
-    echo "     bash install_mac.sh"
+    echo -e "  ${BOLD}curl -fsSL https://raw.githubusercontent.com/SirHarveyBix/SwiGi/main/install_curl.sh | bash${RESET}"
     exit 1
 fi
-echo "✅ SwiGi trouvé dans : $SCRIPT_DIR"
+echo -e "${GREEN}✓${RESET} SwiGi trouvé dans : ${BOLD}$SCRIPT_DIR${RESET}"
 
 # ── Python ────────────────────────────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
-    echo "❌ Python 3 introuvable."
-    echo "   Installe Python : https://www.python.org/downloads/"
+    echo -e "${RED}✖ Python 3 introuvable.${RESET}"
+    echo "  Installe Python : https://www.python.org/downloads/"
     exit 1
 fi
 PYTHON_PATH="$(command -v python3)"
-echo "✅ $(python3 --version)"
+echo -e "${GREEN}✓${RESET} $(python3 --version)"
 
 # ── hidapi ────────────────────────────────────────────────────────────────────
 HIDAPI_OK=false
@@ -53,33 +61,33 @@ for path in /opt/homebrew/lib/libhidapi.dylib /usr/local/lib/libhidapi.dylib; do
 done
 
 if $HIDAPI_OK; then
-    echo "✅ hidapi trouvé"
+    echo -e "${GREEN}✓${RESET} hidapi trouvé"
 else
-    echo "📦 Installation de hidapi..."
+    echo -e "${BLUE}→${RESET} Installation de hidapi..."
     if command -v brew &>/dev/null; then
         brew install hidapi
     else
         echo ""
-        echo "❌ Homebrew introuvable. Installe-le d'abord :"
-        echo '   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-        echo "   Puis relance ce script."
+        echo -e "${RED}✖ Homebrew introuvable. Installe-le d'abord :${RESET}"
+        echo '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        echo "  Puis relance ce script."
         exit 1
     fi
-    echo "✅ hidapi installé"
+    echo -e "${GREEN}✓${RESET} hidapi installé"
 fi
 
 # ── rumps (icône menu bar) ────────────────────────────────────────────────────
 if "$PYTHON_PATH" -c "import rumps" 2>/dev/null; then
-    echo "✅ rumps trouvé"
+    echo -e "${GREEN}✓${RESET} rumps trouvé"
 else
-    echo "📦 Installation de rumps (icône menu bar)..."
+    echo -e "${BLUE}→${RESET} Installation de rumps (icône menu bar)..."
     "$PYTHON_PATH" -m pip install --quiet rumps --break-system-packages 2>/dev/null \
         || "$PYTHON_PATH" -m pip install --quiet rumps
     if "$PYTHON_PATH" -c "import rumps" 2>/dev/null; then
-        echo "✅ rumps installé"
+        echo -e "${GREEN}✓${RESET} rumps installé"
     else
-        echo "⚠️  rumps introuvable après installation — l'icône menu bar sera absente"
-        echo "   SwiGi fonctionnera quand même (sans icône)."
+        echo -e "${YELLOW}⚠${RESET}  rumps introuvable après installation — l'icône menu bar sera absente"
+        echo "  SwiGi fonctionnera quand même (sans icône)."
     fi
 fi
 
@@ -108,24 +116,24 @@ cat > "$PLIST" << EOF
 </dict>
 </plist>
 EOF
-echo "✅ Configuration démarrage automatique créée"
+echo -e "${GREEN}✓${RESET} Configuration démarrage automatique créée"
 
 # ── Démarrage (bootstrap/bootout remplace load/unload déprécié) ───────────────
 launchctl bootout "$LAUNCHD_TARGET" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "$LAUNCHD_TARGET" "$PLIST"
-echo "✅ SwiGi démarré"
+echo -e "${GREEN}✓${RESET} SwiGi démarré"
 
 echo ""
-echo "════════════════════════════════════════"
-echo " SwiGi est installé et actif !"
-echo "════════════════════════════════════════"
+echo -e "${BOLD}╔══════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}║   ${GREEN}✓ SwiGi est installé et actif !${RESET}${BOLD}   ║${RESET}"
+echo -e "${BOLD}╚══════════════════════════════════════╝${RESET}"
 echo ""
-echo "  📋 Logs        : $LOG"
-echo "  🛑 Désactiver  : launchctl bootout  $LAUNCHD_TARGET $PLIST"
-echo "  ▶️  Réactiver   : launchctl bootstrap $LAUNCHD_TARGET $PLIST"
+echo -e "  📋 Logs        : ${BOLD}$LOG${RESET}"
+echo -e "  🛑 Désactiver  : ${DIM}launchctl bootout $LAUNCHD_TARGET $PLIST${RESET}"
+echo -e "  ▶️  Réactiver   : ${DIM}launchctl bootstrap $LAUNCHD_TARGET $PLIST${RESET}"
 echo ""
-echo "⚠️  ACTION REQUISE une seule fois :"
-echo "   Réglages Système → Confidentialité et sécurité"
-echo "   → Surveillance des entrées → ajouter le binaire Python :"
-echo "   $PYTHON_PATH"
+echo -e "${YELLOW}${BOLD}⚠  ACTION REQUISE une seule fois :${RESET}"
+echo -e "  Réglages Système → Confidentialité et sécurité"
+echo -e "  → Surveillance des entrées → ajouter le binaire Python :"
+echo -e "  ${BOLD}$PYTHON_PATH${RESET}"
 echo ""

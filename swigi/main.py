@@ -15,11 +15,11 @@ from swigi.gui import HAS_RUMPS, SwiGiMenuBar, notify
 log = logging.getLogger("swigi.main")
 
 _LOCK_FILE = os.path.expanduser("~/.swigi.lock")
-_KEYBOARD_WAIT_INTERVAL = 3.0   # secondes entre chaque tentative de détection clavier
-_KEYBOARD_WAIT_LOG_EVERY = 10   # log toutes les N tentatives (évite le spam)
+_KEYBOARD_WAIT_INTERVAL = 3.0  # secondes entre chaque tentative de détection clavier
+_KEYBOARD_WAIT_LOG_EVERY = 10  # log toutes les N tentatives (évite le spam)
 
 
-def _acquire_lock() -> bool:
+def _acquire_lock(_depth: int = 0) -> bool:
     """Vérifie qu'une seule instance tourne. Retourne False si déjà lancé.
 
     O_CREAT|O_EXCL = création atomique — élimine la race condition TOCTOU.
@@ -40,11 +40,13 @@ def _acquire_lock() -> bool:
         return False  # instance vivante
     except (ValueError, OSError):
         # PID mort ou fichier corrompu — écraser le lock
+        if _depth >= 2:
+            return False  # abandon après 2 tentatives
         try:
             os.remove(_LOCK_FILE)
         except OSError:
             pass
-        return _acquire_lock()  # relancer (max 1 récursion)
+        return _acquire_lock(_depth + 1)
 
 
 def _release_lock() -> None:
@@ -68,20 +70,33 @@ def _wait_for_keyboard() -> list:
             return keyboards
         attempt += 1
         if attempt == 1:
-            log.info("Clavier introuvable — en attente de connexion BT (normal si sur autre Mac)...")
+            log.info(
+                "Clavier introuvable — en attente de connexion BT (normal si sur autre Mac)..."
+            )
         elif attempt % _KEYBOARD_WAIT_LOG_EVERY == 0:
-            log.debug("Attente clavier : %d tentatives (%.0fs)...", attempt, attempt * _KEYBOARD_WAIT_INTERVAL)
+            log.debug(
+                "Attente clavier : %d tentatives (%.0fs)...",
+                attempt,
+                attempt * _KEYBOARD_WAIT_INTERVAL,
+            )
         time.sleep(_KEYBOARD_WAIT_INTERVAL)
 
 
 def _log_last_commit() -> None:
     """Affiche la date/heure du dernier commit git dans les logs de démarrage."""
-    import subprocess
     import os
+    import subprocess
+
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         result = subprocess.run(
-            ["git", "log", "-1", "--format=Dernière mise à jour : %cd — %s", "--date=format:%Y-%m-%d %H:%M"],
+            [
+                "git",
+                "log",
+                "-1",
+                "--format=Dernière mise à jour : %cd — %s",
+                "--date=format:%Y-%m-%d %H:%M",
+            ],
             capture_output=True,
             text=True,
             cwd=project_dir,
@@ -121,9 +136,8 @@ def main() -> int:
 
 def _main_inner(arguments) -> int:
     level = logging.INFO if arguments.quiet else logging.DEBUG
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S"
-    )
+
+    from swigi.logging_format import ColoredFormatter, PlainFormatter
 
     # Configuration propre du logger "swigi"
     swigi_logger = logging.getLogger("swigi")
@@ -134,14 +148,14 @@ def _main_inner(arguments) -> int:
     swigi_logger.handlers.clear()
 
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(ColoredFormatter())
     swigi_logger.addHandler(console_handler)
 
     if arguments.log_file:
         file_handler = logging.handlers.RotatingFileHandler(
             arguments.log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
         )
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(PlainFormatter())
         swigi_logger.addHandler(file_handler)
 
     # Afficher la date du dernier commit pour diagnostic
@@ -150,9 +164,6 @@ def _main_inner(arguments) -> int:
     log.info("SwiGi — recherche des périphériques...")
 
     keyboards = _wait_for_keyboard()
-    if not keyboards:
-        log.error("Clavier introuvable après attente. Vérifie la connexion Bluetooth.")
-        return 1
     for keyboard in keyboards:
         log.info(
             "Clavier : %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
@@ -192,7 +203,6 @@ def _main_inner(arguments) -> int:
         "mouse": mice[0].name if mice else None,
         "mice": [mouse.name for mouse in mice],
         "switches": 0,
-        "pending_host": None,
     }
     stop_event = threading.Event()
 
@@ -224,18 +234,11 @@ def _main_inner(arguments) -> int:
                     for old in keyboards:
                         old.close()
                     keyboards = new_keyboards
-                    state["keyboards"] = {
-                        keyboard.product_id: {"name": keyboard.name, "ok": True}
-                        for keyboard in keyboards
-                    }
-                    state["keyboard"] = keyboards[0].name if keyboards else None
                 new_mice = find_all_devices(DEVICE_TYPE_MOUSE)
                 if new_mice:
                     for old in mice:
                         old.close()
                     mice = new_mice
-                    state["mice"] = [mouse.name for mouse in mice]
-                    state["mouse"] = mice[0].name
 
     if HAS_RUMPS and SwiGiMenuBar:
         # Daemon en thread background, menu bar sur thread principal (requis AppKit)

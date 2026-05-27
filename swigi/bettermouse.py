@@ -230,6 +230,7 @@ def apply_profile(name: str, mouse_name: str | None = None) -> None:
             ["open", "-a", "BetterMouse"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
         # Nettoyer le backup après succès
