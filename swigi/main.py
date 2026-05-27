@@ -78,7 +78,7 @@ def main() -> int:
         description="SwiGi — synchronisation Easy-Switch via Bluetooth"
     )
     parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Journalisation détaillée"
+        "-q", "--quiet", action="store_true", help="Réduire les logs (INFO seulement)"
     )
     parser.add_argument(
         "--log-file",
@@ -98,7 +98,7 @@ def main() -> int:
 
 
 def _main_inner(arguments) -> int:
-    level = logging.DEBUG if arguments.verbose else logging.INFO
+    level = logging.INFO if arguments.quiet else logging.DEBUG
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(message)s", datefmt="%H:%M:%S"
     )

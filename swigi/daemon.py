@@ -20,7 +20,7 @@ from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
 
-_PENDING_HOST_TTL = 60.0  # secondes avant abandon de la correction pending
+_PENDING_HOST_TTL = 5.0       # switch BT LE = 1-3s, 5s max
 
 # Délai de stabilité après reconnexion clavier (rejet des connexions fantômes BT).
 # Un clavier en transit vers un autre Mac peut être brièvement connectable depuis ce Mac.
@@ -86,7 +86,8 @@ _RESYNC_RETRY_DELAY = (
 _MOUSE_HUNT_INTERVAL = 1.0  # secondes entre probes en mode hunt
 _MOUSE_PROBE_INTERVAL = 5.0  # secondes entre probes en mode normal
 _MOUSE_HUNT_WINDOW = 30.0  # durée du mode hunt après un trigger
-_MANUAL_SWITCH_GRACE = 15.0  # secondes — délai après lequel on considère un switch comme manuel
+_MANUAL_SWITCH_GRACE = 3.0    # après 3s sans souris visible = switch confirmé ou manuel
+_CHANGE_HOST_CONFIRM_WINDOW = 5.0  # fenêtre pour confirmer switch réussi (aucune souris visible)
 
 # Constantes reconnexion clavier — module-level pour être patchables dans les tests.
 _KEYBOARD_RECONNECT_INITIAL_DELAY = (
@@ -116,7 +117,20 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
     # Invariant : pending_host est créé uniquement par _send_to_all_mice (après Easy-Switch).
     # _resync ajuste une cible existante — elle ne crée jamais de nouveau pending_host.
     if state.get("pending_host") is None:
-        log.debug("resync : pas de switch SwiGi en cours — skip (switch manuel souris respecté)")
+        # Lire et loguer l'hôte réel du clavier pour diagnostic (même sans switch en cours).
+        try:
+            kh = get_current_host(
+                keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index, timeout=500
+            )
+            if kh is not None:
+                log.info(
+                    "Clavier reconnecté sur hôte %d — aucun switch SwiGi en attente, souris non forcée",
+                    kh + 1,
+                )
+            else:
+                log.info("Clavier reconnecté — aucun switch SwiGi en attente, souris non forcée")
+        except (TransportError, OSError):
+            log.info("Clavier reconnecté — aucun switch SwiGi en attente, souris non forcée")
         return
 
     # Le stack BT macOS peut prendre 150–300ms après reconnexion avant que
@@ -157,7 +171,7 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
         # _send_to_all_mice crée un nouveau tuple → l'identité d'objet change.
         if state.get("pending_host") is pending_before_io:
             state["pending_host"] = (keyboard_host, time.time() + _PENDING_HOST_TTL)
-            log.debug("pending_host recalé sur hôte clavier : %d", keyboard_host)
+            log.info("pending_host recalé sur hôte clavier : %d", keyboard_host + 1)
         else:
             log.debug(
                 "pending_host modifié pendant resync I/O — resync ignorée (switch plus récent)"
@@ -205,8 +219,8 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
     target_host, deadline = pending
     if time.time() > deadline:
         log.info(
-            "pending_host expiré (host=%d avait %.0fs) — abandon",
-            target_host,
+            "pending_host expiré (hôte %d avait %.0fs) — abandon",
+            target_host + 1,
             _PENDING_HOST_TTL,
         )
         state["pending_host"] = None
@@ -226,8 +240,11 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         if mouse.name in state.get("mice", []):
             state["mice"] = [m for m in state.get("mice", []) if m != mouse.name]
         return True
-    log.debug(
-        "pending_host check : %s current=%s target=%d", mouse.name, current, target_host
+    log.info(
+        "Vérif sync : %s hôte actuel=%s cible=%d",
+        mouse.name,
+        (current + 1) if current is not None else "?",
+        target_host + 1,
     )
     if current is None:
         log.debug(
@@ -251,36 +268,37 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
     elapsed_since_ch = time.time() - last_ch
     if current != target_host and elapsed_since_ch > _MANUAL_SWITCH_GRACE:
         log.info(
-            "Switch manuel détecté : souris sur hôte %d (attendu %d), "
-            "%.0fs depuis dernier CHANGE_HOST — pending_host effacé",
-            current,
-            target_host,
+            "Switch manuel détecté : souris sur hôte %d (attendu hôte %d), "
+            "%.0fs depuis dernier CHANGE_HOST — pending effacé",
+            current + 1,
+            target_host + 1,
             elapsed_since_ch,
         )
         state["pending_host"] = None
         return False  # ne pas corriger, accepter la position manuelle
 
     if current == target_host:
-        log.info("Sync confirmée : %s sur hôte %d ✓ — pending_host effacé", mouse.name, target_host)
+        log.info("Sync confirmée : %s sur hôte %d ✓ — pending effacé", mouse.name, target_host + 1)
         state["pending_host"] = None
         return False
 
     log.warning(
-        "Désync détectée : souris=hôte%d, attendu=hôte%d → correction...",
-        current,
-        target_host,
+        "Désync : souris=hôte%d, attendu=hôte%d → correction en cours...",
+        current + 1,
+        target_host + 1,
     )
     notify(f"Désync corrigée → hôte {target_host + 1}", "SwiGi")
     try:
         send_change_host(
             mouse.transport, DEVICE_NUMBER_DIRECT, mouse.change_host_index, target_host
         )
-        log.info("Correction désync → hôte %d ✓", target_host)
+        log.info("Correction désync → hôte %d ✓", target_host + 1)
         state["pending_host"] = None
     except (TransportError, OSError) as error:
         log.warning(
-            "Correction désync échouée : %s — nouvelle tentative au prochain reconnect",
+            "Correction désync échouée : %s — souris reste sur hôte %d, retry au reconnect",
             error,
+            current + 1,
         )
     mouse.close()
     state["mouse"] = None
@@ -335,7 +353,7 @@ def _send_to_all_mice(
                     mouse.change_host_index,
                     target_host,
                 )
-                log.info("★ CHANGE_HOST → %s → hôte %d ✓", mouse.name, target_host)
+                log.info("★ CHANGE_HOST → %s → hôte %d ✓", mouse.name, target_host + 1)
                 mouse.close()
                 log.debug("[%s] Transport fermé après CHANGE_HOST", mouse.name)
             except (TransportError, OSError) as error:
@@ -345,12 +363,14 @@ def _send_to_all_mice(
         # Vider la liste : probe_loop va retrouver les souris avec des handles frais.
         # Sans ce clear(), les DeviceInfo avec transport fermé bloquent la reconnexion
         # (leur Product ID reste dans existing_product_ids → nouvel handle fermé comme "doublon").
+        had_mice = len(mice) > 0
         mice.clear()
         state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
         state["mouse"] = None
         state["mice"] = []
         state["last_change_host_at"] = time.time()
         state["last_change_host_target"] = target_host
+        state["last_change_host_had_mice"] = had_mice
 
 
 def _watch_keyboard(
@@ -432,12 +452,22 @@ def _watch_keyboard(
             keyboard.transport.write(PING_MESSAGE)
         except (TransportError, OSError):
             # Drain buffer : notification CHANGE_HOST peut être en file noyau
-            # juste avant la déconnexion BT (keyboard sends event then drops).
+            # juste avant la déconnexion BT. Sur macOS BT LE, le kernel peut avoir
+            # un délai ~10-30ms avant de rendre le dernier paquet disponible après
+            # la déconnexion physique. Ne pas sortir immédiatement sur None.
             try:
-                for _ in range(8):
-                    raw_bytes = keyboard.transport.read(timeout=5)
-                    if raw_bytes is None or len(raw_bytes) < 4:
+                none_streak = 0
+                for _ in range(24):
+                    try:
+                        raw_bytes = keyboard.transport.read(timeout=10)
+                    except (TransportError, OSError):
                         break
+                    if raw_bytes is None or len(raw_bytes) < 4:
+                        none_streak += 1
+                        if none_streak >= 3:  # 3×10ms = 30ms sans données → buffer épuisé
+                            break
+                        continue
+                    none_streak = 0
                     if (
                         raw_bytes[0] not in MSG_LENGTHS
                         or len(raw_bytes) < MSG_LENGTHS[raw_bytes[0]]
@@ -455,9 +485,9 @@ def _watch_keyboard(
                         if 0 <= target_host < num_hosts:
                             last_switch_time = time.time()
                             log.info(
-                                "%s ★ Easy-Switch (buffer) → hôte %d",
+                                "%s ★ Touche Easy-Switch %d pressée",
                                 prefix,
-                                target_host,
+                                target_host + 1,
                             )
                             event_queue.put(_SwitchEvent(target_host, keyboard.name))
                         break
@@ -540,12 +570,14 @@ def _watch_keyboard(
             event_queue.put(_KeyboardReconnected(keyboard.name))
             continue
 
-        # ── Lecture réponses (fenêtre 80ms) ──
+        # ── Lecture réponses (fenêtre 120ms, reads 10ms) ──
+        # timeout=10ms → ~12 reads par fenêtre (vs ~3 avec 25ms).
+        # Plus de chances de capturer la notification avant déconnexion BT LE.
         raw_bytes = None
-        deadline = time.time() + 0.08
+        deadline = time.time() + 0.12
         while time.time() < deadline and not stop_event.is_set():
             try:
-                raw_bytes = keyboard.transport.read(timeout=25)
+                raw_bytes = keyboard.transport.read(timeout=10)
             except (TransportError, OSError):
                 break
 
@@ -581,7 +613,7 @@ def _watch_keyboard(
                     continue
                 last_switch_time = time.time()
                 log.info("─" * 50)
-                log.info("%s ★ Easy-Switch → hôte %d", prefix, target_host)
+                log.info("%s ★ Touche Easy-Switch %d pressée", prefix, target_host + 1)
                 event_queue.put(_SwitchEvent(target_host, keyboard.name))
                 break
 
@@ -676,6 +708,29 @@ def _mice_probe_loop(
             for mouse in dead:
                 log.info("Souris retirée : %s (plus disponible)", mouse.name)
             mice[:] = [x for x in mice if x not in dead]
+            mice_is_empty = len(mice) == 0
+
+        # Pass 1b : confirmation switch — aucune souris visible peu après CHANGE_HOST
+        # _send_to_all_mice fait mice.clear() → mice_is_empty=True dès le switch.
+        # Si found est aussi vide (souris partie vers l'autre Mac), switch confirmé.
+        # Garde : last_change_host_had_mice doit être True — si aucune souris n'était
+        # connectée au switch, pending_host doit rester actif pour corriger à la connexion.
+        if (
+            mice_is_empty
+            and not found
+            and state.get("pending_host") is not None
+            and state.get("last_change_host_had_mice", False)
+        ):
+            elapsed = time.time() - state.get("last_change_host_at", 0.0)
+            if 0.5 <= elapsed <= _CHANGE_HOST_CONFIRM_WINDOW:
+                pending = state.get("pending_host")
+                if pending is not None:
+                    log.info(
+                        "Aucune souris visible %.1fs après CHANGE_HOST → switch hôte %d confirmé, pending effacé",
+                        elapsed,
+                        pending[0] + 1,
+                    )
+                    state["pending_host"] = None
 
         # Pass 2 : HID I/O hors du lock (get_current_host peut prendre ~500ms)
         for new_mouse in new_mice:
@@ -687,18 +742,23 @@ def _mice_probe_loop(
             last_ch = state.get("last_change_host_at", 0.0)
             elapsed = time.time() - last_ch
             if elapsed < _MANUAL_SWITCH_GRACE:
+                last_target = state.get("last_change_host_target")
+                target_display = (last_target + 1) if isinstance(last_target, int) else "?"
                 log.info(
                     "[%s] Connexion automatique (via SwiGi CHANGE_HOST il y a %.1fs → hôte %s)",
                     new_mouse.name,
                     elapsed,
-                    state.get("last_change_host_target", "?"),
+                    target_display,
                 )
             else:
-                log.info(
-                    "[%s] Connexion manuelle (bouton physique — %.0fs depuis dernier CHANGE_HOST)",
-                    new_mouse.name,
-                    elapsed,
-                )
+                if last_ch == 0.0:
+                    log.info("[%s] Connexion manuelle (bouton physique — premier démarrage)", new_mouse.name)
+                else:
+                    log.info(
+                        "[%s] Connexion manuelle (bouton physique — %.0fs depuis dernier CHANGE_HOST)",
+                        new_mouse.name,
+                        elapsed,
+                    )
             notify(f"{new_mouse.name} connectée", "Souris")
             # Race condition guard : _send_to_all_mice peut avoir fermé le transport
             # entre Pass 1 (sous lock) et maintenant (hors lock).
@@ -708,6 +768,22 @@ def _mice_probe_loop(
                     new_mouse.name,
                 )
                 continue
+            # Loguer l'hôte actuel de la souris pour diagnostic immédiat.
+            try:
+                current_host = get_current_host(
+                    new_mouse.transport, DEVICE_NUMBER_DIRECT, new_mouse.change_host_index
+                )
+                if current_host is not None:
+                    pending = state.get("pending_host")
+                    if pending is not None and current_host != pending[0]:
+                        log.info(
+                            "[%s] Sur hôte %d → attendu hôte %d",
+                            new_mouse.name, current_host + 1, pending[0] + 1,
+                        )
+                    else:
+                        log.info("[%s] Sur hôte %d", new_mouse.name, current_host + 1)
+            except (TransportError, OSError):
+                pass
             if not _check_and_apply_pending_host(new_mouse, state):
                 _apply_better_mouse_profile_if_needed(new_mouse.name)
 
@@ -788,6 +864,7 @@ def run_daemon(
     state.setdefault("switches", 0)
     state.setdefault("last_change_host_at", 0.0)
     state.setdefault("last_change_host_target", None)
+    state.setdefault("last_change_host_had_mice", False)
 
     # Compatibilité GUI : state["keyboard"] = nom du premier clavier
     state["keyboard"] = keyboards[0].name if keyboards else None
@@ -836,9 +913,8 @@ def run_daemon(
 
         if isinstance(event, _SwitchEvent):
             log.info(
-                "★ Switch reçu de [%s] → hôte %d",
-                event.keyboard_name,
-                event.target_host,
+                "★ Touche Easy-Switch %d → synchronisation clavier+souris",
+                event.target_host + 1,
             )
 
             # Vérifier si le suivi de la souris est activé
@@ -847,6 +923,12 @@ def run_daemon(
 
             if mouse_follow:
                 _send_to_all_mice(mice_list, event.target_host, state, mouse_lock)
+                if not state.get("last_change_host_had_mice"):
+                    log.warning(
+                        "Aucune souris disponible au moment du switch → "
+                        "en attente de connexion souris sur hôte %d",
+                        event.target_host + 1,
+                    )
             else:
                 log.info("Suivi souris désactivé — CHANGE_HOST non envoyé")
                 state["pending_host"] = None

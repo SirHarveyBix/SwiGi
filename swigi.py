@@ -12,9 +12,9 @@ Windows: hidapi.dll dans le dossier de ce fichier + double-cliquer setup_win.bat
 Linux:  sudo apt install libhidapi-hidraw0 && python3 swigi.py
 
 Options :
-  python swigi.py        # mode normal
-  python swigi.py -v     # verbose
-  python swigi.py --log-file swigi.log
+  python3 swigi.py           # mode DEBUG (tous les logs)
+  python3 swigi.py -q        # mode quiet (INFO seulement)
+  python3 swigi.py --log-file swigi.log
 """
 
 import sys
