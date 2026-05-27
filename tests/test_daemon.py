@@ -113,7 +113,7 @@ class TestCheckAndApplyPendingHost(unittest.TestCase):
 
     def test_desync_sends_correction_closes_mouse(self):
         mouse = _make_mouse()
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
         with (
             patch("swigi.daemon.get_current_host", return_value=0),
             patch("swigi.daemon.send_change_host") as mock_send,
@@ -126,7 +126,7 @@ class TestCheckAndApplyPendingHost(unittest.TestCase):
 
     def test_desync_correction_fails_keeps_pending_closes_mouse(self):
         mouse = _make_mouse()
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
         with (
             patch("swigi.daemon.get_current_host", return_value=0),
             patch("swigi.daemon.send_change_host", side_effect=TransportError("dead")),
@@ -150,7 +150,7 @@ class TestCheckAndApplyPendingHost(unittest.TestCase):
     def test_3hosts_desync_host1_expected_host2(self):
         """Souris sur hôte 1 mais attendue sur hôte 2 — correction envoyée."""
         mouse = _make_mouse()
-        state = {"pending_host": _pending(2), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(2), "mouse": "MX Vertical", "last_change_host_at": time.time()}
         with (
             patch("swigi.daemon.get_current_host", return_value=1),
             patch("swigi.daemon.send_change_host") as mock_send,
@@ -162,7 +162,7 @@ class TestCheckAndApplyPendingHost(unittest.TestCase):
     def test_3hosts_desync_host2_expected_host0(self):
         """Retour hôte 2→0 avec souris bloquée sur hôte 2 — correction vers 0."""
         mouse = _make_mouse()
-        state = {"pending_host": _pending(0), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(0), "mouse": "MX Vertical", "last_change_host_at": time.time()}
         with (
             patch("swigi.daemon.get_current_host", return_value=2),
             patch("swigi.daemon.send_change_host") as mock_send,
@@ -186,9 +186,24 @@ class TestResyncPendingHostFromKeyboard(unittest.TestCase):
         self.assertIsNotNone(state["pending_host"])
         self.assertEqual(state["pending_host"][0], 0)
 
-    def test_clears_pending_host_when_kb_unreadable(self):
+    def test_preserves_pending_host_when_kb_unreadable(self):
+        """Bug 4 fix : si le clavier est illisible après tous les retries,
+        un pending_host existant (non-None) est conservé plutôt qu'effacé.
+        Un pending stale est préférable à perdre la cible du switch."""
         keyboard = _make_keyboard()
-        state = {"pending_host": _pending(1)}
+        existing = _pending(1)
+        state = {"pending_host": existing}
+        with patch("swigi.daemon.get_current_host", return_value=None):
+            _resync_pending_host_from_keyboard(keyboard, state)
+        # pending_host doit être conservé (même objet, host=1)
+        self.assertIsNotNone(state["pending_host"])
+        self.assertEqual(state["pending_host"][0], 1)
+
+    def test_clears_pending_host_when_kb_unreadable_and_none(self):
+        """Si pending_host était None avant resync et le clavier est illisible,
+        pending_host reste None (pas de régression)."""
+        keyboard = _make_keyboard()
+        state = {"pending_host": None}
         with patch("swigi.daemon.get_current_host", return_value=None):
             _resync_pending_host_from_keyboard(keyboard, state)
         self.assertIsNone(state["pending_host"])
@@ -304,7 +319,8 @@ class TestRoundTripScenario(unittest.TestCase):
         """
         mouse = _make_mouse()
         keyboard = _make_keyboard()
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}  # stale
+        # last_change_host_at récent : simule un switch SwiGi (grace period active)
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
 
         with patch("swigi.daemon.get_current_host", return_value=0):
             _resync_pending_host_from_keyboard(keyboard, state)  # pending_host → 0
@@ -329,7 +345,7 @@ class TestRoundTripScenario(unittest.TestCase):
 
         captured_idx = []
 
-        def fake_gch(transport, devnum, feat_idx):
+        def fake_gch(transport, devnum, feat_idx, **kwargs):
             captured_idx.append(feat_idx)
             return 0
 
@@ -344,7 +360,7 @@ class TestRoundTripScenario(unittest.TestCase):
         """2 souris présentes : _check_and_apply_pending_host corrige la souris active."""
         mouse1 = _make_mouse(change_host_index=9, name="MX Vertical")
         mouse2 = _make_mouse(change_host_index=11, name="MX Master 4")
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
 
         # mouse1 sur hôte 0, attendue sur 1 → correction
         with (
@@ -359,7 +375,7 @@ class TestRoundTripScenario(unittest.TestCase):
 
         # mouse2 non touchée
         mock_send.reset_mock()
-        state2 = {"pending_host": _pending(1), "mouse": "MX Master 4"}
+        state2 = {"pending_host": _pending(1), "mouse": "MX Master 4", "last_change_host_at": time.time()}
         with (
             patch("swigi.daemon.get_current_host", return_value=0),
             patch("swigi.daemon.send_change_host") as mock_send2,
@@ -859,6 +875,7 @@ class TestMiceProbeLoop(unittest.TestCase):
             "pending_host": (1, time.time() + 60),
             "mouse": "MX Master 4",
             "mice": ["MX Master 4"],
+            "last_change_host_at": time.time(),  # switch SwiGi récent → correction autorisée
         }
         lock = self._make_lock()
 
@@ -984,7 +1001,7 @@ class TestPendingHostCompareAndSwap(unittest.TestCase):
     def test_pending_host_same_target_during_io_correction_fires(self):
         """Même cible pendant I/O → correction normale appliquée."""
         mouse = _make_mouse()
-        state = {"pending_host": _pending(1), "mouse": "MX Master 4"}
+        state = {"pending_host": _pending(1), "mouse": "MX Master 4", "last_change_host_at": time.time()}
 
         with (
             patch("swigi.daemon.get_current_host", return_value=0),
@@ -1283,7 +1300,7 @@ class TestStartupWithoutMouse(unittest.TestCase):
         """Souris absente au démarrage, pending_host actif → correction appliquée à l'arrivée."""
         mice_list = []
         # pending_host = 0 (Mac A) — souris doit revenir ici
-        state = {"pending_host": (0, time.time() + 60), "mouse": None, "mice": []}
+        state = {"pending_host": (0, time.time() + 60), "mouse": None, "mice": [], "last_change_host_at": time.time()}
         lock = threading.Lock()
 
         mouse = _make_mouse(name="MX Master 4")
@@ -1378,7 +1395,7 @@ class TestThreeMacFullScenario(unittest.TestCase):
     def test_switch_C_to_A_mouse_stuck_B_probe_corrects(self):
         """Retour C→A : souris bloquée sur B (hôte 1), probe la corrige vers hôte 0."""
         mice_list = []
-        state = {"pending_host": (0, time.time() + 60), "mouse": None, "mice": []}
+        state = {"pending_host": (0, time.time() + 60), "mouse": None, "mice": [], "last_change_host_at": time.time()}
         lock = self._make_lock()
 
         mouse = _make_mouse(name="MX Master 4")
@@ -1464,7 +1481,7 @@ class TestThreeMacFullScenario(unittest.TestCase):
     def test_3mac_desync_corrected_on_return(self):
         """Retour sur Mac A : souris bloquée sur hôte 2 (Mac C) → correction vers 0."""
         keyboard = _make_keyboard()
-        state = {"pending_host": _pending(2), "mouse": None}
+        state = {"pending_host": _pending(2), "mouse": None, "last_change_host_at": time.time()}
 
         # Clavier revenu sur hôte 0
         with patch("swigi.daemon.get_current_host", return_value=0):
@@ -1536,7 +1553,7 @@ class TestThreeMacFullScenario(unittest.TestCase):
     def test_probe_finds_mouse_and_applies_pending_after_empty_switch(self):
         """Après switch avec mice_list vide, probe loop trouve la souris et corrige."""
         mice_list = []
-        state = {"pending_host": (1, time.time() + 60), "mouse": None, "mice": []}
+        state = {"pending_host": (1, time.time() + 60), "mouse": None, "mice": [], "last_change_host_at": time.time()}
         lock = self._make_lock()
 
         mouse = _make_mouse(name="MX Master 4")
@@ -2418,7 +2435,7 @@ class TestMouseFollowPreference(unittest.TestCase):
         """mouse_follow=True → comportement normal (CHANGE_HOST envoyé)."""
         _mock_gui.prefs = {"mouse_follow": True, "notifications": True}
         mouse = _make_mouse()
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
 
         with (
             patch("swigi.daemon.prefs", _mock_gui.prefs),
@@ -2434,7 +2451,7 @@ class TestMouseFollowPreference(unittest.TestCase):
         """Préférence absente → mouse_follow est True par défaut."""
         _mock_gui.prefs = {"notifications": True}  # pas de mouse_follow
         mouse = _make_mouse()
-        state = {"pending_host": _pending(1), "mouse": "MX Vertical"}
+        state = {"pending_host": _pending(1), "mouse": "MX Vertical", "last_change_host_at": time.time()}
 
         with (
             patch("swigi.daemon.prefs", _mock_gui.prefs),
@@ -2965,7 +2982,7 @@ class TestJuniorThreeMacsEndToEnd(unittest.TestCase):
         mouse = _make_mouse()
         mouse.product_id = 0xB025
         sent_hosts = []
-        state = {"pending_host": _pending(1), "mouse": None, "mice": []}
+        state = {"pending_host": _pending(1), "mouse": None, "mice": [], "last_change_host_at": time.time()}
         lock = threading.Lock()
         mice_list = []
 
@@ -3029,6 +3046,514 @@ class TestJuniorThreeMacsEndToEnd(unittest.TestCase):
         self.assertIsNotNone(state["pending_host"])
         self.assertEqual(
             state["pending_host"][0], 2, "pending_host du switch doit être conservé"
+        )
+
+
+# ── TestResyncRobustness ──────────────────────────────────────────────────────
+
+
+class TestResyncRobustness(unittest.TestCase):
+    """Tests de robustesse de _resync_pending_host_from_keyboard sur M1/M3."""
+
+    def test_resync_succeeds_on_4th_retry(self):
+        """Valide l'augmentation de _RESYNC_RETRIES à 5 : les 3 premiers appels
+        get_current_host retournent None, le 4ème retourne 1.
+        Vérifie que pending_host est bien mis à (1, ...).
+        Bug visé : si _RESYNC_RETRIES était ≤ 3, le 4ème retry n'aurait jamais lieu."""
+        keyboard = _make_keyboard()
+        state = {"pending_host": None}
+        call_results = [None, None, None, 1]
+        call_count = [0]
+
+        def fake_gch(*args, **kwargs):
+            idx = call_count[0]
+            call_count[0] += 1
+            return call_results[idx] if idx < len(call_results) else None
+
+        with (
+            patch("swigi.daemon.get_current_host", side_effect=fake_gch),
+            patch("swigi.daemon._RESYNC_RETRIES", 5),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertIsNotNone(
+            state["pending_host"],
+            "pending_host doit être défini : le 4ème retry a retourné 1",
+        )
+        self.assertEqual(
+            state["pending_host"][0],
+            1,
+            "pending_host[0] doit être 1 (hôte retourné au 4ème essai)",
+        )
+
+    def test_resync_keeps_existing_pending_when_all_retries_fail(self):
+        """Révèle le bug potentiel : get_current_host retourne None à TOUS les essais.
+        pending_host initial = (2, deadline). Vérifie que pending_host N'EST PAS effacé.
+        Comportement attendu (code actuel) : pending_host conservé car existant.
+        Ce test échouerait si le code effaçait pending_host sur échec total."""
+        keyboard = _make_keyboard()
+        state = {"pending_host": _pending(2)}
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=None),
+            patch("swigi.daemon._RESYNC_RETRIES", 3),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertIsNotNone(
+            state["pending_host"],
+            "pending_host doit être CONSERVÉ quand hôte clavier illisible (pas effacé)",
+        )
+        self.assertEqual(
+            state["pending_host"][0],
+            2,
+            "pending_host doit conserver l'hôte initial (2) quand resync échoue",
+        )
+
+    def test_resync_clears_pending_when_no_prior_pending_and_all_fail(self):
+        """get_current_host retourne None partout, pending_host initial = None.
+        Vérifie que pending_host reste None (comportement OK dans ce cas).
+        Pas de régression : un None initial ne doit pas devenir non-None."""
+        keyboard = _make_keyboard()
+        state = {"pending_host": None}
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=None),
+            patch("swigi.daemon._RESYNC_RETRIES", 3),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertIsNone(
+            state["pending_host"],
+            "pending_host doit rester None quand aucun pending préexistant et resync échoue",
+        )
+
+    def test_resync_with_slow_keyboard_eventually_succeeds(self):
+        """Simule un clavier M3 lent : les 2 premiers appels get_current_host
+        retournent None (délai 0.05s chacun), puis retourne 2.
+        Vérifie que pending_host = (2, ...) après resync.
+        Bug visé : timeout trop court ou retries insuffisants sur M3."""
+        keyboard = _make_keyboard()
+        state = {"pending_host": None}
+        call_count = [0]
+
+        def slow_gch(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                time.sleep(0.05)
+                return None
+            return 2
+
+        with (
+            patch("swigi.daemon.get_current_host", side_effect=slow_gch),
+            patch("swigi.daemon._RESYNC_RETRIES", 5),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertIsNotNone(
+            state["pending_host"],
+            "pending_host doit être défini : le clavier M3 lent finit par répondre",
+        )
+        self.assertEqual(
+            state["pending_host"][0],
+            2,
+            "pending_host[0] doit être 2 (hôte retourné après délai)",
+        )
+        self.assertGreaterEqual(
+            call_count[0],
+            3,
+            "Au moins 3 appels attendus (2 slow-None + 1 succès)",
+        )
+
+
+# ── TestProbeLoopRaceCondition ────────────────────────────────────────────────
+
+
+class TestProbeLoopRaceCondition(unittest.TestCase):
+    """Race condition : _send_to_all_mice ferme le transport avant probe Pass 2."""
+
+    def _make_lock(self):
+        return threading.Lock()
+
+    def test_pass2_skips_closed_transport_after_race(self):
+        """Simule la race condition : new_mouse.transport.is_open devient False
+        entre Pass 1 (sous lock) et Pass 2 (hors lock) car _send_to_all_mice
+        a tourné entretemps.
+        Vérifie : get_current_host N'EST PAS appelé, aucun crash.
+        Bug visé : sans le guard is_open en Pass 2, I/O sur transport mort → crash
+        ou comportement indéfini."""
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.product_id = 0xB042
+        # Transport fermé avant que Pass 2 s'exécute (race simulée statiquement)
+        new_m.transport.is_open = False
+
+        mice_list = []
+        state = {"pending_host": _pending(1), "mouse": None, "mice": []}
+        lock = self._make_lock()
+        gch_called = []
+
+        def tracking_gch(*args, **kwargs):
+            gch_called.append(True)
+            return 1
+
+        with (
+            _fast_probe(),
+            patch("swigi.daemon.find_all_devices", return_value=[new_m]),
+            patch("swigi.daemon.notify"),
+            patch("swigi.daemon.get_current_host", side_effect=tracking_gch),
+        ):
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            time.sleep(0.12)
+            stop.set()
+            t.join(timeout=1)
+
+        self.assertEqual(
+            gch_called,
+            [],
+            "get_current_host ne doit PAS être appelé si transport fermé (race guard)",
+        )
+
+    def test_pass2_processes_normally_when_transport_open(self):
+        """Cas nominal : transport ouvert → _check_and_apply_pending_host appelé normalement.
+        Vérifie : get_current_host IS appelé et pending_host est traité.
+        Régression : le guard is_open ne doit pas bloquer les cas normaux."""
+        new_m = _make_mouse(name="MX Master 4")
+        new_m.product_id = 0xB042
+        new_m.transport.is_open = True
+
+        mice_list = []
+        state = {"pending_host": _pending(1), "mouse": None, "mice": []}
+        lock = self._make_lock()
+        gch_called = threading.Event()
+
+        def tracking_gch(*args, **kwargs):
+            gch_called.set()
+            return 1  # sync OK → pending_host effacé
+
+        with (
+            _fast_probe(),
+            patch("swigi.daemon.find_all_devices", return_value=[new_m]),
+            patch("swigi.daemon.notify"),
+            patch("swigi.daemon.get_current_host", side_effect=tracking_gch),
+        ):
+            stop = threading.Event()
+            hunt = threading.Event()
+            hunt.set()
+
+            t = threading.Thread(
+                target=_mice_probe_loop,
+                args=(mice_list, state, stop, hunt, lock),
+                daemon=True,
+            )
+            t.start()
+            gch_called.wait(timeout=1.0)
+            stop.set()
+            t.join(timeout=1)
+
+        self.assertTrue(
+            gch_called.is_set(),
+            "get_current_host doit être appelé quand transport ouvert (Pass 2 normal)",
+        )
+
+
+# ── TestThreeMacsFullFlow ─────────────────────────────────────────────────────
+
+
+class TestThreeMacsFullFlow(unittest.TestCase):
+    """Flux complet 3 Macs : Mac A voit le switch, Mac B reçoit le clavier + cherche la souris."""
+
+    def _make_lock(self):
+        return threading.Lock()
+
+    def test_mac_a_sends_mouse_when_switch_to_b(self):
+        """Switch A→B avec souris sur Mac A → CHANGE_HOST envoyé vers hôte 1.
+        mice_list vidée. pending_host=(1,...).
+        Bug visé : CHANGE_HOST non envoyé ou pending_host non mis à jour."""
+        mouse = _make_mouse(name="MX Master 4")
+        mouse.product_id = 0xB042
+        mice_list = [mouse]
+        state = {
+            "pending_host": None,
+            "mouse": "MX Master 4",
+            "mice": ["MX Master 4"],
+        }
+        lock = self._make_lock()
+        sent = []
+
+        def fake_send(transport, devnum, feat_idx, target_host):
+            sent.append(target_host)
+
+        with patch("swigi.daemon.send_change_host", side_effect=fake_send):
+            _send_to_all_mice(mice_list, 1, state, lock)
+
+        self.assertEqual(sent, [1], "CHANGE_HOST vers hôte 1 doit être envoyé")
+        self.assertEqual(mice_list, [], "mice_list doit être vidée après switch")
+        self.assertIsNotNone(state["pending_host"], "pending_host doit être défini")
+        self.assertEqual(state["pending_host"][0], 1, "pending_host[0] doit être 1")
+
+    def test_mac_b_probe_finds_mouse_sync_ok(self):
+        """Mac B : pending_host=(1,...), probe trouve souris sur hôte 1 → sync OK,
+        pending_host=None.
+        Bug visé : sync non détectée, pending_host non effacé."""
+        mouse = _make_mouse(name="MX Master 4")
+        state = {"pending_host": _pending(1), "mouse": None}
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=1),
+            patch("swigi.daemon.send_change_host") as mock_send,
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result, "Pas de correction attendue (sync OK)")
+        mock_send.assert_not_called()
+        self.assertIsNone(
+            state["pending_host"], "pending_host doit être effacé après sync"
+        )
+
+    def test_mac_b_probe_finds_mouse_desync_corrects(self):
+        """Mac B : pending_host=(1,...), probe trouve souris sur hôte 0 → désync.
+        CHANGE_HOST de correction vers 1 doit être envoyé.
+        Bug visé : désync non détectée sur Mac B, souris reste sur mauvais hôte."""
+        mouse = _make_mouse(name="MX Master 4")
+        state = {"pending_host": _pending(1), "mouse": None, "last_change_host_at": time.time()}
+        correction_sent = []
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch(
+                "swigi.daemon.send_change_host",
+                side_effect=lambda t, d, f, h: correction_sent.append(h),
+            ),
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertTrue(result, "Correction attendue (désync)")
+        self.assertEqual(correction_sent, [1], "Correction doit être vers hôte 1")
+
+    def test_mac_a_switch_with_empty_mice_list_sets_pending(self):
+        """Mac A n'a pas la souris (mice_list=[]) → switch A→B → pending_host=(1,...).
+        Cas où la souris était déjà sur Mac B ou C.
+        Bug visé : pending_host non défini quand mice_list vide, Mac B ne sait
+        pas qu'il doit synchroniser."""
+        mice_list = []
+        state = {"pending_host": None, "mouse": None, "mice": []}
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice_list, 1, state, lock)
+
+        mock_send.assert_not_called()
+        self.assertIsNotNone(
+            state["pending_host"],
+            "pending_host doit être défini même si mice_list vide",
+        )
+        self.assertEqual(
+            state["pending_host"][0],
+            1,
+            "pending_host[0] doit être 1 (hôte cible du switch)",
+        )
+
+    def test_mac_b_resync_after_kb_connect_sets_pending(self):
+        """Mac B reçoit clavier (hôte 1), _resync_pending_host_from_keyboard →
+        pending_host=(1,...) sur Mac B.
+        Bug visé : pending_host non défini sur Mac B après connexion clavier,
+        souris non synchronisée."""
+        keyboard = _make_keyboard(change_host_index=5, name="MX Keys S")
+        state = {"pending_host": None}
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=1),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertIsNotNone(
+            state["pending_host"],
+            "pending_host doit être défini après resync clavier sur hôte 1",
+        )
+        self.assertEqual(
+            state["pending_host"][0],
+            1,
+            "pending_host[0] doit être 1 (hôte actuel du clavier)",
+        )
+
+    def test_mac_b_resync_fail_then_probe_has_no_pending_but_mouse_sync_anyway(self):
+        """Mac B : resync échoue (get_current_host→None partout), pending_host=None.
+        Probe trouve souris. Vérifie qu'AUCUNE correction spurieuse n'est envoyée.
+        Bug visé : correction envoyée vers hôte aléatoire quand pending_host=None,
+        causant un switch non voulu de la souris."""
+        mouse = _make_mouse(name="MX Master 4")
+        state = {"pending_host": None, "mouse": None}
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch("swigi.daemon.send_change_host") as mock_send,
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result, "Pas de correction quand pending_host=None")
+        mock_send.assert_not_called()
+
+    def test_mouse_moving_during_switch_still_gets_change_host(self):
+        """transport.is_open=True, souris génère des reads dans find_all_devices.
+        Lors de _send_to_all_mice, send_change_host est appelé malgré tout.
+        Bug visé : CHANGE_HOST bloqué ou sauté si la souris est active."""
+        mouse = _make_mouse(name="MX Master 4")
+        mouse.transport.is_open = True  # souris en mouvement
+        mice_list = [mouse]
+        state = {
+            "pending_host": None,
+            "mouse": "MX Master 4",
+            "mice": ["MX Master 4"],
+        }
+        lock = self._make_lock()
+
+        with patch("swigi.daemon.send_change_host") as mock_send:
+            _send_to_all_mice(mice_list, 2, state, lock)
+
+        mock_send.assert_called_once()
+        _, _, _, target = mock_send.call_args[0]
+        self.assertEqual(target, 2, "CHANGE_HOST doit cibler hôte 2")
+        self.assertEqual(state["pending_host"][0], 2)
+        self.assertEqual(mice_list, [], "mice_list vidée après switch")
+
+    def test_abc_cycle_no_spurious_correction_with_resync(self):
+        """Cycle complet A→B→C→A avec _resync_pending_host_from_keyboard à chaque retour.
+        Vérifie qu'aucune correction spurieuse n'est envoyée.
+        Bug visé : resync malformé cause une correction vers mauvais hôte
+        lors du cycle 3-Macs."""
+        mouse = _make_mouse(name="MX Master 4")
+        keyboard = _make_keyboard(name="MX Keys S")
+        lock = self._make_lock()
+        state = {
+            "pending_host": None,
+            "mouse": "MX Master 4",
+            "mice": ["MX Master 4"],
+        }
+
+        # A→B : switch depuis Mac A
+        with patch("swigi.daemon.send_change_host"):
+            _send_to_all_mice([mouse], 1, state, lock)
+        mouse.transport.is_open = True  # reset mock pour la suite
+
+        self.assertEqual(state["pending_host"][0], 1)
+
+        # B→C : Mac A ne voit pas ce switch (clavier parti)
+        # C→A : clavier revient sur Mac A (hôte 0) — resync
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
+        ):
+            _resync_pending_host_from_keyboard(keyboard, state)
+
+        self.assertEqual(
+            state["pending_host"][0],
+            0,
+            "pending_host doit être recalé sur hôte 0 après retour clavier",
+        )
+
+        # Vérification souris sur A (hôte 0) → pas de correction
+        corrections = []
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch(
+                "swigi.daemon.send_change_host",
+                side_effect=lambda t, d, f, h: corrections.append(h),
+            ),
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result, "Aucune correction attendue après cycle A→B→C→A sync")
+        self.assertEqual(
+            corrections,
+            [],
+            f"Corrections spurieuses détectées : {corrections}",
+        )
+        self.assertIsNone(state["pending_host"])
+
+
+# ── TestGetCurrentHostWithTimeout (protocol) ──────────────────────────────────
+
+
+class TestGetCurrentHostWithTimeout(unittest.TestCase):
+    """Tests get_current_host avec paramètre timeout explicite."""
+
+    def _make_valid_response(self, feature_index, num_hosts=3, current_host=1):
+        import struct
+
+        from swigi.constants import REPORT_LONG, SW_ID
+
+        request_id = (feature_index << 8) | 0x00 | SW_ID
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([num_hosts, current_host])
+            + b"\x00" * 14
+        )
+        return response
+
+    def _make_transport(self, responses=None):
+        """Transport minimal avec file de réponses."""
+
+        class _Transport:
+            def __init__(self, resps):
+                self._resps = list(resps or [])
+                self.is_open = True
+
+            def write(self, msg):
+                pass
+
+            def read(self, timeout=500):
+                return self._resps.pop(0) if self._resps else None
+
+            def close(self):
+                self.is_open = False
+
+        return _Transport(responses or [])
+
+    def test_get_current_host_accepts_timeout_param(self):
+        """Appeler get_current_host(transport, 0xFF, 0x09, timeout=1000) ne doit pas
+        lever d'erreur et doit retourner l'hôte actuel.
+        Régression : si timeout n'est pas accepté comme kwarg, TypeError est levée."""
+        from swigi.protocol import get_current_host
+
+        feature_index = 0x09
+        transport = self._make_transport([self._make_valid_response(feature_index)])
+
+        result = get_current_host(transport, 0xFF, feature_index, timeout=1000)
+
+        self.assertEqual(
+            result,
+            1,
+            "get_current_host avec timeout=1000 doit retourner l'hôte actuel (1)",
+        )
+
+    def test_get_current_host_default_timeout_still_works(self):
+        """Sans paramètre timeout → fonctionnement normal inchangé.
+        Régression : ajout du paramètre timeout ne doit pas casser le comportement
+        par défaut (retourne None si pas de réponse)."""
+        from swigi.protocol import get_current_host
+
+        transport = self._make_transport()  # pas de réponse → None attendu
+
+        result = get_current_host(transport, 0xFF, 0x09)
+
+        self.assertIsNone(
+            result,
+            "get_current_host sans timeout doit retourner None quand pas de réponse",
         )
 
 

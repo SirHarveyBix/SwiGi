@@ -68,9 +68,16 @@ if HAS_RUMPS and _rumps:
 
     class SwiGiMenuBar(_rumps.App):
         def __init__(self, state: dict, stop_event: threading.Event):
-            initial_keyboard = state.get("keyboard")
-            initial_mouse = state.get("mouse")
-            super().__init__("⌨️" )
+            initial_keyboards = state.get("keyboards") or {}
+            initial_keyboard_names = [
+                d["name"]
+                for d in initial_keyboards.values()
+                if d.get("ok") and d.get("name")
+            ] if initial_keyboards else []
+            initial_keyboard = ", ".join(initial_keyboard_names) if initial_keyboard_names else state.get("keyboard")
+            initial_mice = state.get("mice") or []
+            initial_mouse = ", ".join(initial_mice) if initial_mice else state.get("mouse")
+            super().__init__("⌨️")
             try:
                 from AppKit import NSApplication
 
@@ -90,11 +97,13 @@ if HAS_RUMPS and _rumps:
             self._notify_item = _rumps.MenuItem(
                 "Notifications", callback=self._toggle_notify
             )
-            self._notify_item.state = prefs.get("notifications", True)
+            with _prefs_lock:
+                self._notify_item.state = prefs.get("notifications", True)
+                self._mouse_follow_item_state = prefs.get("mouse_follow", True)
             self._mouse_follow_item = _rumps.MenuItem(
                 "Souris suit le clavier", callback=self._toggle_mouse_follow
             )
-            self._mouse_follow_item.state = prefs.get("mouse_follow", True)
+            self._mouse_follow_item.state = self._mouse_follow_item_state
 
             menu_items = [
                 self._keyboard_item,
@@ -146,11 +155,20 @@ if HAS_RUMPS and _rumps:
         @_rumps.timer(2)
         def _refresh(self, _):
             # Support multi-clavier : construire le nom depuis state["keyboards"] si disponible
-            keyboards = self._state.get("keyboards")
-            if keyboards:
+            # Lire sous lock pour éviter une iteration concurrente avec le thread daemon
+            state_lock = self._state.get("_state_lock")
+            if state_lock:
+                with state_lock:
+                    keyboards_copy = dict(self._state.get("keyboards") or {})
+                    mice_copy = list(self._state.get("mice") or [])
+            else:
+                keyboards_copy = dict(self._state.get("keyboards") or {})
+                mice_copy = list(self._state.get("mice") or [])
+
+            if keyboards_copy:
                 actifs = [
                     d["name"]
-                    for d in keyboards.values()
+                    for d in keyboards_copy.values()
                     if d.get("ok") and d.get("name")
                 ]
                 keyboard = ", ".join(actifs) if actifs else None
@@ -158,16 +176,18 @@ if HAS_RUMPS and _rumps:
                 self._state["keyboard"] = actifs[0] if actifs else None
             else:
                 keyboard = self._state.get("keyboard")
-            mouse = self._state.get("mouse")
+
+            mouse_display = ", ".join(mice_copy) if mice_copy else self._state.get("mouse")
             switches = self._state.get("switches", 0)
             self._keyboard_item.title = (
                 f"Clavier : {keyboard or '—'} {'✅' if keyboard else '❌'}"
             )
             self._mouse_item.title = (
-                f"Souris : {mouse or '—'} {'✅' if mouse else '❌'}"
+                f"Souris : {mouse_display or '—'} {'✅' if mouse_display else '❌'}"
             )
             self._count_item.title = f"Basculements : {switches}"
-            self.title = "⌨️" if (keyboard and mouse) else "⌨"
+            # Bug 1 : toujours "⌨️" (forme emoji visible), l'état détaillé est dans les items
+            self.title = "⌨️"
 
         # ── Notifications ──────────────────────────────────────────────────
 
@@ -175,7 +195,7 @@ if HAS_RUMPS and _rumps:
             enabled = not bool(sender.state)
             with _prefs_lock:
                 prefs["notifications"] = enabled
-            save_prefs(prefs)
+                save_prefs(dict(prefs))
             sender.state = enabled
 
         # ── Souris suit le clavier ─────────────────────────────────────────
@@ -184,7 +204,7 @@ if HAS_RUMPS and _rumps:
             enabled = not bool(sender.state)
             with _prefs_lock:
                 prefs["mouse_follow"] = enabled
-            save_prefs(prefs)
+                save_prefs(dict(prefs))
             sender.state = enabled
             log.info("Souris suit le clavier : %s", "ON" if enabled else "OFF")
 
@@ -240,7 +260,7 @@ if HAS_RUMPS and _rumps:
             name = sender.title if sender.title != "(aucun)" else None
             with _prefs_lock:
                 prefs["better_mouse_profile"] = name
-            save_prefs(prefs)
+                save_prefs(dict(prefs))
             # Mettre à jour les checkmarks
             for key, item in list(self._better_mouse_profile_menu.items()):
                 if key is None:
@@ -254,14 +274,14 @@ if HAS_RUMPS and _rumps:
             enabled = not bool(sender.state)
             with _prefs_lock:
                 prefs["better_mouse_auto_apply"] = enabled
-            save_prefs(prefs)
+                save_prefs(dict(prefs))
             sender.state = enabled
             log.info("BetterMouse auto-apply : %s", "ON" if enabled else "OFF")
 
         # ── Divers ────────────────────────────────────────────────────────
 
         def _hide_icon(self, _):
-            notify("Icône masquée — relance SwiGi pour réafficher")
+            notify("Icône masquée — relancez SwiGi depuis le terminal ou via launchd pour réafficher")
             try:
                 # rumps expose NSStatusItem via _status_item depuis rumps >= 0.4
                 item = getattr(self, "_status_item", None)

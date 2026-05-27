@@ -147,7 +147,7 @@ def get_device_name(
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
-def _drain_transport(transport: HIDTransport, max_reads: int = 32) -> None:
+def _drain_transport(transport: HIDTransport, max_reads: int = 64) -> None:
     """Vide le buffer d'entrée HID avant d'écrire une commande.
 
     timeout=1 (1ms) plutôt que 0 : sur macOS Sonoma/Sequoia + BT 5.3 (M3),
@@ -195,11 +195,11 @@ def send_change_host(
 
 
 def get_current_host(
-    transport: HIDTransport, device_number: int, feature_index: int
+    transport: HIDTransport, device_number: int, feature_index: int, *, timeout: int = 500
 ) -> int | None:
     """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
     reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x00, timeout=500
+        transport, device_number, (feature_index << 8) | 0x00, timeout=timeout
     )
     if reply and len(reply) >= 2:
         num_hosts, current_host = reply[0], reply[1]

@@ -52,6 +52,27 @@ def _release_lock() -> None:
         pass
 
 
+def _log_last_commit() -> None:
+    """Affiche la date/heure du dernier commit git dans les logs de démarrage."""
+    import subprocess
+    import os
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=Dernière mise à jour : %cd — %s", "--date=format:%Y-%m-%d %H:%M"],
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+            timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            log.info("%s", result.stdout.strip())
+        else:
+            log.debug("git log indisponible (pas de repo git ou git absent)")
+    except Exception:
+        log.debug("Impossible de lire le dernier commit git")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="SwiGi — synchronisation Easy-Switch via Bluetooth"
@@ -100,6 +121,9 @@ def _main_inner(arguments) -> int:
         )
         file_handler.setFormatter(formatter)
         swigi_logger.addHandler(file_handler)
+
+    # Afficher la date du dernier commit pour diagnostic
+    _log_last_commit()
 
     log.info("SwiGi — recherche des périphériques...")
 
