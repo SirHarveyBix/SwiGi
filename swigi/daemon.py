@@ -462,9 +462,12 @@ def _watch_keyboard(
                         continue
                     feature_index = raw_bytes[2]
                     software_id = raw_bytes[3] & 0x0F
+                    log.debug(
+                        "%s DRAIN PKT feat=0x%02X swid=0x%X [%s]",
+                        prefix, feature_index, software_id, raw_bytes[:8].hex(),
+                    )
                     if (
                         feature_index == keyboard.change_host_index
-                        and software_id == 0
                         and len(raw_bytes) > 5
                     ):
                         num_hosts = raw_bytes[4] if raw_bytes[4] > 0 else 3
@@ -472,7 +475,7 @@ def _watch_keyboard(
                         if 0 <= target_host < num_hosts:
                             last_switch_time = time.time()
                             log.info(
-                                "%s ★ Touche Easy-Switch %d pressée",
+                                "%s ★ Touche Easy-Switch %d pressée (drain buffer)",
                                 prefix,
                                 target_host + 1,
                             )
@@ -579,38 +582,52 @@ def _watch_keyboard(
             software_id = function_id & 0x0F
             last_response = time.time()
 
-            # Notification CHANGE_HOST
-            # Format HID++ 2.0 fn0x00 notification : raw_bytes[4]=numHosts, raw_bytes[5]=newHost (base 0)
+            # Dump tous les packets reçus du clavier pour diagnostic
+            log.debug(
+                "%s PKT report=0x%02X feat=0x%02X fn=0x%02X swid=0x%X [%s]",
+                prefix,
+                raw_bytes[0],
+                feature_index,
+                (function_id & 0xF0) >> 4,
+                software_id,
+                raw_bytes[:8].hex(),
+            )
+
+            # Notification CHANGE_HOST — sw_id peut être 0 (spec HID++ 2.0) ou non-zero
+            # (certains firmwares Logitech). On accepte tout sw_id pour ce feature.
             if (
                 feature_index == keyboard.change_host_index
-                and software_id == 0
                 and len(raw_bytes) > 5
             ):
                 num_hosts = (
                     raw_bytes[4] if raw_bytes[4] > 0 else 3
                 )  # fallback 3 si firmware ne renseigne pas
                 target_host = raw_bytes[5]
+                log.debug(
+                    "%s CHANGE_HOST packet : swid=0x%X numHosts=%d newHost=%d",
+                    prefix, software_id, num_hosts, target_host,
+                )
                 if not (0 <= target_host < num_hosts):
-                    log.warning(
-                        "%s Hôte cible invalide : %d (numHosts=%d, ignoré)",
-                        prefix,
-                        target_host,
-                        num_hosts,
+                    # Pas une notification de switch — probablement une réponse à notre ping
+                    # (le ping répond avec feature=FEATURE_ROOT, pas CHANGE_HOST, mais au cas où)
+                    log.debug(
+                        "%s CHANGE_HOST hôte invalide %d/%d — probablement réponse ping, ignoré",
+                        prefix, target_host, num_hosts,
                     )
                     continue
+                # Réponses à nos propres requêtes CHANGE_HOST (send_change_host) ont sw_id=SW_ID (0x0A).
+                # Les notifications matérielles (Easy-Switch pressé) ont sw_id=0.
+                # On accepte les deux, mais on logge la distinction.
+                if software_id != 0:
+                    log.debug(
+                        "%s CHANGE_HOST sw_id=0x%X (non-zero) → notification firmware acceptée",
+                        prefix, software_id,
+                    )
                 last_switch_time = time.time()
                 log.info("─" * 50)
                 log.info("%s ★ Touche Easy-Switch %d pressée", prefix, target_host + 1)
                 event_queue.put(_SwitchEvent(target_host, keyboard.name))
                 break
-
-            if software_id == 0:
-                log.debug(
-                    "%s Notification : feature_index=0x%02X [%s]",
-                    prefix,
-                    feature_index,
-                    raw_bytes[:10].hex(),
-                )
 
         if raw_bytes is None:
             time.sleep(0.01)
