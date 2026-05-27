@@ -97,40 +97,19 @@ _KEYBOARD_RECONNECT_MAX_DELAY = 5.0  # délai maximum de reconnexion
 
 
 def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> None:
-    """Recalcule pending_host après reconnexion clavier, si un switch SwiGi était en cours.
+    """Synchronise pending_host sur l'hôte actuel du clavier après reconnexion.
 
-    N'agit que si pending_host est déjà défini : un switch SwiGi initié par
-    _send_to_all_mice est en attente de confirmation par la souris. Dans ce cas,
-    on recale la cible sur l'hôte réel du clavier (pour corriger un pending stale
-    avec 3 hôtes ou 2 claviers).
+    Lit l'hôte du clavier via getHostInfo et met à jour pending_host en conséquence.
+    Ceci garantit que la souris suit le clavier quelle que soit l'origine de la
+    reconnexion (switch Easy-Switch, retour sur ce Mac, ou reconnexion BT).
 
-    Si pending_host est None, le clavier revient naturellement (aucun switch SwiGi
-    en cours) — on ne crée pas de pending_host artificiel qui forcerait la souris
-    à suivre contre la volonté de l'utilisateur (switch manuel souris respecté).
+    La protection contre les switches manuels de la souris est dans
+    _check_and_apply_pending_host (grace period + had_mice guard), pas ici.
     """
     with _prefs_lock:
         mouse_follow = prefs.get("mouse_follow", True)
     if not mouse_follow:
         state["pending_host"] = None
-        return
-
-    # Invariant : pending_host est créé uniquement par _send_to_all_mice (après Easy-Switch).
-    # _resync ajuste une cible existante — elle ne crée jamais de nouveau pending_host.
-    if state.get("pending_host") is None:
-        # Lire et loguer l'hôte réel du clavier pour diagnostic (même sans switch en cours).
-        try:
-            kh = get_current_host(
-                keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index, timeout=500
-            )
-            if kh is not None:
-                log.info(
-                    "Clavier reconnecté sur hôte %d — aucun switch SwiGi en attente, souris non forcée",
-                    kh + 1,
-                )
-            else:
-                log.info("Clavier reconnecté — aucun switch SwiGi en attente, souris non forcée")
-        except (TransportError, OSError):
-            log.info("Clavier reconnecté — aucun switch SwiGi en attente, souris non forcée")
         return
 
     # Le stack BT macOS peut prendre 150–300ms après reconnexion avant que
@@ -170,8 +149,12 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
         # Ne pas écraser un pending_host plus récent issu d'un switch pendant l'I/O.
         # _send_to_all_mice crée un nouveau tuple → l'identité d'objet change.
         if state.get("pending_host") is pending_before_io:
+            was_none = pending_before_io is None
             state["pending_host"] = (keyboard_host, time.time() + _PENDING_HOST_TTL)
-            log.info("pending_host recalé sur hôte clavier : %d", keyboard_host + 1)
+            if was_none:
+                log.info("Clavier sur hôte %d → souris à synchroniser", keyboard_host + 1)
+            else:
+                log.info("pending_host recalé sur hôte clavier : %d", keyboard_host + 1)
         else:
             log.debug(
                 "pending_host modifié pendant resync I/O — resync ignorée (switch plus récent)"
