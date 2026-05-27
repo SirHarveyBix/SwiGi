@@ -1122,6 +1122,209 @@ class TestWatchKeyboardNotificationParsing(unittest.TestCase):
             self.assertEqual(len(events), 1, f"hôte {target} non reçu")
             self.assertEqual(events[0].target_host, target)
 
+    def test_nonzero_swid_notification_accepted(self):
+        """sw_id != 0 → notification firmware acceptée (fix filtre sw_id==0)."""
+        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
+
+        msg = bytearray(MSG_LONG_LEN)
+        msg[0] = REPORT_LONG
+        msg[2] = 5            # change_host_index
+        msg[3] = 0x01         # sw_id = 1 (non-zero, firmware Logitech réel)
+        msg[4] = 3            # num_hosts
+        msg[5] = 1            # target = hôte 2 (base-0)
+        events = self._run_watch_and_collect(bytes(msg))
+        self.assertEqual(len(events), 1, "sw_id=1 devrait être accepté (filtre retiré)")
+        self.assertEqual(events[0].target_host, 1)
+
+
+class TestEasySwitchLogNumbers(unittest.TestCase):
+    """Vérifie que le numéro de touche (1/2/3) dans les logs est correct.
+
+    '★ Touche Easy-Switch N pressée' doit afficher N = target_host + 1 (base-1).
+    """
+
+    def _capture_switch_log(self, target_host_base0):
+        """Lance _watch_keyboard avec une notification CHANGE_HOST et capture les logs."""
+        import logging
+        import queue as q_module
+        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
+        from swigi.daemon import _watch_keyboard, _SwitchEvent
+
+        msg = bytearray(MSG_LONG_LEN)
+        msg[0] = REPORT_LONG
+        msg[2] = 5                    # change_host_index
+        msg[3] = 0x00                 # sw_id = 0
+        msg[4] = 3                    # num_hosts
+        msg[5] = target_host_base0
+        pkt = bytes(msg)
+
+        event_queue = q_module.Queue()
+        stop = threading.Event()
+        hunt = threading.Event()
+        keyboard = _make_keyboard(change_host_index=5, name="MX Keys S")
+        keyboard.product_id = 0xB35B
+        state = {
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+            "pending_host": None,
+        }
+        _reads = iter([pkt])
+        keyboard.transport.read.side_effect = lambda *a, **kw: next(_reads, None)
+        keyboard.transport.write.return_value = None
+        keyboard.transport.is_open = True
+
+        log_records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                log_records.append(record.getMessage())
+
+        handler = _Capture()
+        handler.setLevel(logging.DEBUG)
+        logger = logging.getLogger("swigi.daemon")
+        old_level = logger.level
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        try:
+            with _fast_probe():
+                t = threading.Thread(
+                    target=_watch_keyboard,
+                    args=(keyboard, event_queue, state, stop, hunt),
+                    daemon=True,
+                )
+                t.start()
+                deadline = time.time() + 1.5
+                while time.time() < deadline:
+                    try:
+                        event_queue.get(timeout=0.05)
+                        break
+                    except q_module.Empty:
+                        pass
+                stop.set()
+                t.join(timeout=1.5)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+
+        return log_records
+
+    def test_easy_switch_1_log_number(self):
+        """Hôte 0 (base-0) → log '★ Touche Easy-Switch 1 pressée'."""
+        logs = self._capture_switch_log(0)
+        matching = [l for l in logs if "★ Touche Easy-Switch" in l]
+        self.assertTrue(matching, f"Aucun log Easy-Switch trouvé. Logs: {logs[:5]}")
+        self.assertIn("Easy-Switch 1 pressée", matching[0])
+
+    def test_easy_switch_2_log_number(self):
+        """Hôte 1 (base-0) → log '★ Touche Easy-Switch 2 pressée'."""
+        logs = self._capture_switch_log(1)
+        matching = [l for l in logs if "★ Touche Easy-Switch" in l]
+        self.assertTrue(matching, f"Aucun log Easy-Switch trouvé. Logs: {logs[:5]}")
+        self.assertIn("Easy-Switch 2 pressée", matching[0])
+
+    def test_easy_switch_3_log_number(self):
+        """Hôte 2 (base-0) → log '★ Touche Easy-Switch 3 pressée'."""
+        logs = self._capture_switch_log(2)
+        matching = [l for l in logs if "★ Touche Easy-Switch" in l]
+        self.assertTrue(matching, f"Aucun log Easy-Switch trouvé. Logs: {logs[:5]}")
+        self.assertIn("Easy-Switch 3 pressée", matching[0])
+
+    def test_pkt_dump_logged_at_debug(self):
+        """Chaque paquet HID reçu → log DEBUG 'PKT report= feat= fn= swid='."""
+        logs = self._capture_switch_log(1)
+        pkt_logs = [l for l in logs if "PKT report=" in l]
+        self.assertTrue(pkt_logs, "Aucun PKT dump DEBUG trouvé — diagnostic désactivé")
+
+    def test_drain_buffer_read_exception_does_not_exit_immediately(self):
+        """Drain buffer : une exception read ne doit pas sortir immédiatement.
+
+        Si le ping échoue ET les reads lèvent TransportError, le drain doit continuer
+        jusqu'à 10 exceptions consécutives (pas sortir à la première).
+        Le test vérifie qu'un paquet CHANGE_HOST présent après 3 exceptions est capturé.
+        """
+        import logging
+        import queue as q_module
+        from swigi.constants import REPORT_LONG, MSG_LONG_LEN
+        from swigi.daemon import _watch_keyboard, _SwitchEvent
+        from swigi.transport import TransportError
+
+        msg = bytearray(MSG_LONG_LEN)
+        msg[0] = REPORT_LONG
+        msg[2] = 5
+        msg[3] = 0x00
+        msg[4] = 3
+        msg[5] = 1   # Easy-Switch 2
+        pkt = bytes(msg)
+
+        event_queue = q_module.Queue()
+        stop = threading.Event()
+        hunt = threading.Event()
+        keyboard = _make_keyboard(change_host_index=5, name="MX Keys S Drain")
+        keyboard.product_id = 0xB35B
+        state = {
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+            "pending_host": None,
+        }
+
+        # Ping échoue → drain buffer activé
+        keyboard.transport.write.side_effect = TransportError("ping fail")
+
+        # Drain : 3 exceptions puis le paquet CHANGE_HOST puis None
+        drain_calls = [
+            TransportError("drain fail 1"),
+            TransportError("drain fail 2"),
+            TransportError("drain fail 3"),
+            pkt,
+            None,
+        ]
+        call_idx = [0]
+
+        def _drain_read(*a, **kw):
+            r = drain_calls[call_idx[0]]
+            call_idx[0] = min(call_idx[0] + 1, len(drain_calls) - 1)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        keyboard.transport.read.side_effect = _drain_read
+        keyboard.transport.is_open = True
+
+        # Reconnect après drain : keyboard2 pour éviter boucle infinie
+        keyboard2 = _make_keyboard(change_host_index=5, name="MX Keys S Drain")
+        keyboard2.product_id = 0xB35B
+        keyboard2.transport.write.return_value = None
+        keyboard2.transport.read.return_value = None
+        keyboard2.transport.is_open = True
+
+        with (
+            _fast_probe(),
+            patch("swigi.daemon._find_keyboard_by_product_id", return_value=keyboard2),
+            patch("swigi.daemon.notify"),
+        ):
+            t = threading.Thread(
+                target=_watch_keyboard,
+                args=(keyboard, event_queue, state, stop, hunt),
+                daemon=True,
+            )
+            t.start()
+            events = []
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                try:
+                    events.append(event_queue.get(timeout=0.05))
+                    break
+                except q_module.Empty:
+                    pass
+            stop.set()
+            t.join(timeout=2.0)
+
+        switch_events = [e for e in events if isinstance(e, _SwitchEvent)]
+        self.assertEqual(
+            len(switch_events), 1,
+            "CHANGE_HOST après 3 exceptions de drain doit être capturé "
+            f"(got events={events})",
+        )
+        self.assertEqual(switch_events[0].target_host, 1)
+
 
 # ── Fix #3 : hunt interval réel 1s (pas 6s) ──────────────────────────────────
 
