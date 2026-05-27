@@ -5,4 +5,4 @@ et réplique l'ordre de basculement vers la souris Logitech associée.
 """
 
 __version__ = "1.1.0"
-__author__ = "LeeHoffka"
+__author__ = "SirHarveyBix"

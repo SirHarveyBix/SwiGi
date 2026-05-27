@@ -260,6 +260,8 @@ bash install_mac.sh
 | L'icône n'apparaît pas (installation)          | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"`                                      |
 | L'icône n'apparaît pas (général)               | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
 | Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log`                                                                |
+| 2 Macs OK, 3e Mac instable au retour           | Cherche `pending_host expiré` et les reconnexions clavier répétées dans les logs : c'est un signe de reconnexion BT lente (instabilité radio/Bluetooth locale).                                    |
+| Après switch manuel souris, ça rebascule mal   | SwiGi applique un **override manuel temporaire** pour éviter les boucles de correction. Si tu veux piloter la souris uniquement, décoche **Suivre la souris** dans le menu.                       |
 | `hidapi introuvable` sur macOS                 | Lance `brew install hidapi`                                                                                                                                                                       |
 | `hidapi introuvable` sur Windows               | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py`                                                                                                                                  |
 | SwiGi se lance mais ne fait rien               | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`                                                                                                                                      |
@@ -284,6 +286,8 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST`
 3. SwiGi la capture et envoie la même commande à la souris
 4. Les deux périphériques basculent sur le même hôte
+
+En cas de reconnexion Bluetooth, SwiGi recale la cible souris sur l'hôte réel du clavier (resync), mais **n'impose pas agressivement** cette cible si un switch manuel souris est détecté. Cela évite l'effet "va dans tous les sens".
 
 Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un package Python modulaire, aucune dépendance sauf hidapi.
 

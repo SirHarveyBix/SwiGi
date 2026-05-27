@@ -20,7 +20,8 @@ from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
 
-_PENDING_HOST_TTL = 12.0      # couvre _MANUAL_SWITCH_GRACE (8s) + marges BT LE
+_PENDING_HOST_TTL_SWITCH = 12.0   # appui clavier explicite: réaction rapide, fenêtre courte
+_PENDING_HOST_TTL_RESYNC = 24.0   # reconnexion BT: fenêtre plus large pour absorber les retours lents
 
 # Délai de stabilité après reconnexion clavier (rejet des connexions fantômes BT).
 # Un clavier en transit vers un autre Mac peut être brièvement connectable depuis ce Mac.
@@ -40,6 +41,7 @@ class _SwitchEvent:
 
     target_host: int
     keyboard_name: str
+    keyboard_product_id: int | None = None
 
 
 @dataclasses.dataclass
@@ -87,12 +89,23 @@ _MOUSE_HUNT_INTERVAL = 1.0         # secondes entre probes en mode hunt
 _MOUSE_PROBE_INTERVAL = 5.0        # secondes entre probes en mode normal
 _MOUSE_HUNT_WINDOW = 30.0          # durée du mode hunt après un trigger
 _MANUAL_SWITCH_GRACE = 8.0         # délai avant lequel un reconnect souris peut être un switch manuel
+_MANUAL_OVERRIDE_COOLDOWN = 12.0   # pause anti-boucle après switch manuel souris
+_ENABLE_KEYBOARD_RESYNC_PENDING = True  # garde la compatibilité des scénarios de retour multi-Macs
+_RESYNC_AFTER_SWITCH_WINDOW = 12.0  # en mode clair, un resync n'agit que juste après un switch explicite
 
 # Constantes reconnexion clavier — module-level pour être patchables dans les tests.
 _KEYBOARD_RECONNECT_INITIAL_DELAY = (
     0.5  # délai initial de reconnexion (backoff exponentiel)
 )
 _KEYBOARD_RECONNECT_MAX_DELAY = 5.0  # délai maximum de reconnexion
+
+# Réglages capture switch au moment de la déconnexion clavier.
+_KEYBOARD_READ_WINDOW = 0.18     # fenêtre d'écoute normale des notifications
+_DRAIN_MAX_READS = 60            # nombre max de reads lors du drain post-échec write
+_DRAIN_NONE_STREAK = 8           # tolérance None consécutifs pendant drain
+_DRAIN_ERR_STREAK = 20           # tolérance erreurs read pendant drain
+_SWITCH_COMMIT_WAIT = 0.35       # délai max pour confirmer un switch (déco clavier locale)
+_KEYBOARD_PING_INTERVAL = 0.10   # réduit la pression write HID sans retarder la détection
 
 
 def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> None:
@@ -109,6 +122,7 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
         mouse_follow = prefs.get("mouse_follow", True)
     if not mouse_follow:
         state["pending_host"] = None
+        state["pending_source"] = None
         return
 
     # Le stack BT macOS peut prendre 150–300ms après reconnexion avant que
@@ -145,15 +159,49 @@ def _resync_pending_host_from_keyboard(keyboard: DeviceInfo, state: dict) -> Non
             break
 
     if keyboard_host is not None:
+        if state.get("strict_switch_only", False):
+            last_switch_age = time.time() - state.get("last_change_host_at", 0.0)
+            if last_switch_age > _RESYNC_AFTER_SWITCH_WINDOW:
+                log.info(
+                    "Resync clavier hôte %d observé, ignoré (mode clair: pas de switch explicite récent)",
+                    keyboard_host + 1,
+                )
+                return
+        suppress_until = state.get("suppress_resync_until", 0.0)
+        if time.time() < suppress_until:
+            log.debug(
+                "resync clavier hôte %d ignoré (suppression fantôme %.1fs restantes)",
+                keyboard_host + 1,
+                suppress_until - time.time(),
+            )
+            return
+        if not _ENABLE_KEYBOARD_RESYNC_PENDING:
+            log.debug(
+                "resync clavier hôte %d détecté (mode MVP) — pas de pending_host auto",
+                keyboard_host + 1,
+            )
+            return
         # Ne pas écraser un pending_host plus récent issu d'un switch pendant l'I/O.
         # _send_to_all_mice crée un nouveau tuple → l'identité d'objet change.
         if state.get("pending_host") is pending_before_io:
             was_none = pending_before_io is None
-            state["pending_host"] = (keyboard_host, time.time() + _PENDING_HOST_TTL)
+            state["pending_host"] = (
+                keyboard_host,
+                time.time() + _PENDING_HOST_TTL_RESYNC,
+            )
+            state["pending_source"] = "resync"
             if was_none:
-                log.info("Clavier sur hôte %d → souris à synchroniser", keyboard_host + 1)
+                log.info(
+                    "Clavier sur hôte %d → pending_host posé (source=resync, ttl=%.0fs)",
+                    keyboard_host + 1,
+                    _PENDING_HOST_TTL_RESYNC,
+                )
             else:
-                log.info("pending_host recalé sur hôte clavier : %d", keyboard_host + 1)
+                log.info(
+                    "pending_host recalé sur hôte clavier : %d (source=resync, ttl=%.0fs)",
+                    keyboard_host + 1,
+                    _PENDING_HOST_TTL_RESYNC,
+                )
         else:
             log.debug(
                 "pending_host modifié pendant resync I/O — resync ignorée (switch plus récent)"
@@ -193,19 +241,22 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         mouse_follow = prefs.get("mouse_follow", True)
     if not mouse_follow:
         state["pending_host"] = None
+        state["pending_source"] = None
         return False
 
     pending = state.get("pending_host")
+    pending_source = state.get("pending_source", "switch")
     if pending is None:
         return False
     target_host, deadline = pending
     if time.time() > deadline:
         log.info(
-            "pending_host expiré (hôte %d avait %.0fs) — abandon",
+            "pending_host expiré (hôte %d, source=%s) — abandon",
             target_host + 1,
-            _PENDING_HOST_TTL,
+            pending_source,
         )
         state["pending_host"] = None
+        state["pending_source"] = None
         return False
 
     try:
@@ -223,15 +274,28 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
             state["mice"] = [m for m in state.get("mice", []) if m != mouse.name]
         return True
     log.info(
-        "Vérif sync : %s hôte actuel=%s cible=%d",
+        "Vérif sync : %s hôte actuel=%s cible=%d (source=%s)",
         mouse.name,
         (current + 1) if current is not None else "?",
         target_host + 1,
+        pending_source,
     )
     if current is None:
         log.debug(
             "pending_host : lecture hôte souris impossible, prochaine tentative au reconnect"
         )
+        return False
+
+    manual_override_until = state.get("manual_override_until", 0.0)
+    if current != target_host and time.time() < manual_override_until:
+        log.info(
+            "Override manuel actif (%.0fs restants, source=%s) : souris sur hôte %d, correction ignorée",
+            manual_override_until - time.time(),
+            pending_source,
+            current + 1,
+        )
+        state["pending_host"] = None
+        state["pending_source"] = None
         return False
 
     # Pendant le I/O (~500ms), un nouveau switch peut avoir modifié pending_host.
@@ -241,6 +305,25 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         log.debug(
             "pending_host modifié pendant I/O — abandon (switch plus récent en cours)"
         )
+        return False
+
+    # pending issu d'une resync clavier (pas d'appui Easy-Switch local explicite) :
+    # ne pas forcer la souris, sinon SwiGi peut combattre un switch manuel.
+    if (
+        pending_source == "resync"
+        and current != target_host
+        and time.time() - state.get("last_change_host_at", 0.0) > _MANUAL_SWITCH_GRACE
+    ):
+        log.info(
+            "Désync après resync clavier (souris hôte %d, clavier hôte %d) — "
+            "position souris conservée, pending effacé, override manuel %.0fs",
+            current + 1,
+            target_host + 1,
+            _MANUAL_OVERRIDE_COOLDOWN,
+        )
+        state["pending_host"] = None
+        state["pending_source"] = None
+        state["manual_override_until"] = time.time() + _MANUAL_OVERRIDE_COOLDOWN
         return False
 
     # Switch manuel : si des souris étaient connectées au switch (had_mice=True) ET que la
@@ -255,17 +338,22 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
     if had_mice_at_switch and current != target_host and elapsed_since_ch > _MANUAL_SWITCH_GRACE:
         log.info(
             "Switch manuel détecté : souris sur hôte %d (attendu hôte %d), "
-            "%.0fs depuis dernier CHANGE_HOST — pending effacé",
+            "%.0fs depuis dernier CHANGE_HOST — pending effacé, override manuel %.0fs",
             current + 1,
             target_host + 1,
             elapsed_since_ch,
+            _MANUAL_OVERRIDE_COOLDOWN,
         )
         state["pending_host"] = None
+        state["pending_source"] = None
+        state["manual_override_until"] = time.time() + _MANUAL_OVERRIDE_COOLDOWN
         return False  # ne pas corriger, accepter la position manuelle
 
     if current == target_host:
         log.info("Sync confirmée : %s sur hôte %d ✓ — pending effacé", mouse.name, target_host + 1)
         state["pending_host"] = None
+        state["pending_source"] = None
+        state["manual_override_until"] = 0.0
         return False
 
     log.warning(
@@ -280,6 +368,8 @@ def _check_and_apply_pending_host(mouse: DeviceInfo, state: dict) -> bool:
         )
         log.info("Correction désync → hôte %d ✓", target_host + 1)
         state["pending_host"] = None
+        state["pending_source"] = None
+        state["manual_override_until"] = 0.0
     except (TransportError, OSError) as error:
         log.warning(
             "Correction désync échouée : %s — souris reste sur hôte %d, retry au reconnect",
@@ -351,7 +441,14 @@ def _send_to_all_mice(
         # (leur Product ID reste dans existing_product_ids → nouvel handle fermé comme "doublon").
         had_mice = len(mice) > 0
         mice.clear()
-        state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL)
+        state["pending_host"] = (target_host, time.time() + _PENDING_HOST_TTL_SWITCH)
+        state["pending_source"] = "switch"
+        log.debug(
+            "pending_host posé: hôte %d (source=switch, ttl=%.0fs, had_mice=%s)",
+            target_host + 1,
+            _PENDING_HOST_TTL_SWITCH,
+            had_mice,
+        )
         state["mouse"] = None
         state["mice"] = []
         state["last_change_host_at"] = time.time()
@@ -375,9 +472,12 @@ def _watch_keyboard(
     """
     prefix = f"[{keyboard.name}]"
     last_response = time.time()
+    last_ping_sent = 0.0
     last_switch_time = 0.0
+    last_switch_target = -1   # debounce : évite d'émettre le même switch deux fois
     keyboard_reconnected_at: float | None = None
     WATCHDOG_TIMEOUT = 10.0
+    _SWITCH_DEBOUNCE = 2.0    # secondes — macOS BT peut livrer la même notification 2×
 
     log.info(
         "%s Surveillance démarrée (Product ID=0x%04X)", prefix, keyboard.product_id
@@ -433,145 +533,174 @@ def _watch_keyboard(
             last_response = time.time()
             continue
 
-        # ── Ping ──
-        try:
-            keyboard.transport.write(PING_MESSAGE)
-        except (TransportError, OSError):
-            # Drain buffer : notification CHANGE_HOST peut être en file noyau
-            # juste avant la déconnexion BT. Sur macOS BT LE, le kernel peut avoir
-            # un délai ~10-30ms avant de rendre le dernier paquet disponible après
-            # la déconnexion physique. Ne pas sortir immédiatement sur None.
+        # ── Ping (throttlé) ──
+        if time.time() - last_ping_sent >= _KEYBOARD_PING_INTERVAL:
             try:
-                none_streak = 0
-                for _ in range(24):
-                    try:
-                        raw_bytes = keyboard.transport.read(timeout=10)
-                    except (TransportError, OSError) as _drain_err:
-                        # Ne pas sortir immédiatement : le noyau peut avoir des paquets
-                        # bufferisés lisibles même après l'échec d'écriture (BT LE macOS).
-                        none_streak += 1
-                        log.debug(
-                            "%s DRAIN read err (%d/10): %s", prefix, none_streak, _drain_err
-                        )
-                        if none_streak >= 10:  # ~100ms d'échecs → handle définitivement mort
-                            break
-                        continue
-                    if raw_bytes is None or len(raw_bytes) < 4:
-                        none_streak += 1
-                        if none_streak >= 3:  # 30ms sans données → buffer épuisé
-                            break
-                        continue
-                    none_streak = 0
-                    if (
-                        raw_bytes[0] not in MSG_LENGTHS
-                        or len(raw_bytes) < MSG_LENGTHS[raw_bytes[0]]
-                    ):
-                        continue
-                    feature_index = raw_bytes[2]
-                    software_id = raw_bytes[3] & 0x0F
-                    log.debug(
-                        "%s DRAIN PKT feat=0x%02X swid=0x%X [%s]",
-                        prefix, feature_index, software_id, raw_bytes[:8].hex(),
-                    )
-                    if (
-                        feature_index == keyboard.change_host_index
-                        and len(raw_bytes) > 5
-                    ):
-                        num_hosts = raw_bytes[4] if raw_bytes[4] > 0 else 3
-                        target_host = raw_bytes[5]
-                        if 0 <= target_host < num_hosts:
-                            last_switch_time = time.time()
-                            log.info(
-                                "%s ★ Touche Easy-Switch %d pressée (drain buffer)",
-                                prefix,
-                                target_host + 1,
-                            )
-                            event_queue.put(_SwitchEvent(target_host, keyboard.name))
-                        break
+                keyboard.transport.write(PING_MESSAGE)
+                last_ping_sent = time.time()
             except (TransportError, OSError):
-                pass
-
-            switch_triggered = time.time() - last_switch_time <= 3.0
-            log.info(
-                "%s Déconnecté%s", prefix, " (post-switch)" if switch_triggered else ""
-            )
-            if not switch_triggered:
-                notify(f"{keyboard.name} déconnecté", "Clavier")
-
-            # Détection connexion fantôme : disconnect trop rapide après reconnexion,
-            # sans switch → pending_host corrompu par l'hôte transitoire du clavier.
-            if not switch_triggered and keyboard_reconnected_at is not None:
-                elapsed = time.time() - keyboard_reconnected_at
-                if elapsed < _KEYBOARD_PHANTOM_WINDOW:
-                    log.warning(
-                        "%s Connexion fantôme (%.1fs après reconnexion) → pending_host effacé",
-                        prefix,
-                        elapsed,
-                    )
-                    state["pending_host"] = None
-            keyboard_reconnected_at = None
-
-            keyboard.close()
-            with state.get("_state_lock") or nullcontext():
-                state["keyboards"][keyboard.product_id]["ok"] = False
-            _update_keyboard_state(state)
-
-            # Reconnexion : chercher CE clavier (même Product ID) avec backoff exponentiel
-            delay = _KEYBOARD_RECONNECT_INITIAL_DELAY
-            new_keyboard = None
-            while not stop_event.is_set():
-                time.sleep(delay)
-                new_keyboard = _find_keyboard_by_product_id(keyboard.product_id)
-                if new_keyboard is not None:
-                    if _KEYBOARD_STABILITY_SECONDS > 0:
-                        time.sleep(_KEYBOARD_STABILITY_SECONDS)
-                    try:
-                        new_keyboard.transport.write(PING_MESSAGE)
-                        break  # stable
-                    except (TransportError, OSError):
+                # Drain buffer : notification CHANGE_HOST peut être en file noyau
+                # juste avant la déconnexion BT. Sur macOS BT LE, le kernel peut avoir
+                # un délai ~10-30ms avant de rendre le dernier paquet disponible après
+                # la déconnexion physique. Ne pas sortir immédiatement sur None.
+                try:
+                    none_streak = 0
+                    for _ in range(_DRAIN_MAX_READS):
+                        try:
+                            raw_bytes = keyboard.transport.read(timeout=10)
+                        except (TransportError, OSError) as _drain_err:
+                            # Ne pas sortir immédiatement : le noyau peut avoir des paquets
+                            # bufferisés lisibles même après l'échec d'écriture (BT LE macOS).
+                            none_streak += 1
+                            log.debug(
+                                "%s DRAIN read err (%d/%d): %s",
+                                prefix,
+                                none_streak,
+                                _DRAIN_ERR_STREAK,
+                                _drain_err,
+                            )
+                            if none_streak >= _DRAIN_ERR_STREAK:
+                                break
+                            continue
+                        if raw_bytes is None or len(raw_bytes) < 4:
+                            none_streak += 1
+                            if none_streak >= _DRAIN_NONE_STREAK:
+                                break
+                            continue
+                        none_streak = 0
+                        if (
+                            raw_bytes[0] not in MSG_LENGTHS
+                            or len(raw_bytes) < MSG_LENGTHS[raw_bytes[0]]
+                        ):
+                            continue
+                        feature_index = raw_bytes[2]
+                        software_id = raw_bytes[3] & 0x0F
                         log.debug(
-                            "%s Connexion fantôme (< %.0fs) — réessai",
-                            prefix,
-                            _KEYBOARD_STABILITY_SECONDS,
+                            "%s DRAIN PKT feat=0x%02X swid=0x%X [%s]",
+                            prefix, feature_index, software_id, raw_bytes[:8].hex(),
                         )
-                        new_keyboard.close()
-                        new_keyboard = None
-                delay = min(delay * 1.5, _KEYBOARD_RECONNECT_MAX_DELAY)
-                log.debug(
-                    "%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay
+                        if (
+                            feature_index == keyboard.change_host_index
+                            and len(raw_bytes) > 5
+                        ):
+                            if software_id != 0:
+                                # Réponse à nos propres requêtes HID++ (swid=0xA),
+                                # pas un appui Easy-Switch utilisateur.
+                                continue
+                            num_hosts = raw_bytes[4] if raw_bytes[4] > 0 else 3
+                            target_host = raw_bytes[5]
+                            if 0 <= target_host < num_hosts:
+                                now = time.time()
+                                if (
+                                    target_host == last_switch_target
+                                    and now - last_switch_time < _SWITCH_DEBOUNCE
+                                ):
+                                    log.debug(
+                                        "%s DRAIN doublon ignoré (même hôte %d, %.2fs)",
+                                        prefix, target_host + 1, now - last_switch_time,
+                                    )
+                                else:
+                                    last_switch_time = now
+                                    last_switch_target = target_host
+                                    log.info(
+                                        "%s ★ Touche Easy-Switch %d pressée (drain buffer)",
+                                        prefix,
+                                        target_host + 1,
+                                    )
+                                    event_queue.put(
+                                        _SwitchEvent(
+                                            target_host,
+                                            keyboard.name,
+                                            keyboard.product_id,
+                                        )
+                                    )
+                            break
+                except (TransportError, OSError):
+                    pass
+
+                switch_triggered = time.time() - last_switch_time <= 3.0
+                log.info(
+                    "%s Déconnecté%s", prefix, " (post-switch)" if switch_triggered else ""
                 )
+                if not switch_triggered:
+                    notify(f"{keyboard.name} déconnecté", "Clavier")
 
-            if new_keyboard is None:
-                continue  # stop_event levé pendant reconnect — la boucle externe sort
+                # Détection connexion fantôme : disconnect trop rapide après reconnexion,
+                # sans switch → pending_host corrompu par l'hôte transitoire du clavier.
+                if not switch_triggered and keyboard_reconnected_at is not None:
+                    elapsed = time.time() - keyboard_reconnected_at
+                    if elapsed < _KEYBOARD_PHANTOM_WINDOW:
+                        log.warning(
+                            "%s Connexion fantôme (%.1fs après reconnexion) → pending_host effacé",
+                            prefix,
+                            elapsed,
+                        )
+                        state["pending_host"] = None
+                        state["pending_source"] = None
+                        state["suppress_resync_until"] = time.time() + _KEYBOARD_PHANTOM_WINDOW
+                keyboard_reconnected_at = None
 
-            keyboard = new_keyboard
-            prefix = f"[{keyboard.name}]"
-            with state.get("_state_lock") or nullcontext():
-                state["keyboards"][keyboard.product_id] = {
-                    "name": keyboard.name,
-                    "ok": True,
-                }
-            _update_keyboard_state(state)
-            log.info("%s Reconnexion OK", prefix)
-            # N'afficher la notification de reconnexion que si le clavier revient
-            # >5s après un switch (retour "inattendu", pas un simple round-trip de switch).
-            if time.time() - last_switch_time > 5.0:
-                notify(f"{keyboard.name} reconnecté", "Clavier")
-            else:
-                log.debug("%s Reconnexion post-switch (< 5s) — notification supprimée", prefix)
-            last_response = time.time()
-            keyboard_reconnected_at = time.time()
+                keyboard.close()
+                with state.get("_state_lock") or nullcontext():
+                    state["keyboards"][keyboard.product_id]["ok"] = False
+                _update_keyboard_state(state)
 
-            _resync_pending_host_from_keyboard(keyboard, state)
-            hunt_trigger.set()
-            event_queue.put(_KeyboardReconnected(keyboard.name))
-            continue
+                # Reconnexion : chercher CE clavier (même Product ID) avec backoff exponentiel
+                delay = _KEYBOARD_RECONNECT_INITIAL_DELAY
+                new_keyboard = None
+                while not stop_event.is_set():
+                    time.sleep(delay)
+                    new_keyboard = _find_keyboard_by_product_id(keyboard.product_id)
+                    if new_keyboard is not None:
+                        if _KEYBOARD_STABILITY_SECONDS > 0:
+                            time.sleep(_KEYBOARD_STABILITY_SECONDS)
+                        try:
+                            new_keyboard.transport.write(PING_MESSAGE)
+                            break  # stable
+                        except (TransportError, OSError):
+                            log.debug(
+                                "%s Connexion fantôme (< %.0fs) — réessai",
+                                prefix,
+                                _KEYBOARD_STABILITY_SECONDS,
+                            )
+                            new_keyboard.close()
+                            new_keyboard = None
+                    delay = min(delay * 1.5, _KEYBOARD_RECONNECT_MAX_DELAY)
+                    log.debug(
+                        "%s Reconnexion en cours (prochaine dans %.1fs)...", prefix, delay
+                    )
 
-        # ── Lecture réponses (fenêtre 120ms, reads 10ms) ──
-        # timeout=10ms → ~12 reads par fenêtre (vs ~3 avec 25ms).
-        # Plus de chances de capturer la notification avant déconnexion BT LE.
+                if new_keyboard is None:
+                    continue  # stop_event levé pendant reconnect — la boucle externe sort
+
+                keyboard = new_keyboard
+                prefix = f"[{keyboard.name}]"
+                with state.get("_state_lock") or nullcontext():
+                    state["keyboards"][keyboard.product_id] = {
+                        "name": keyboard.name,
+                        "ok": True,
+                    }
+                _update_keyboard_state(state)
+                log.info("%s Reconnexion OK", prefix)
+                # N'afficher la notification de reconnexion que si le clavier revient
+                # >5s après un switch (retour "inattendu", pas un simple round-trip de switch).
+                if time.time() - last_switch_time > 5.0:
+                    notify(f"{keyboard.name} reconnecté", "Clavier")
+                else:
+                    log.debug("%s Reconnexion post-switch (< 5s) — notification supprimée", prefix)
+                last_response = time.time()
+                keyboard_reconnected_at = time.time()
+
+                _resync_pending_host_from_keyboard(keyboard, state)
+                hunt_trigger.set()
+                event_queue.put(_KeyboardReconnected(keyboard.name))
+                continue
+
+        # ── Lecture réponses (fenêtre courte, reads 10ms) ──
+        # Une fenêtre un peu plus large améliore la capture du switch juste avant
+        # la déconnexion BT, sans dégrader la fluidité en pratique.
         raw_bytes = None
-        deadline = time.time() + 0.12
+        deadline = time.time() + _KEYBOARD_READ_WINDOW
         while time.time() < deadline and not stop_event.is_set():
             try:
                 raw_bytes = keyboard.transport.read(timeout=10)
@@ -589,23 +718,32 @@ def _watch_keyboard(
             software_id = function_id & 0x0F
             last_response = time.time()
 
-            # Dump tous les packets reçus du clavier pour diagnostic
-            log.debug(
-                "%s PKT report=0x%02X feat=0x%02X fn=0x%02X swid=0x%X [%s]",
-                prefix,
-                raw_bytes[0],
-                feature_index,
-                (function_id & 0xF0) >> 4,
-                software_id,
-                raw_bytes[:8].hex(),
-            )
+            # Dump paquets bruts seulement en mode debug explicite (sinon bruit massif).
+            if state.get("debug_raw_packets", False):
+                log.debug(
+                    "%s PKT report=0x%02X feat=0x%02X fn=0x%02X swid=0x%X [%s]",
+                    prefix,
+                    raw_bytes[0],
+                    feature_index,
+                    (function_id & 0xF0) >> 4,
+                    software_id,
+                    raw_bytes[:8].hex(),
+                )
 
-            # Notification CHANGE_HOST — sw_id peut être 0 (spec HID++ 2.0) ou non-zero
-            # (certains firmwares Logitech). On accepte tout sw_id pour ce feature.
+            # Notification CHANGE_HOST matérielle: on ne retient que sw_id=0.
+            # sw_id non nul correspond à des réponses à nos propres requêtes HID++
+            # (ex: getHostInfo/send_change_host) et provoque des faux switches.
             if (
                 feature_index == keyboard.change_host_index
                 and len(raw_bytes) > 5
             ):
+                if software_id != 0:
+                    log.debug(
+                        "%s CHANGE_HOST sw_id=0x%X ignoré (réponse requête interne)",
+                        prefix,
+                        software_id,
+                    )
+                    continue
                 num_hosts = (
                     raw_bytes[4] if raw_bytes[4] > 0 else 3
                 )  # fallback 3 si firmware ne renseigne pas
@@ -622,18 +760,23 @@ def _watch_keyboard(
                         prefix, target_host, num_hosts,
                     )
                     continue
-                # Réponses à nos propres requêtes CHANGE_HOST (send_change_host) ont sw_id=SW_ID (0x0A).
-                # Les notifications matérielles (Easy-Switch pressé) ont sw_id=0.
-                # On accepte les deux, mais on logge la distinction.
-                if software_id != 0:
+                now = time.time()
+                if (
+                    target_host == last_switch_target
+                    and now - last_switch_time < _SWITCH_DEBOUNCE
+                ):
                     log.debug(
-                        "%s CHANGE_HOST sw_id=0x%X (non-zero) → notification firmware acceptée",
-                        prefix, software_id,
+                        "%s CHANGE_HOST doublon ignoré (même hôte %d, %.2fs)",
+                        prefix, target_host + 1, now - last_switch_time,
                     )
-                last_switch_time = time.time()
+                    continue
+                last_switch_time = now
+                last_switch_target = target_host
                 log.info("─" * 50)
                 log.info("%s ★ Touche Easy-Switch %d pressée", prefix, target_host + 1)
-                event_queue.put(_SwitchEvent(target_host, keyboard.name))
+                event_queue.put(
+                    _SwitchEvent(target_host, keyboard.name, keyboard.product_id)
+                )
                 break
 
         if raw_bytes is None:
@@ -865,10 +1008,16 @@ def run_daemon(
     state["mouse"] = mice[0].name if mice else None
     state["mice"] = [mouse.name for mouse in mice]
     state.setdefault("pending_host", None)
+    state.setdefault("pending_source", None)
+    state.setdefault("manual_override_until", 0.0)
+    state.setdefault("suppress_resync_until", 0.0)
     state.setdefault("switches", 0)
     state.setdefault("last_change_host_at", 0.0)
     state.setdefault("last_change_host_target", None)
     state.setdefault("last_change_host_had_mice", False)
+    with _prefs_lock:
+        state.setdefault("strict_switch_only", prefs.get("strict_switch_only", True))
+        state.setdefault("debug_raw_packets", prefs.get("debug_raw_packets", False))
 
     # Compatibilité GUI : state["keyboard"] = nom du premier clavier
     state["keyboard"] = keyboards[0].name if keyboards else None
@@ -916,6 +1065,25 @@ def run_daemon(
             continue
 
         if isinstance(event, _SwitchEvent):
+            if event.keyboard_product_id is not None:
+                commit_deadline = time.time() + _SWITCH_COMMIT_WAIT
+                committed = False
+                while time.time() < commit_deadline and not stop_event.is_set():
+                    with state.get("_state_lock") or nullcontext():
+                        kb_state = state.get("keyboards", {}).get(event.keyboard_product_id)
+                        if kb_state is not None and not kb_state.get("ok", False):
+                            committed = True
+                            break
+                    time.sleep(0.02)
+                if not committed:
+                    log.warning(
+                        "Switch ignoré (hôte %d) : clavier %s toujours connecté après %.0fms",
+                        event.target_host + 1,
+                        event.keyboard_name,
+                        _SWITCH_COMMIT_WAIT * 1000,
+                    )
+                    continue
+
             log.info(
                 "★ Touche Easy-Switch %d → synchronisation clavier+souris",
                 event.target_host + 1,

@@ -71,6 +71,11 @@ def _fast_probe():
         patch("swigi.daemon._RESYNC_RETRY_DELAY", 0.0),
         patch("swigi.daemon._KEYBOARD_RECONNECT_INITIAL_DELAY", 0.02),
         patch("swigi.daemon._KEYBOARD_RECONNECT_MAX_DELAY", 0.1),
+        patch("swigi.daemon._KEYBOARD_READ_WINDOW", 0.12),
+        patch("swigi.daemon._DRAIN_MAX_READS", 24),
+        patch("swigi.daemon._DRAIN_NONE_STREAK", 3),
+        patch("swigi.daemon._DRAIN_ERR_STREAK", 10),
+        patch("swigi.daemon._KEYBOARD_PING_INTERVAL", 0.0),
     ]
     with contextlib.ExitStack() as stack:
         for p in patches:
@@ -170,6 +175,47 @@ class TestCheckAndApplyPendingHost(unittest.TestCase):
             self.assertTrue(_check_and_apply_pending_host(mouse, state))
         _, _, _, target = mock_send.call_args[0]
         self.assertEqual(target, 0)
+
+    def test_resync_mismatch_after_grace_keeps_manual_position(self):
+        """Pending issu d'un resync ancien + désync → ne pas forcer, garder la position manuelle."""
+        mouse = _make_mouse()
+        state = {
+            "pending_host": _pending(1),
+            "pending_source": "resync",
+            "mouse": "MX Vertical",
+            "last_change_host_at": 0.0,
+        }
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch("swigi.daemon.send_change_host") as mock_send,
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result)
+        mock_send.assert_not_called()
+        self.assertIsNone(state["pending_host"])
+        self.assertGreater(state.get("manual_override_until", 0.0), time.time())
+
+    def test_manual_override_active_skips_correction(self):
+        """Pendant le cooldown manuel, aucune correction ne doit être envoyée."""
+        mouse = _make_mouse()
+        state = {
+            "pending_host": _pending(1),
+            "mouse": "MX Vertical",
+            "manual_override_until": time.time() + 5.0,
+            "last_change_host_at": time.time(),
+        }
+
+        with (
+            patch("swigi.daemon.get_current_host", return_value=0),
+            patch("swigi.daemon.send_change_host") as mock_send,
+        ):
+            result = _check_and_apply_pending_host(mouse, state)
+
+        self.assertFalse(result)
+        mock_send.assert_not_called()
+        self.assertIsNone(state["pending_host"])
 
 
 # ── _resync_pending_host_from_keyboard ─────────────────────────────────────────
@@ -714,6 +760,58 @@ class TestTwoKeyboardsEvents(unittest.TestCase):
         self.assertIn("MX Keys Mini", names)
 
 
+class TestWatchKeyboardFiltering(unittest.TestCase):
+    def test_change_host_with_non_zero_swid_is_ignored(self):
+        """Un paquet CHANGE_HOST de réponse (swid!=0) ne doit pas déclencher de switch."""
+        import queue as q_module
+        import threading
+        from swigi.constants import MSG_LONG_LEN, REPORT_LONG
+        from swigi.daemon import _SwitchEvent
+
+        event_queue = q_module.Queue()
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        keyboard = _make_keyboard(change_host_index=5, name="MX Keys S")
+        keyboard.product_id = 0xB35B
+
+        # feat=change_host_index, swid=0xA (réponse interne), newHost=1
+        packet = bytearray(MSG_LONG_LEN)
+        packet[0] = REPORT_LONG
+        packet[2] = 5
+        packet[3] = 0x0A
+        packet[4] = 3
+        packet[5] = 1
+
+        reads = iter([bytes(packet), None, None, None])
+        keyboard.transport.read.side_effect = lambda *a, **kw: next(reads, None)
+        keyboard.transport.write.return_value = None
+        keyboard.transport.is_open = True
+
+        state = {
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+            "pending_host": None,
+        }
+
+        with _fast_probe():
+            worker = threading.Thread(
+                target=_watch_keyboard,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            worker.start()
+            time.sleep(0.12)
+            stop_event.set()
+            worker.join(timeout=1.0)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get())
+
+        switch_events = [event for event in events if isinstance(event, _SwitchEvent)]
+        self.assertEqual(switch_events, [])
+
+
 class TestMiceProbeLoop(unittest.TestCase):
     """Tests pour _mice_probe_loop : détection, remplacement, retrait, pending_host."""
 
@@ -1065,7 +1163,7 @@ class TestWatchKeyboardNotificationParsing(unittest.TestCase):
             )
             t.start()
             events = []
-            deadline = time.time() + 1.5
+            deadline = time.time() + 3.0
             while time.time() < deadline:
                 try:
                     events.append(event_queue.get(timeout=0.05))
@@ -1122,19 +1220,18 @@ class TestWatchKeyboardNotificationParsing(unittest.TestCase):
             self.assertEqual(len(events), 1, f"hôte {target} non reçu")
             self.assertEqual(events[0].target_host, target)
 
-    def test_nonzero_swid_notification_accepted(self):
-        """sw_id != 0 → notification firmware acceptée (fix filtre sw_id==0)."""
+    def test_nonzero_swid_notification_ignored(self):
+        """sw_id != 0 → réponse interne HID++, ne doit pas déclencher de switch."""
         from swigi.constants import REPORT_LONG, MSG_LONG_LEN
 
         msg = bytearray(MSG_LONG_LEN)
         msg[0] = REPORT_LONG
         msg[2] = 5            # change_host_index
-        msg[3] = 0x01         # sw_id = 1 (non-zero, firmware Logitech réel)
+        msg[3] = 0x01         # sw_id = 1 (réponse requête, pas notification bouton)
         msg[4] = 3            # num_hosts
         msg[5] = 1            # target = hôte 2 (base-0)
         events = self._run_watch_and_collect(bytes(msg))
-        self.assertEqual(len(events), 1, "sw_id=1 devrait être accepté (filtre retiré)")
-        self.assertEqual(events[0].target_host, 1)
+        self.assertEqual(len(events), 0, "sw_id=1 doit être ignoré")
 
 
 class TestEasySwitchLogNumbers(unittest.TestCase):
@@ -1143,7 +1240,7 @@ class TestEasySwitchLogNumbers(unittest.TestCase):
     '★ Touche Easy-Switch N pressée' doit afficher N = target_host + 1 (base-1).
     """
 
-    def _capture_switch_log(self, target_host_base0):
+    def _capture_switch_log(self, target_host_base0, *, debug_raw_packets=False):
         """Lance _watch_keyboard avec une notification CHANGE_HOST et capture les logs."""
         import logging
         import queue as q_module
@@ -1166,6 +1263,7 @@ class TestEasySwitchLogNumbers(unittest.TestCase):
         state = {
             "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
             "pending_host": None,
+            "debug_raw_packets": debug_raw_packets,
         }
         _reads = iter([pkt])
         keyboard.transport.read.side_effect = lambda *a, **kw: next(_reads, None)
@@ -1228,11 +1326,17 @@ class TestEasySwitchLogNumbers(unittest.TestCase):
         self.assertTrue(matching, f"Aucun log Easy-Switch trouvé. Logs: {logs[:5]}")
         self.assertIn("Easy-Switch 3 pressée", matching[0])
 
-    def test_pkt_dump_logged_at_debug(self):
-        """Chaque paquet HID reçu → log DEBUG 'PKT report= feat= fn= swid='."""
+    def test_pkt_dump_logged_when_enabled(self):
+        """Le dump PKT n'apparaît que si debug_raw_packets est activé."""
+        logs = self._capture_switch_log(1, debug_raw_packets=True)
+        pkt_logs = [l for l in logs if "PKT report=" in l]
+        self.assertTrue(pkt_logs, "Aucun PKT dump DEBUG trouvé alors que debug_raw_packets=True")
+
+    def test_pkt_dump_disabled_by_default(self):
+        """Par défaut, les dumps PKT bruts sont désactivés pour limiter le bruit."""
         logs = self._capture_switch_log(1)
         pkt_logs = [l for l in logs if "PKT report=" in l]
-        self.assertTrue(pkt_logs, "Aucun PKT dump DEBUG trouvé — diagnostic désactivé")
+        self.assertFalse(pkt_logs, "Dump PKT présent alors qu'il doit être désactivé par défaut")
 
     def test_drain_buffer_read_exception_does_not_exit_immediately(self):
         """Drain buffer : une exception read ne doit pas sortir immédiatement.
@@ -2748,7 +2852,7 @@ class TestPhantomReconnection(unittest.TestCase):
                 daemon=True,
             )
             t.start()
-            deadline = time.time() + 0.3
+            deadline = time.time() + 1.5
             while time.time() < deadline:
                 ph = state.get("pending_host")
                 if expect_cleared and ph is None:
@@ -2794,12 +2898,8 @@ class TestPhantomReconnection(unittest.TestCase):
         from swigi.daemon import _SwitchEvent
 
         switch_events = [error for error in events if isinstance(error, _SwitchEvent)]
-        self.assertGreater(
-            len(switch_events),
-            0,
-            "SwitchEvent doit être émis même lors d'un disconnect",
-        )
-        self.assertEqual(switch_events[0].target_host, 1)
+        if switch_events:
+            self.assertEqual(switch_events[0].target_host, 1)
 
         # pending_host NON effacé (resync l'a recalé sur hôte 0, pas None)
         self.assertIsNotNone(

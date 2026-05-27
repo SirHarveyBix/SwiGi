@@ -280,7 +280,8 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
-        mock_drain.assert_called_once_with(mock_transport)
+        self.assertGreaterEqual(mock_drain.call_count, 2)
+        self.assertEqual(mock_drain.call_args_list[0].args[0], mock_transport)
 
     def test_drain_called_on_failed_device_too(self):
         """_drain_transport appelé même si le périphérique est du mauvais type (avant fermeture)."""

@@ -131,6 +131,9 @@ def get_device_name(
         return None
     chars = []
     while len(chars) < name_len:
+        # Drain avant chaque chunk : la réponse du chunk précédent peut rester dans
+        # le buffer macOS BT et être lue à tort pour le chunk suivant (même feat+fn).
+        _drain_transport(transport, max_reads=8)
         reply = hidpp_request(
             transport,
             device_number,

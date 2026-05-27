@@ -123,9 +123,23 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             if device_type_wanted == DEVICE_TYPE_MOUSE and not is_mouse:
                 transport.close()
                 continue
+
+            # Important: après les lectures de nom/type, des réponses HID++ peuvent encore
+            # traîner dans le buffer. Sans ce drain, resolve_feature(CHANGE_HOST) peut lire
+            # un paquet stale et retourner un index incohérent (désync/false switch).
+            _drain_transport(transport)
             change_host_index = resolve_feature(
                 transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST
             )
+            if change_host_index == feature_index:
+                # Rare mais observé sur reconnect BT instable: même index que
+                # DEVICE_TYPE_AND_NAME. On redraine et on retente une fois.
+                _drain_transport(transport)
+                retry_index = resolve_feature(
+                    transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST
+                )
+                if retry_index is not None:
+                    change_host_index = retry_index
             if change_host_index is None:
                 transport.close()
                 continue
