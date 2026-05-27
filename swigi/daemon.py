@@ -87,7 +87,6 @@ _MOUSE_HUNT_INTERVAL = 1.0         # secondes entre probes en mode hunt
 _MOUSE_PROBE_INTERVAL = 5.0        # secondes entre probes en mode normal
 _MOUSE_HUNT_WINDOW = 30.0          # durée du mode hunt après un trigger
 _MANUAL_SWITCH_GRACE = 8.0         # délai avant lequel un reconnect souris peut être un switch manuel
-_CHANGE_HOST_CONFIRM_WINDOW = 12.0  # fenêtre pour confirmer switch réussi (aucune souris visible)
 
 # Constantes reconnexion clavier — module-level pour être patchables dans les tests.
 _KEYBOARD_RECONNECT_INITIAL_DELAY = (
@@ -447,11 +446,19 @@ def _watch_keyboard(
                 for _ in range(24):
                     try:
                         raw_bytes = keyboard.transport.read(timeout=10)
-                    except (TransportError, OSError):
-                        break
+                    except (TransportError, OSError) as _drain_err:
+                        # Ne pas sortir immédiatement : le noyau peut avoir des paquets
+                        # bufferisés lisibles même après l'échec d'écriture (BT LE macOS).
+                        none_streak += 1
+                        log.debug(
+                            "%s DRAIN read err (%d/10): %s", prefix, none_streak, _drain_err
+                        )
+                        if none_streak >= 10:  # ~100ms d'échecs → handle définitivement mort
+                            break
+                        continue
                     if raw_bytes is None or len(raw_bytes) < 4:
                         none_streak += 1
-                        if none_streak >= 3:  # 3×10ms = 30ms sans données → buffer épuisé
+                        if none_streak >= 3:  # 30ms sans données → buffer épuisé
                             break
                         continue
                     none_streak = 0
@@ -713,28 +720,6 @@ def _mice_probe_loop(
                 log.info("Souris retirée : %s (plus disponible)", mouse.name)
             mice[:] = [x for x in mice if x not in dead]
             mice_is_empty = len(mice) == 0
-
-        # Pass 1b : confirmation switch — aucune souris visible peu après CHANGE_HOST
-        # _send_to_all_mice fait mice.clear() → mice_is_empty=True dès le switch.
-        # Si found est aussi vide (souris partie vers l'autre Mac), switch confirmé.
-        # Garde : last_change_host_had_mice doit être True — si aucune souris n'était
-        # connectée au switch, pending_host doit rester actif pour corriger à la connexion.
-        if (
-            mice_is_empty
-            and not found
-            and state.get("pending_host") is not None
-            and state.get("last_change_host_had_mice", False)
-        ):
-            elapsed = time.time() - state.get("last_change_host_at", 0.0)
-            if 0.5 <= elapsed <= _CHANGE_HOST_CONFIRM_WINDOW:
-                pending = state.get("pending_host")
-                if pending is not None:
-                    log.info(
-                        "Aucune souris visible %.1fs après CHANGE_HOST → switch hôte %d confirmé, pending effacé",
-                        elapsed,
-                        pending[0] + 1,
-                    )
-                    state["pending_host"] = None
 
         # Pass 2 : HID I/O hors du lock (get_current_host peut prendre ~500ms)
         for new_mouse in new_mice:
