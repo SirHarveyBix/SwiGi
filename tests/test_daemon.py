@@ -46,6 +46,11 @@ def _make_device(name="MX Keys S", product_id=0xB35B, change_host_index=5):
     device.change_host_index = change_host_index
     device.transport = MagicMock()
     device.transport.is_open = True
+
+    def _close():
+        device.transport.is_open = False
+
+    device.close.side_effect = _close
     return device
 
 
@@ -117,9 +122,10 @@ class TestDrainSwitch(unittest.TestCase):
 # ── Tests _watch_keyboard ─────────────────────────────────────────────────────
 
 
+@patch("swigi.daemon.get_current_host", return_value=0)
 class TestWatchKeyboard(unittest.TestCase):
     @_fast_timing()
-    def test_switch_posted_immediately(self):
+    def test_switch_posted_immediately(self, mock_get_host):
         """Switch détecté → événement posté immédiatement (pas de commit wait)."""
         keyboard = _make_device(change_host_index=5)
         event_queue = queue.Queue()
@@ -155,7 +161,7 @@ class TestWatchKeyboard(unittest.TestCase):
         self.assertEqual(event.target_host, 2)
 
     @_fast_timing()
-    def test_debounce(self):
+    def test_debounce(self, mock_get_host):
         """Même switch dans la fenêtre de debounce → un seul événement."""
         keyboard = _make_device(change_host_index=5)
         event_queue = queue.Queue()
@@ -192,7 +198,7 @@ class TestWatchKeyboard(unittest.TestCase):
 
     @_fast_timing()
     @patch("swigi.daemon._reconnect_keyboard")
-    def test_reconnect_on_write_failure(self, mock_reconnect):
+    def test_reconnect_on_write_failure(self, mock_reconnect, mock_get_host):
         """Échec write → reconnexion automatique."""
         keyboard = _make_device(change_host_index=5)
         new_keyboard = _make_device(change_host_index=5, name="MX Keys S (new)")
@@ -239,6 +245,9 @@ class TestMiceProbeLoop(unittest.TestCase):
     def test_confirms_correct_host(self, mock_get_host, mock_find):
         """Vérification post-switch : confirme quand souris sur bon hôte."""
         mouse = _make_device(name="MX Vertical", product_id=0xB034, change_host_index=9)
+        found_mouse = _make_device(
+            name="MX Vertical", product_id=0xB034, change_host_index=9
+        )
         mock_get_host.return_value = 1
 
         mice = [mouse]
@@ -250,7 +259,7 @@ class TestMiceProbeLoop(unittest.TestCase):
 
         def stop(*args, **kwargs):
             stop_event.set()
-            return [mouse]
+            return [found_mouse]
 
         mock_find.side_effect = stop
 
@@ -339,11 +348,12 @@ class TestMiceProbeLoop(unittest.TestCase):
 # ── Tests run_daemon ──────────────────────────────────────────────────────────
 
 
+@patch("swigi.daemon.get_current_host", return_value=0)
 class TestRunDaemon(unittest.TestCase):
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.send_change_host")
-    def test_switch_sends_immediately(self, mock_send, mock_find):
+    def test_switch_sends_immediately(self, mock_send, mock_find, mock_get_host):
         """Switch → CHANGE_HOST envoyé immédiatement à la souris."""
         mock_find.return_value = []
         keyboard = _make_device(
@@ -383,7 +393,7 @@ class TestRunDaemon(unittest.TestCase):
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.send_change_host")
     @patch("swigi.daemon.prefs", {"mouse_follow": False})
-    def test_mouse_follow_disabled(self, mock_send, mock_find):
+    def test_mouse_follow_disabled(self, mock_send, mock_find, mock_get_host):
         """Si mouse_follow=False, CHANGE_HOST n'est pas envoyé."""
         mock_find.return_value = []
         keyboard = _make_device(change_host_index=5)
@@ -584,8 +594,9 @@ class TestApplyBetterMouse(unittest.TestCase):
 
 class TestWatchKeyboardWatchdog(unittest.TestCase):
     @_fast_timing()
+    @patch("swigi.daemon.get_current_host", return_value=0)
     @patch("swigi.daemon._reconnect_keyboard")
-    def test_watchdog_triggers_reconnect(self, mock_reconnect):
+    def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):
         """Watchdog → reconnexion après 10s sans réponse."""
         keyboard = _make_device(change_host_index=5)
         mock_reconnect.return_value = None  # reconnect fails → thread exits

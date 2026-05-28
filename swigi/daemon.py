@@ -92,7 +92,18 @@ def _watch_keyboard(
     last_switch_time = 0.0
     last_switch_target = -1
 
-    log.info("⌨️  [%s] Surveillance démarrée", name)
+    # Déterminer l'index de ce Mac via le clavier
+    try:
+        this_mac_host = get_current_host(
+            keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index
+        )
+        if this_mac_host is not None:
+            state["this_mac_host"] = this_mac_host
+            log.info("⌨️  [%s] Surveillance démarrée (hôte %d)", name, this_mac_host + 1)
+        else:
+            log.info("⌨️  [%s] Surveillance démarrée", name)
+    except (TransportError, OSError):
+        log.info("⌨️  [%s] Surveillance démarrée", name)
 
     while not stop_event.is_set():
         # Watchdog
@@ -108,6 +119,7 @@ def _watch_keyboard(
             log.info("🔄 ⌨️ [%s] Reconnecté", name)
             notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
+            _pull_mouse_on_reconnect(state)
             hunt_trigger.set()
             continue
 
@@ -140,6 +152,7 @@ def _watch_keyboard(
                 if time.time() - last_switch_time > 5.0:
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
+                _pull_mouse_on_reconnect(state)
                 hunt_trigger.set()
                 continue
 
@@ -351,6 +364,22 @@ def _mice_probe_loop(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _pull_mouse_on_reconnect(state: dict) -> None:
+    """Après reconnexion clavier, positionner le target pour ramener la souris sur ce Mac."""
+    this_mac_host = state.get("this_mac_host")
+    if this_mac_host is None:
+        return
+    lock = state.get("_lock")
+    if lock:
+        with lock:
+            state["last_target_host"] = this_mac_host
+            state["last_switch_time"] = time.time()
+    else:
+        state["last_target_host"] = this_mac_host
+        state["last_switch_time"] = time.time()
+    log.info("🔁 Clavier revenu → ramener souris sur hôte %d", this_mac_host + 1)
 
 
 def _set_keyboard_status(state: dict, product_id: int, name: str, ok: bool) -> None:
