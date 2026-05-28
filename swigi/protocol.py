@@ -130,9 +130,6 @@ def get_device_name(
         return None
     chars = []
     while len(chars) < name_len:
-        # Drain avant chaque chunk : la réponse du chunk précédent peut rester dans
-        # le buffer macOS BT et être lue à tort pour le chunk suivant (même feat+fn).
-        _drain_transport(transport, max_reads=8)
         reply = hidpp_request(
             transport,
             device_number,
@@ -149,7 +146,7 @@ def get_device_name(
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
-def _drain_transport(transport: HIDTransport, max_reads: int = 64) -> None:
+def _drain_transport(transport: HIDTransport, max_reads: int = 8) -> None:
     """Vide le buffer d'entrée HID avant d'écrire une commande.
 
     timeout=1 (1ms) plutôt que 0 : sur macOS Sonoma/Sequoia + BT 5.3 (M3),
@@ -169,27 +166,15 @@ def send_change_host(
 ) -> None:
     """Bascule le périphérique vers target_host (base 0).
 
-    Drain avant envoi, puis 2 writes (1 retry en cas d'échec sur le 2e).
-    Exception sur 1er essai = erreur réelle (propagée).
-    Exception sur retry = périphérique déconnecté après switch réussi (ignorée).
+    Drain avant envoi (vide le buffer de réponses stale), puis single write.
+    Si le write échoue, l'exception est propagée (transport mort).
     """
     _drain_transport(transport)
 
     request_id = (feature_index << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     parameters = struct.pack("B", target_host)
     message = _build_message(device_number, request_id, parameters)
-    for attempt in range(2):
-        try:
-            transport.write(message)
-        except (TransportError, OSError):
-            if attempt == 0:
-                raise  # 1er essai échoué = transport mort avant envoi
-            return  # retry échoué = switch réussi, périphérique déconnecté
-    # Flush : lecture courte force le BT stack à expédier les writes en attente
-    try:
-        transport.read(timeout=10)
-    except (TransportError, OSError):
-        pass  # souris déconnectée = commande reçue
+    transport.write(message)
 
 
 def get_current_host(

@@ -269,8 +269,8 @@ class TestMiceProbeLoop(unittest.TestCase):
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.get_current_host")
     @patch("swigi.daemon.send_change_host")
-    def test_retry_on_wrong_host(self, mock_send, mock_get_host, mock_find):
-        """Souris sur mauvais hôte après 5s → un seul retry."""
+    def test_wrong_host_logs_warning_no_retry(self, mock_send, mock_get_host, mock_find):
+        """Souris sur mauvais hôte → log warning, pas de retry."""
         mouse = _make_device(name="MX Vertical", product_id=0xB034, change_host_index=9)
         # find_all_devices retourne un nouvel objet (pas le même que dans mice)
         found_mouse = _make_device(
@@ -299,7 +299,7 @@ class TestMiceProbeLoop(unittest.TestCase):
         thread.start()
         thread.join(timeout=2.0)
 
-        mock_send.assert_called_once()
+        mock_send.assert_not_called()
 
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")

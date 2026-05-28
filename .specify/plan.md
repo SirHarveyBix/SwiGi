@@ -10,6 +10,7 @@
 ### Le problème constaté
 
 SwiGi ne fonctionne pas de manière fiable. Les symptômes :
+
 - **Des switchs sont ignorés** : on appuie sur Easy-Switch, rien ne se passe. Il faut réappuyer.
 - **Comportement imprévisible** : parfois la souris bascule toute seule sans raison, parfois elle refuse de suivre.
 - **Instabilité avec 3 machines** : ça marche à peu près avec 2, ça devient chaotique avec 3.
@@ -78,17 +79,19 @@ Un outil **simple et déterministe** :
 **Objectif :** Factoriser les 2 blocs de reconnexion dupliqués.
 
 **Signature :**
+
 ```python
 def _reconnect_keyboard(
     product_id: int,
     stop_event: threading.Event,
     initial_delay: float = 0.5,
     max_delay: float = 5.0,
-    stability_seconds: float = 2.0,
+    stability_seconds: float = 0.5,
 ) -> DeviceInfo | None:
 ```
 
 **Logique :**
+
 1. Boucle avec backoff exponentiel (delay × 1.5, max 5s)
 2. `find_keyboard_by_product_id` → si trouvé, attendre `stability_seconds`
 3. Vérifier stabilité via ping → si OK, retourner
@@ -97,6 +100,7 @@ def _reconnect_keyboard(
 ### 1.2 Réécrire `daemon.py` — machine à 3 états
 
 **État partagé (protégé par un seul lock) :**
+
 ```python
 @dataclasses.dataclass
 class DaemonState:
@@ -110,6 +114,7 @@ class DaemonState:
 ```
 
 **Supprimé :**
+
 - `pending_host` / `pending_source`
 - `manual_override_until`
 - `suppress_resync_until`
@@ -122,13 +127,15 @@ class DaemonState:
 ### 1.3 Simplifier `_watch_keyboard`
 
 **Garder :**
+
 - Ping throttlé (100ms)
-- Lecture fenêtre 180ms pour notifications CHANGE_HOST (swid=0)
-- Debounce 2s sur même target
+- Lecture fenêtre 100ms pour notifications CHANGE_HOST (swid=0)
+- Debounce 1s sur même target
 - Reconnexion via helper factorisé (1.1)
 - Drain simple (10 reads max) au moment de la déconnexion
 
 **Supprimer :**
+
 - Drain complexe (60 reads + err_streak + none_streak)
 - `_SWITCH_COMMIT_WAIT` → sur switch détecté, poster IMMÉDIATEMENT dans la queue
 - Phantom window / suppress_resync
@@ -142,18 +149,27 @@ event_queue.put(_SwitchEvent(target_host, keyboard.name, keyboard.product_id))
 
 ### 1.4 Réécrire `_mice_probe_loop`
 
-**Probe fixe toutes les 3 secondes (pas de hunt/normal) :**
-1. `find_all_devices(MOUSE)` → mettre à jour liste
-2. Si `last_target_host` est set ET souris disponible → envoyer CHANGE_HOST
-3. Après envoi réussi → passer en mode VERIFYING
-4. Au probe suivant (3s plus tard) → `get_current_host()` → log résultat
-5. Clear `last_target_host` après confirmation OU après 10s timeout
+**Probe dual-speed avec hunt trigger :**
+
+- Mode normal : probe toutes les 3s (`_PROBE_INTERVAL`)
+- Mode rapide : probe toutes les 1s pendant 15s après un switch (`_PROBE_FAST_INTERVAL`, `_PROBE_FAST_DURATION`)
+- Déclenché par `hunt_trigger.set()` après chaque switch ou reconnexion clavier
+
+**Logique par cycle :**
+
+1. `find_all_devices(MOUSE)` → mettre à jour liste (ajouter nouvelles, retirer mortes)
+2. Si `last_target_host` est set → vérifier via `get_current_host()`
+3. Si confirmé → log INFO "✓" + appliquer BetterMouse + clear target
+4. Si timeout (10s) → log WARNING "⚠" + clear target
+5. **Pas de retry CHANGE_HOST** — la commande a été envoyée dans le dispatcher
 
 **Vérification post-switch (log only) :**
+
 ```python
 current = get_current_host(mouse.transport, ...)
 if current == last_target_host:
     log.info("✓ %s confirmée sur hôte %d", mouse.name, current + 1)
+    _apply_better_mouse(mouse.name)
 elif current is not None:
     log.warning("⚠ %s sur hôte %d, attendu %d", mouse.name, current + 1, last_target_host + 1)
 # Dans tous les cas : clear last_target_host, retour IDLE
@@ -207,33 +223,26 @@ Granularité grossière acceptable car les opérations sont rapides (pas d'I/O s
 
 ```python
 def send_change_host(transport, device_number, feature_index, target_host):
-    _drain_transport(transport, max_reads=16)
+    _drain_transport(transport, max_reads=8)
     message = _build_message(device_number, request_id, parameters)
-    for attempt in range(2):  # 2 essais au lieu de 5
-        try:
-            transport.write(message)
-        except (TransportError, OSError):
-            if attempt == 0:
-                raise
-            return
-    # Flush
-    try:
-        transport.read(timeout=10)
-    except (TransportError, OSError):
-        pass
+    transport.write(message)  # single write — le firmware acquitte ou déconnecte
 ```
 
-### 2.4 Vérification post-switch (implémentation détaillée)
+**Pas de double write** — un second envoi CHANGE_HOST pendant que le firmware traite le premier peut créer une race condition interne au périphérique.
+**Pas de flush read** — un `read()` après `write()` n'accélère pas l'envoi sur macOS BT ; il ajoute de la latence inutile.
+
+### 2.4 Vérification post-switch (log only, pas de retry)
 
 **Timing :** Au probe suivant (3s max après switch).
 **Logique :**
+
 - `get_current_host()` sur chaque souris
-- Si hôte == target → log INFO "✓"
-- Si hôte != target → log WARNING "⚠" (PAS de renvoi CHANGE_HOST)
+- Si hôte == target → log INFO "✓" + appliquer BetterMouse si activé
+- Si hôte != target → log WARNING "⚠"
 - Si lecture impossible → log DEBUG (souris déconnectée = elle a basculé)
 - Clear `last_target_host` dans tous les cas
 
-**Pas de retry, pas de correction. L'info est dans les logs pour diagnostic.**
+**Strictement aucun retry, aucune correction automatique.** L'info est dans les logs pour diagnostic. Si la souris n'a pas suivi, l'utilisateur rappuie sur Easy-Switch.
 
 ---
 
@@ -242,6 +251,7 @@ def send_change_host(transport, device_number, feature_index, target_host):
 ### 3.1 Hook post-vérification
 
 Déclenché dans `_mice_probe_loop` APRÈS la vérification de Phase 2.4 :
+
 ```python
 if confirmed_on_target:
     _apply_better_mouse_profile_if_needed(mouse.name)
@@ -253,6 +263,7 @@ if confirmed_on_target:
 Quand la souris arrive, SwiGi applique le profil local automatiquement.
 
 **Implémentation :**
+
 - Garder `bettermouse.py` existant (correct et testé)
 - Garder le hook `_apply_better_mouse_profile_if_needed`
 - Simplifier : appeler uniquement quand une souris est nouvellement détectée
@@ -265,6 +276,7 @@ Quand la souris arrive, SwiGi applique le profil local automatiquement.
 ### 4.1 Réécrire tests daemon
 
 Tests simplifiés — pas besoin de `_fast_probe` ni de hacks de timing :
+
 - `test_switch_sends_change_host` : switch → commande envoyée immédiatement
 - `test_switch_no_mice_retries` : souris absente → retry au probe suivant
 - `test_verification_logs_success` : après switch, probe confirme hôte OK → log
@@ -275,6 +287,7 @@ Tests simplifiés — pas besoin de `_fast_probe` ni de hacks de timing :
 ### 4.2 Supprimer code mort
 
 Constantes à supprimer :
+
 - `_PENDING_HOST_TTL_SWITCH`, `_PENDING_HOST_TTL_RESYNC`
 - `_MANUAL_SWITCH_GRACE`, `_MANUAL_OVERRIDE_COOLDOWN`
 - `_ENABLE_KEYBOARD_RESYNC_PENDING`, `_RESYNC_AFTER_SWITCH_WINDOW`
@@ -283,12 +296,14 @@ Constantes à supprimer :
 - `_MOUSE_HUNT_INTERVAL`, `_MOUSE_HUNT_WINDOW`
 
 Fonctions à supprimer :
+
 - `_resync_pending_host_from_keyboard`
 - `_check_and_apply_pending_host`
 
 ### 4.3 GUI — simplification
 
 Garder :
+
 - Statut clavier/souris (✅/❌)
 - Compteur basculements
 - Toggle notifications
@@ -296,28 +311,88 @@ Garder :
 - Section BetterMouse
 
 Supprimer :
+
 - Tout élément référençant les mécanismes supprimés
 
 ---
 
 ## Risques
 
-| Risque | Probabilité | Impact | Mitigation |
-|--------|-------------|--------|------------|
-| Cas où la correction auto était utile | Moyen | Moyen | Log WARNING visible → si fréquent, ajouter 1 retry simple |
-| BT macOS ne livre pas la notification avant déco | Faible | Élevé | Drain simple (10 reads) au moment de la déco capture ce cas |
-| Multi-clavier : switch simultané | Très faible | Faible | Premier arrivé gagne (queue FIFO) |
-| Probe 3s trop lent pour trouver la souris | Faible | Moyen | Trigger immédiat après switch (hunt_trigger event) |
+| Risque                                           | Probabilité | Impact | Mitigation                                                  |
+| ------------------------------------------------ | ----------- | ------ | ----------------------------------------------------------- |
+| Cas où la correction auto était utile            | Moyen       | Moyen  | Log WARNING visible → si fréquent, ajouter 1 retry simple   |
+| BT macOS ne livre pas la notification avant déco | Faible      | Élevé  | Drain simple (10 reads) au moment de la déco capture ce cas |
+| Multi-clavier : switch simultané                 | Très faible | Faible | Premier arrivé gagne (queue FIFO)                           |
+| Probe 3s trop lent pour trouver la souris        | Faible      | Moyen  | Trigger immédiat après switch (hunt_trigger event)          |
 
 ---
 
 ## Métriques de succès
 
-| Métrique | Actuel | Cible |
-|----------|--------|-------|
-| Lignes daemon.py | ~1200 | ≤ 250 |
-| Latence switch → souris | Variable (350ms+ commit wait) | < 200ms |
-| Switchs ignorés | Fréquent (_SWITCH_COMMIT_WAIT) | Zéro |
-| Log par switch | Bruit (debug_raw_packets) | 2 lignes : "envoyé" + "confirmé/timeout" |
-| Constantes de timing | 15+ | ≤ 5 |
-| Race conditions | 3+ identifiées | 0 (lock unique) |
+| Métrique                | Actuel                         | Cible                                    |
+| ----------------------- | ------------------------------ | ---------------------------------------- |
+| Lignes daemon.py        | ~1200                          | ≤ 250                                    |
+| Latence switch → souris | Variable (350ms+ commit wait)  | < 200ms                                  |
+| Switchs ignorés         | Fréquent (_SWITCH_COMMIT_WAIT) | Zéro                                     |
+| Log par switch          | Bruit (debug_raw_packets)      | 2 lignes : "envoyé" + "confirmé/timeout" |
+| Constantes de timing    | 15+                            | ≤ 5                                      |
+| Race conditions         | 3+ identifiées                 | 0 (lock unique)                          |
+
+---
+
+## Phase 5 — Corrections post-implémentation v2
+
+### Contexte
+
+Après l'implémentation des Phases 1-4, un audit du code résultant a identifié des anomalies introduites par des contradictions dans les specs originales (T7/T8) et des valeurs de temporisation sous-optimales.
+
+### 5.1 Fix `send_change_host` — single write
+
+**Problème :** Le code implémente un double write (`for attempt in range(2): transport.write(...)`) où les deux writes s'exécutent même sans erreur. Un double CHANGE_HOST peut confondre le firmware Logitech (race condition interne).
+
+**Fix :** Single write. Si le write échoue → exception propagée. Si le write réussit → terminé.
+
+### 5.2 Supprimer flush `read(timeout=10)` post-write
+
+**Problème :** Le `transport.read(timeout=10)` après les writes ne "force" rien sur macOS BT — c'est un no-op qui ajoute 10ms de latence.
+
+**Fix :** Supprimer.
+
+### 5.3 Supprimer retry dans `_mice_probe_loop`
+
+**Problème :** Le code renvoie CHANGE_HOST après 5s si la souris n'est pas sur le bon hôte. Ceci contredit Phase 2.4 ("pas de retry") et peut interférer avec un switch lent mais réussi.
+
+**Fix :** Garder uniquement le log warning. Pas de renvoi.
+
+### 5.4 Optimiser temporisations
+
+| Constante         | Valeur actuelle | Nouvelle valeur | Justification                                                        |
+| ----------------- | --------------- | --------------- | -------------------------------------------------------------------- |
+| `_READ_WINDOW`    | 0.18 (180ms)    | 0.10 (100ms)    | Constitution ≥80ms ; 100ms suffisant, réduit latence                 |
+| `_STABILITY_WAIT` | 2.0 (2s)        | 0.5 (500ms)     | Constitution interdit >1s chemin critique ; ping valide la stabilité |
+| `_DEBOUNCE`       | 2.0 (2s)        | 1.0 (1s)        | 2s bloque des switchs rapides légitimes                              |
+
+### 5.5 Fix menu bar — double bouton Quitter
+
+**Problème :** `rumps.App` ajoute automatiquement un bouton "Quit" en anglais. Le code ajoute aussi `_rumps.MenuItem("Quitter", ...)`. Résultat : deux boutons quit.
+
+**Fix :** `super().__init__("⌨️", quit_button=None)` pour supprimer le "Quit" par défaut.
+
+### 5.6 Supprimer `_drain_transport` dans `get_device_name`
+
+**Problème :** Le drain entre chaque chunk de nom ajoute ~50ms à la discovery. Le drain déjà présent dans `find_all_devices` avant `resolve_feature(CHANGE_HOST)` est suffisant.
+
+**Fix :** Supprimer les appels `_drain_transport(transport, max_reads=8)` dans `get_device_name`.
+
+---
+
+## Clarifications fonctionnelles
+
+| Comportement         | Règle                                                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Souris en mouvement  | La souris suit le clavier **même si elle bouge** — CHANGE_HOST est envoyé sur l'interface HID++ (usage page 0xFF00), indépendante des movement reports (0x0001) |
+| Switch souris manuel | Le clavier **ne suit PAS** — pipe strictement unidirectionnel : clavier → souris                                                                                |
+| Rappui Easy-Switch   | Chaque pression = envoi immédiat CHANGE_HOST → la souris revient                                                                                                |
+| Toggle "Souris suit" | Désactive l'envoi de CHANGE_HOST aux souris ; le clavier switch seul                                                                                            |
+| Bouton Quitter       | Empêche le crash recovery loop de relancer automatiquement ; seule une exécution manuelle relance SwiGi                                                         |
+| Restart au boot      | Non affecté par Quit — launchd/login item relance au prochain démarrage système                                                                                 |

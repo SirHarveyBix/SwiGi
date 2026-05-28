@@ -89,7 +89,7 @@ if HAS_RUMPS and _rumps:
             initial_mouse = (
                 ", ".join(initial_mice) if initial_mice else state.get("mouse")
             )
-            super().__init__("⌨️")
+            super().__init__("⌨️", quit_button=None)
             try:
                 from AppKit import NSApplication
 

@@ -161,21 +161,23 @@ class TestSendChangeHost(unittest.TestCase):
             + b"\x00" * 16
         )
 
-    def test_send_writes_2_times(self):
-        """Envoie le message CHANGE_HOST 2 fois (write + retry)."""
+    def test_send_writes_once(self):
+        """Envoie le message CHANGE_HOST une seule fois (single write)."""
         transport = MockTransport()
         protocol.send_change_host(transport, 0xFF, 0x09, 1)
-        self.assertEqual(len(transport.written_messages), 2)
+        self.assertEqual(len(transport.written_messages), 1)
 
-    def test_send_all_writes_same_message(self):
-        """Les 2 writes envoient le même message."""
+    def test_send_message_format(self):
+        """Le write envoie un message HID++ correct."""
         transport = MockTransport()
         protocol.send_change_host(transport, 0xFF, 0x09, 2)
         messages = transport.written_messages
-        self.assertTrue(all(message == messages[0] for message in messages))
+        self.assertEqual(len(messages), 1)
+        # Vérifie que c'est un message REPORT_LONG (20 octets)
+        self.assertEqual(len(messages[0]), 20)
 
     def test_send_first_write_failure_raises(self):
-        """Premier write échoué propage l'erreur."""
+        """Write échoué propage l'erreur."""
         from swigi.transport import TransportError
 
         class FailFirstTransport(MockTransport):
@@ -185,22 +187,6 @@ class TestSendChangeHost(unittest.TestCase):
         fail_transport = FailFirstTransport()
         with self.assertRaises(TransportError):
             protocol.send_change_host(fail_transport, 0xFF, 0x09, 0)
-
-    def test_send_retry_failure_is_success(self):
-        """Deuxième write échoué est ignoré (switch réussi, device déconnecté)."""
-        from swigi.transport import TransportError
-
-        call_count = [0]
-
-        class FailAfterFirstTransport(MockTransport):
-            def write(self, message):
-                call_count[0] += 1
-                if call_count[0] > 1:
-                    raise TransportError("disconnected — switch succeeded")
-
-        fail_transport = FailAfterFirstTransport()
-        protocol.send_change_host(fail_transport, 0xFF, 0x09, 0)
-        self.assertEqual(call_count[0], 2)
 
 
 class TestResolveFeature(unittest.TestCase):

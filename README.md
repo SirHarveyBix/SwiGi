@@ -17,8 +17,8 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 ## ✨ Fonctionnalités
 
-| Fonctionnalité                   | Description                                                           |
-| -------------------------------- | --------------------------------------------------------------------- |
+| Fonctionnalité                  | Description                                                           |
+| ------------------------------- | --------------------------------------------------------------------- |
 | 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement       |
 | 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
 | 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
@@ -362,21 +362,21 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 
 ### Features
 
-| Feature                     | Description                                                    |
-| --------------------------- | -------------------------------------------------------------- |
-| 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically           |
-| 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required           |
-| 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop        |
-| 🔗 **Verified sync**        | Confirms in logs that the mouse actually switched              |
-| ⚡ **Low latency**          | < 300ms response under normal conditions                       |
-| 🖱️ **Multi-mouse**          | Sends CHANGE_HOST to all connected mice simultaneously         |
-| 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                     |
-| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following         |
-| 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                    |
-| 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux)     |
-| 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth              |
-| 🔒 **Non-intrusive**        | macOS non-exclusive mode — coexists with Logi Options+         |
-| 📦 **Zero friction**        | Single Python package, one dependency (hidapi)                 |
+| Feature                    | Description                                                |
+| -------------------------- | ---------------------------------------------------------- |
+| 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically       |
+| 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required       |
+| 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop    |
+| 🔗 **Verified sync**        | Confirms in logs that the mouse actually switched          |
+| ⚡ **Low latency**          | < 300ms response under normal conditions                   |
+| 🖱️ **Multi-mouse**          | Sends CHANGE_HOST to all connected mice simultaneously     |
+| 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                 |
+| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following     |
+| 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                |
+| 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux) |
+| 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth          |
+| 🔒 **Non-intrusive**        | macOS non-exclusive mode — coexists with Logi Options+     |
+| 📦 **Zero friction**        | Single Python package, one dependency (hidapi)             |
 
 ### Requirements
 
@@ -574,10 +574,10 @@ If SwiGi saves you time / Si SwiGi t'économise du temps :
 
 ## 📋 Historique des correctifs
 
-| Version    | Symptôme                                                             | Fix                                                      |
-| ---------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)    | MSG_LENGTHS check accepte len >= au lieu de ==           |
-| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O) | I/O sorti du lock dans probe loop                        |
+| Version    | Symptôme                                                             | Fix                                            |
+| ---------- | -------------------------------------------------------------------- | ---------------------------------------------- |
+| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)    | MSG_LENGTHS check accepte len >= au lieu de == |
+| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O) | I/O sorti du lock dans probe loop              |
 
 ---
 

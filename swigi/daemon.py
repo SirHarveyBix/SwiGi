@@ -28,14 +28,14 @@ log = logging.getLogger("swigi.daemon")
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
 _PING_INTERVAL = 0.10
-_READ_WINDOW = 0.18
+_READ_WINDOW = 0.10
 _RECONNECT_DELAY = 0.5
 _RECONNECT_MAX_DELAY = 5.0
-_STABILITY_WAIT = 2.0
+_STABILITY_WAIT = 0.5
 _PROBE_INTERVAL = 3.0
 _PROBE_FAST_INTERVAL = 1.0
 _PROBE_FAST_DURATION = 15.0
-_DEBOUNCE = 2.0
+_DEBOUNCE = 1.0
 _VERIFY_TIMEOUT = 10.0
 
 
@@ -298,20 +298,13 @@ def _mice_probe_loop(
                         state["last_target_host"] = None
                         _apply_better_mouse(mouse.name)
                         break
-                    elif current is not None and time.time() - switch_time > 5.0:
-                        # Après 5s, si toujours sur le mauvais hôte → renvoyer une fois
-                        log.info("⚡ Retry → %s → hôte %d", mouse.name, target + 1)
-                        try:
-                            send_change_host(
-                                mouse.transport,
-                                DEVICE_NUMBER_DIRECT,
-                                mouse.change_host_index,
-                                target,
-                            )
-                            mouse.close()
-                        except (TransportError, OSError):
-                            mouse.close()
-                        break
+                    elif current is not None:
+                        log.warning(
+                            "⚠ %s sur hôte %d, attendu %d",
+                            mouse.name,
+                            current + 1,
+                            target + 1,
+                        )
         else:
             # Pas de switch en cours — BetterMouse sur nouvelles souris
             for mouse in new_mice:
