@@ -171,10 +171,10 @@ def _watch_keyboard(
             last_response = time.time()
             got_data = True
 
-            # CHANGE_HOST notification (swid=0 = hardware, pas nos requêtes)
+            # CHANGE_HOST notification (accepte tout sw_id — le MX Keys
+            # peut envoyer avec sw_id != 0 selon le firmware)
             if (
                 raw[2] == keyboard.change_host_index
-                and (raw[3] & 0x0F) == 0
                 and len(raw) > 5
             ):
                 num_hosts = raw[4] or 3
@@ -212,7 +212,7 @@ def _drain_switch(keyboard: DeviceInfo) -> int | None:
             continue
         if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
             continue
-        if raw[2] == keyboard.change_host_index and (raw[3] & 0x0F) == 0:
+        if raw[2] == keyboard.change_host_index:
             num_hosts = raw[4] or 3
             target = raw[5]
             if 0 <= target < num_hosts:
@@ -355,7 +355,6 @@ def _mice_probe_loop(
                                 mouse.change_host_index,
                                 target,
                             )
-                            mouse.close()
                         except (TransportError, OSError):
                             mouse.close()
                         state["last_target_host"] = None
@@ -514,7 +513,6 @@ def run_daemon(
                         event.target_host,
                     )
                     log.info("⚡ %s → hôte %d", mouse.name, event.target_host + 1)
-                    mouse.close()
                     sent += 1
                 except (TransportError, OSError):
                     mouse.close()
