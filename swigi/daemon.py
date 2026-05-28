@@ -105,7 +105,7 @@ def _watch_keyboard(
                 break
             name = keyboard.name
             _set_keyboard_status(state, keyboard.product_id, name, True)
-            log.info("🔄 [%s] Reconnecté", name)
+            log.info("🔄 ⌨️ [%s] Reconnecté", name)
             notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
             hunt_trigger.set()
@@ -136,7 +136,7 @@ def _watch_keyboard(
                     break
                 name = keyboard.name
                 _set_keyboard_status(state, keyboard.product_id, name, True)
-                log.info("🔄 [%s] Reconnecté", name)
+                log.info("🔄 ⌨️ [%s] Reconnecté", name)
                 if time.time() - last_switch_time > 5.0:
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
@@ -237,6 +237,7 @@ def _mice_probe_loop(
         with mouse_lock:
             existing_pids = {device.product_id for device in mice}
             new_mice = []
+            reconnected_mice = []
             for mouse in found:
                 if mouse.product_id not in existing_pids:
                     mice.append(mouse)
@@ -252,15 +253,28 @@ def _mice_probe_loop(
                         if device.product_id != mouse.product_id
                     ]
                     mice.append(mouse)
-                    new_mice.append(mouse)
+                    reconnected_mice.append(mouse)
                 else:
                     mouse.close()
-            # Retirer mortes
+            # Retirer mortes — détecter les déconnexions
+            disconnected = [
+                device
+                for device in mice
+                if not device.transport.is_open and device.product_id not in found_pids
+            ]
             mice[:] = [
                 device
                 for device in mice
                 if device.transport.is_open or device.product_id in found_pids
             ]
+
+        for mouse in disconnected:
+            log.info("🔌 🖱️ [%s] Déconnectée", mouse.name)
+            notify(f"{mouse.name} déconnectée", "Souris")
+
+        for mouse in reconnected_mice:
+            log.info("🔄 🖱️ [%s] Reconnectée", mouse.name)
+            notify(f"{mouse.name} reconnectée", "Souris")
 
         for mouse in new_mice:
             log.info("🖱️  Souris : %s (PID=0x%04X)", mouse.name, mouse.product_id)
@@ -299,12 +313,26 @@ def _mice_probe_loop(
                         _apply_better_mouse(mouse.name)
                         break
                     elif current is not None:
-                        log.warning(
-                            "⚠ %s sur hôte %d, attendu %d",
+                        # Souris sur mauvais hôte → envoi différé (la commande
+                        # n'a pas été reçue ou le dispatcher n'avait pas de souris)
+                        log.info(
+                            "→ %s sur hôte %d, envoi vers hôte %d",
                             mouse.name,
                             current + 1,
                             target + 1,
                         )
+                        try:
+                            send_change_host(
+                                mouse.transport,
+                                DEVICE_NUMBER_DIRECT,
+                                mouse.change_host_index,
+                                target,
+                            )
+                            mouse.close()
+                        except (TransportError, OSError):
+                            mouse.close()
+                        state["last_target_host"] = None
+                        break
         else:
             # Pas de switch en cours — BetterMouse sur nouvelles souris
             for mouse in new_mice:
