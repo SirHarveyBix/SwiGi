@@ -1,7 +1,6 @@
 """SwiGi daemon — pipe unidirectionnel Easy-Switch clavier → souris.
 
 Clavier notifie → SwiGi envoie CHANGE_HOST → souris bascule → log confirme.
-Pas de correction auto, pas de pending TTL, pas de détection de switch manuel.
 """
 
 import dataclasses
@@ -27,8 +26,8 @@ log = logging.getLogger("swigi.daemon")
 
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
-_PING_INTERVAL = 0.10
-_READ_WINDOW = 0.10
+_PING_INTERVAL = 0.5
+_READ_WINDOW = 0.5
 _RECONNECT_DELAY = 0.5
 _RECONNECT_MAX_DELAY = 5.0
 _STABILITY_WAIT = 0.5
@@ -36,7 +35,7 @@ _PROBE_INTERVAL = 3.0
 _PROBE_FAST_INTERVAL = 1.0
 _PROBE_FAST_DURATION = 15.0
 _DEBOUNCE = 1.0
-_VERIFY_TIMEOUT = 10.0
+_VERIFY_TIMEOUT = 30.0
 
 
 # ── Événements ────────────────────────────────────────────────────────────────
@@ -85,7 +84,7 @@ def _watch_keyboard(
     stop_event: threading.Event,
     hunt_trigger: threading.Event,
 ) -> None:
-    """Écoute CHANGE_HOST (swid=0), poste dans la queue, reconnecte si nécessaire."""
+    """Écoute CHANGE_HOST, poste dans la queue, reconnecte si nécessaire."""
     name = keyboard.name
     last_response = time.time()
     last_ping = 0.0
@@ -161,7 +160,7 @@ def _watch_keyboard(
         got_data = False
         while time.time() < deadline and not stop_event.is_set():
             try:
-                raw = keyboard.transport.read(timeout=10)
+                raw = keyboard.transport.read(timeout=50)
             except (TransportError, OSError):
                 break
             if not raw or len(raw) < 4:
@@ -205,7 +204,7 @@ def _drain_switch(keyboard: DeviceInfo) -> int | None:
     """Lit jusqu'à 10 paquets pour capturer un switch en buffer avant déconnexion."""
     for _ in range(10):
         try:
-            raw = keyboard.transport.read(timeout=5)
+            raw = keyboard.transport.read(timeout=200)
         except (TransportError, OSError):
             break
         if not raw or len(raw) < 6:

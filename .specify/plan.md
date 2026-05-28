@@ -409,6 +409,28 @@ Après l'implémentation des Phases 1-4, un audit du code résultant a identifi�
 
 **Aucun conflit avec le PUSH :** Si la notification EST capturée (PUSH réussit), le probe confirme avec "✓". Si la notification est perdue (PUSH échoue), le PULL rattrape au moment de la reconnexion.
 
+### 5.8 Timing optimisé — maximiser la capture PUSH
+
+**Problème :** La notification CHANGE_HOST arrive quelques ms avant la déconnexion BT. Plus on passe de temps à l'intérieur de `hid_read_timeout()`, plus on a de chances de capturer cette notification avant que le kernel ferme le handle.
+
+**Analyse code d'origine (LeeHoffka) :**
+- Cycle : ping → `read(timeout=25)` pour 80ms → `sleep(0.02)` → repeat (~100ms/cycle)
+- Single-threaded, filtre `sw_id == 0`
+
+**Timing actuel (optimisé) :**
+
+| Constante         | Valeur | Rôle                                                 |
+| ----------------- | ------ | ---------------------------------------------------- |
+| `_PING_INTERVAL`  | 0.5s   | Ping toutes les 500ms (vs 100ms avant)               |
+| `_READ_WINDOW`    | 0.5s   | Fenêtre lecture 500ms — 5x plus de temps en read     |
+| read timeout/call | 50ms   | Chaque `hid_read_timeout()` bloque 50ms              |
+| drain timeout     | 200ms  | Après déco write, 200ms par tentative drain (vs 5ms) |
+| `_VERIFY_TIMEOUT` | 30s    | PULL a 30s pour trouver/envoyer la souris            |
+
+**Pourquoi :** Plus de temps en `hid_read_timeout()` = plus de probabilité que la notification arrive pendant qu'on lit. Le drain à 200ms donne au stack BT le temps de livrer un paquet buffered après le signal de déconnexion.
+
+**Limitation connue :** Si le kernel macOS BT détruit le handle HID avant de livrer la notification au buffer userspace, aucun timing ne peut capturer la notification. PULL est le seul recours.
+
 ---
 
 ## Conventions de log
