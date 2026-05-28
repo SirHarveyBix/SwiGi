@@ -282,12 +282,26 @@ def _mice_probe_loop(
             ]
 
         for mouse in disconnected:
-            log.info("🔌 🖱️ [%s] Déconnectée", mouse.name)
+            if state.get("last_target_host") is not None:
+                log.info("🔌 🖱️ [%s] Déconnectée (switch en cours)", mouse.name)
+            else:
+                log.info("🔌 🖱️ [%s] Déconnectée (switch manuel ?)", mouse.name)
             notify(f"{mouse.name} déconnectée", "Souris")
 
         for mouse in reconnected_mice:
             log.info("🔄 🖱️ [%s] Reconnectée", mouse.name)
             notify(f"{mouse.name} reconnectée", "Souris")
+            # Loguer l'hôte actuel pour traçabilité
+            try:
+                current = get_current_host(
+                    mouse.transport,
+                    DEVICE_NUMBER_DIRECT,
+                    mouse.change_host_index,
+                )
+                if current is not None:
+                    log.info("🖱️  [%s] Hôte actuel : %d", mouse.name, current + 1)
+            except (TransportError, OSError):
+                pass
 
         for mouse in new_mice:
             log.info("🖱️  Souris : %s (PID=0x%04X)", mouse.name, mouse.product_id)
