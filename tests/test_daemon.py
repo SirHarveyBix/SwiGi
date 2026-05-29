@@ -1,7 +1,6 @@
 """Tests pour swigi.daemon — daemon dual-path orchestrateur."""
 
 import contextlib
-import queue
 import sys
 import threading
 import time
@@ -269,58 +268,6 @@ class TestRunDaemon(unittest.TestCase):
         mock_send.assert_not_called()
 
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices", return_value=[])
-    @patch("swigi.daemon.send_change_host")
-    def test_pull_keyboard_reconnect_sends(self, mock_send, mock_find, mock_get_host):
-        """Clavier PULL : déconnexion → reconnexion → PULL event → CHANGE_HOST envoyé."""
-        keyboard = _make_device(
-            name="MX Keys Wireless", product_id=0xB35B, change_host_index=5, generation="pull"
-        )
-        new_keyboard = _make_device(
-            name="MX Keys Wireless", product_id=0xB35B, change_host_index=5, generation="pull"
-        )
-        mouse = _make_device(
-            name="MX Vertical", product_id=0xB034, change_host_index=9
-        )
-
-        state = {}
-        stop_event = threading.Event()
-
-        # First ping fails → disconnect
-        call_count = [0]
-
-        def write_side_effect(data):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise TransportError("dead")
-
-        keyboard.transport.write.side_effect = write_side_effect
-
-        # After reconnect, stop quickly
-        new_calls = [0]
-
-        def new_write(data):
-            new_calls[0] += 1
-            if new_calls[0] >= 2:
-                stop_event.set()
-
-        new_keyboard.transport.write.side_effect = new_write
-
-        with patch("swigi.path_pull.get_current_host", return_value=0), \
-             patch("swigi.daemon.get_current_host", return_value=1), \
-             patch("swigi.daemon._reconnect_keyboard", return_value=new_keyboard):
-            thread = threading.Thread(
-                target=run_daemon,
-                args=([keyboard], [mouse], state, stop_event),
-                daemon=True,
-            )
-            thread.start()
-            thread.join(timeout=4.0)
-
-        mock_send.assert_called()
-        self.assertEqual(state.get("switches"), 1)
-
-    @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.send_change_host")
     def test_dispatcher_debounce_same_target(self, mock_send, mock_find, mock_get_host):
@@ -490,61 +437,6 @@ class TestReconnectKeyboard(unittest.TestCase):
         result = _reconnect_keyboard(0xB35B, stop_event)
         self.assertIs(result, right_keyboard)
         wrong_keyboard.close.assert_called_once()
-
-
-# ── Tests _post_pull_event ────────────────────────────────────────────────────
-
-
-class TestPostPullEvent(unittest.TestCase):
-    @patch("swigi.daemon.get_current_host", return_value=1)
-    def test_posts_event_with_current_host(self, mock_get_host):
-        """Post un _SwitchEvent(this_mac_host, source='pull') après reconnexion."""
-        from swigi.daemon import _post_pull_event, _SwitchEvent
-
-        keyboard = _make_device()
-        event_queue = queue.Queue()
-        state = {}
-        hunt_trigger = threading.Event()
-
-        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
-
-        event = event_queue.get_nowait()
-        self.assertIsInstance(event, _SwitchEvent)
-        self.assertEqual(event.target_host, 1)
-        self.assertEqual(event.source, "pull")
-        self.assertEqual(state["this_mac_host"], 1)
-        self.assertTrue(hunt_trigger.is_set())
-
-    @patch("swigi.daemon.get_current_host", side_effect=TransportError("dead"))
-    def test_falls_back_to_state(self, mock_get_host):
-        """Fallback sur state['this_mac_host'] si get_current_host échoue."""
-        from swigi.daemon import _post_pull_event
-
-        keyboard = _make_device()
-        event_queue = queue.Queue()
-        state = {"this_mac_host": 2}
-        hunt_trigger = threading.Event()
-
-        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
-
-        event = event_queue.get_nowait()
-        self.assertEqual(event.target_host, 2)
-        self.assertEqual(event.source, "pull")
-
-    @patch("swigi.daemon.get_current_host", return_value=None)
-    def test_no_event_if_host_unknown(self, mock_get_host):
-        """Pas d'event si get_current_host retourne None et pas de state."""
-        from swigi.daemon import _post_pull_event
-
-        keyboard = _make_device()
-        event_queue = queue.Queue()
-        state = {}
-        hunt_trigger = threading.Event()
-
-        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
-
-        self.assertTrue(event_queue.empty())
-        self.assertFalse(hunt_trigger.is_set())
 
 
 # ── Tests _set_keyboard_status ────────────────────────────────────────────────

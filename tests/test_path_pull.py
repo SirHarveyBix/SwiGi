@@ -42,10 +42,9 @@ def _make_keyboard(
 
 @patch("swigi.path_pull.get_current_host", return_value=0)
 class TestWatchKeyboardPull(unittest.TestCase):
-    @patch("swigi.daemon.get_current_host", return_value=2)
     @patch("swigi.daemon._reconnect_keyboard")
-    def test_reconnect_posts_pull_event(self, mock_reconnect, mock_daemon_host, mock_get_host):
-        """Déconnexion → reconnexion → _SwitchEvent(this_mac_host, source='pull')."""
+    def test_reconnect_no_pull_event(self, mock_reconnect, mock_get_host):
+        """Déconnexion → reconnexion → aucun event PULL posté (supprimé)."""
         keyboard = _make_keyboard()
         new_keyboard = _make_keyboard(name="MX Keys Wireless (new)")
         mock_reconnect.return_value = new_keyboard
@@ -64,7 +63,6 @@ class TestWatchKeyboardPull(unittest.TestCase):
             call_count[0] += 1
             if call_count[0] == 1:
                 raise TransportError("dead")
-            # After reconnect, next write succeeds
 
         keyboard.transport.write.side_effect = write_side_effect
 
@@ -89,12 +87,7 @@ class TestWatchKeyboardPull(unittest.TestCase):
             thread.start()
             thread.join(timeout=3.0)
 
-        events = []
-        while not event_queue.empty():
-            events.append(event_queue.get_nowait())
-        self.assertGreaterEqual(len(events), 1)
-        self.assertEqual(events[0].source, "pull")
-        self.assertEqual(events[0].target_host, 2)
+        self.assertTrue(event_queue.empty())
 
     def test_no_hid_read_in_connected_loop(self, mock_get_host):
         """Le watcher PULL ne fait PAS de transport.read() (pas de notification)."""

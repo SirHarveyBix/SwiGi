@@ -166,7 +166,7 @@ def _main_inner(arguments) -> int:
     keyboards = _wait_for_keyboard()
     for keyboard in keyboards:
         log.info(
-            "Clavier : %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
+            "⌨️ : %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
             keyboard.name,
             keyboard.product_id,
             keyboard.change_host_index,
@@ -181,7 +181,7 @@ def _main_inner(arguments) -> int:
         )
     for mouse in mice:
         log.info(
-            "Souris :  %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
+            "🖱️ : %s (Product ID=0x%04X, CHANGE_HOST index=%d)",
             mouse.name,
             mouse.product_id,
             mouse.change_host_index,

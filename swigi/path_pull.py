@@ -1,7 +1,7 @@
 """Path PULL — keyboard watcher pour Legacy (HID++ < 4.5).
 
 Pas de lecture HID++ stream (notification inutilisable sur Legacy).
-Détecte la déconnexion via ping watchdog, reconnecte, puis PULL souris.
+Détecte la déconnexion via ping watchdog et reconnecte.
 """
 
 import logging
@@ -35,9 +35,8 @@ def watch_keyboard_pull(
     stop_event: threading.Event,
     hunt_trigger: threading.Event,
 ) -> None:
-    """Watcher Legacy : ping watchdog + PULL on reconnect. Pas de lecture HID++."""
+    """Watcher Legacy : ping watchdog. Pas de lecture HID++."""
     from swigi.daemon import (
-        _post_pull_event,
         _reconnect_keyboard,
         _set_keyboard_status,
     )
@@ -51,14 +50,13 @@ def watch_keyboard_pull(
             keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index
         )
         if this_mac_host is not None:
-            state["this_mac_host"] = this_mac_host
             log.info(
-                "⌨️  [%s] Surveillance PULL démarrée (hôte %d)", name, this_mac_host + 1
+                "⌨️ [%s] Surveillance PULL démarrée (hôte %d)", name, this_mac_host + 1
             )
         else:
-            log.info("⌨️  [%s] Surveillance PULL démarrée", name)
+            log.info("⌨️ [%s] Surveillance PULL démarrée", name)
     except (TransportError, OSError):
-        log.info("⌨️  [%s] Surveillance PULL démarrée", name)
+        log.info("⌨️ [%s] Surveillance PULL démarrée", name)
 
     while not stop_event.is_set():
         # Ping
@@ -79,7 +77,6 @@ def watch_keyboard_pull(
             from swigi.gui import notify
 
             notify(f"{name} reconnecté", "Clavier")
-            _post_pull_event(keyboard, event_queue, state, hunt_trigger, name)
             last_response = time.time()
             continue
 
@@ -94,7 +91,6 @@ def watch_keyboard_pull(
             name = keyboard.name
             _set_keyboard_status(state, keyboard.product_id, name, True)
             log.info("🔄 ⌨️ [%s] Reconnecté", name)
-            _post_pull_event(keyboard, event_queue, state, hunt_trigger, name)
             last_response = time.time()
             continue
 

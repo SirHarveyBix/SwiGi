@@ -73,28 +73,6 @@ def _reconnect_keyboard(
     return None
 
 
-def _post_pull_event(
-    keyboard: DeviceInfo,
-    event_queue: queue.Queue,
-    state: dict,
-    hunt_trigger: threading.Event,
-    name: str,
-) -> None:
-    """Post un event PULL après reconnexion clavier."""
-    try:
-        this_mac_host = get_current_host(
-            keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index
-        )
-    except (TransportError, OSError):
-        this_mac_host = state.get("this_mac_host")
-
-    if this_mac_host is not None:
-        state["this_mac_host"] = this_mac_host
-        log.info("🔁 Clavier revenu → ramener souris sur hôte %d", this_mac_host + 1)
-        event_queue.put(_SwitchEvent(this_mac_host, name, "pull"))
-        hunt_trigger.set()
-
-
 def _set_keyboard_status(state: dict, product_id: int, name: str, ok: bool) -> None:
     """Met à jour le statut d'un clavier dans state."""
     lock = state.get("_lock")
@@ -251,12 +229,12 @@ def _mice_probe_loop(
                     mouse.change_host_index,
                 )
                 if current is not None:
-                    log.info("🖱️  [%s] Hôte actuel : %d", mouse.name, current + 1)
+                    log.info("🖱️ [%s] Hôte actuel : %d", mouse.name, current + 1)
             except (TransportError, OSError):
                 pass
 
         for mouse in new_mice:
-            log.info("🖱️  Souris : %s (PID=0x%04X)", mouse.name, mouse.product_id)
+            log.info("🖱️ : %s (PID=0x%04X)", mouse.name, mouse.product_id)
             notify(f"{mouse.name} connectée", "Souris")
 
         # Vérification post-switch
@@ -366,7 +344,7 @@ def run_daemon(
             watcher = watch_keyboard_pull
             path_label = "PULL"
         log.info(
-            "⌨️  [%s] → path %s (generation=%s)",
+            "⌨️ [%s] → path %s (generation=%s)",
             keyboard.name,
             path_label,
             keyboard.generation,

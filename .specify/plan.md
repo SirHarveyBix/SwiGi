@@ -473,10 +473,10 @@ Les deux mécanismes sont complémentaires et ne créent pas de conflit (si PUSH
 
 | Événement                    | Format                                             | Niveau |
 | ---------------------------- | -------------------------------------------------- | ------ |
-| Clavier surveillé            | `⌨️  [Nom] Surveillance démarrée (hôte N)`          | INFO   |
+| Clavier surveillé            | `⌨️ [Nom] Surveillance démarrée (hôte N)`           | INFO   |
 | Clavier déconnecté           | `🔌 [Nom] Déconnecté`                               | INFO   |
 | Clavier reconnecté           | `🔄 ⌨️ [Nom] Reconnecté`                             | INFO   |
-| Souris découverte (nouvelle) | `🖱️  Souris : Nom (PID=0xXXXX)`                     | INFO   |
+| Souris découverte (nouvelle) | `🖱️ : Nom (PID=0xXXXX)`                             | INFO   |
 | Souris déconnectée           | `🔌 🖱️ [Nom] Déconnectée (switch en cours/manuel ?)` | INFO   |
 | Souris reconnectée           | `🔄 🖱️ [Nom] Reconnectée` + `Hôte actuel : N`        | INFO   |
 | Switch détecté               | `★ [Clavier] Easy-Switch → hôte N`                 | INFO   |

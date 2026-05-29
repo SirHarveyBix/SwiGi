@@ -187,10 +187,9 @@ class TestWatchKeyboardPush(unittest.TestCase):
         self.assertGreaterEqual(len(push_events), 1)
         self.assertEqual(push_events[0].target_host, 2)
 
-    @patch("swigi.daemon.get_current_host", return_value=1)
     @patch("swigi.daemon._reconnect_keyboard")
-    def test_reconnect_posts_pull_event(self, mock_reconnect, mock_daemon_host, mock_get_host):
-        """Reconnexion → _SwitchEvent avec source='pull' (fallback PULL)."""
+    def test_reconnect_no_pull_event(self, mock_reconnect, mock_get_host):
+        """Reconnexion → aucun event PULL posté (PULL supprimé)."""
         keyboard = _make_keyboard()
         new_keyboard = _make_keyboard(name="MX Keys Mini (new)")
         new_keyboard.transport.read.return_value = None
@@ -232,8 +231,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
         while not event_queue.empty():
             events.append(event_queue.get_nowait())
         pull_events = [e for e in events if e.source == "pull"]
-        self.assertGreaterEqual(len(pull_events), 1)
-        self.assertEqual(pull_events[0].target_host, 1)
+        self.assertEqual(len(pull_events), 0)
 
     @patch("swigi.daemon._reconnect_keyboard")
     def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):

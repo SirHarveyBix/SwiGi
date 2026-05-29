@@ -1,7 +1,6 @@
 """Path PUSH — keyboard watcher pour Gen S (HID++ >= 4.5).
 
 Capture la notification CHANGE_HOST envoyée par le firmware avant déconnexion BT.
-Fallback PULL à la reconnexion si la notification est perdue (race macOS kernel).
 """
 
 import logging
@@ -60,9 +59,8 @@ def watch_keyboard_push(
     stop_event: threading.Event,
     hunt_trigger: threading.Event,
 ) -> None:
-    """Watcher Gen S : capture notification CHANGE_HOST + fallback PULL."""
+    """Watcher Gen S : capture notification CHANGE_HOST."""
     from swigi.daemon import (
-        _post_pull_event,
         _reconnect_keyboard,
         _set_keyboard_status,
         _SwitchEvent,
@@ -80,14 +78,13 @@ def watch_keyboard_push(
             keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index
         )
         if this_mac_host is not None:
-            state["this_mac_host"] = this_mac_host
             log.info(
-                "⌨️  [%s] Surveillance PUSH démarrée (hôte %d)", name, this_mac_host + 1
+                "⌨️ [%s] Surveillance PUSH démarrée (hôte %d)", name, this_mac_host + 1
             )
         else:
-            log.info("⌨️  [%s] Surveillance PUSH démarrée", name)
+            log.info("⌨️ [%s] Surveillance PUSH démarrée", name)
     except (TransportError, OSError):
-        log.info("⌨️  [%s] Surveillance PUSH démarrée", name)
+        log.info("⌨️ [%s] Surveillance PUSH démarrée", name)
 
     while not stop_event.is_set():
         # Watchdog
@@ -101,7 +98,6 @@ def watch_keyboard_push(
             name = keyboard.name
             _set_keyboard_status(state, keyboard.product_id, name, True)
             log.info("🔄 ⌨️ [%s] Reconnecté", name)
-            _post_pull_event(keyboard, event_queue, state, hunt_trigger, name)
             last_response = time.time()
             continue
 
@@ -135,7 +131,6 @@ def watch_keyboard_push(
                     from swigi.gui import notify
 
                     notify(f"{name} reconnecté", "Clavier")
-                _post_pull_event(keyboard, event_queue, state, hunt_trigger, name)
                 last_response = time.time()
                 continue
 
