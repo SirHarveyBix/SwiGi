@@ -10,9 +10,9 @@ Principes modifiés:
     _set_keyboard_status, _sync_keyboard_display, _apply_better_mouse.
     Pas de resync automatique à la reconnexion clavier — l'utilisateur
     re-appuie sur Easy-Switch si la souris n'a pas suivi.
-  P5 Réactivité → étendu : Après envoi de CHANGE_HOST, le probe vérifie
-    que la souris est bien sur le bon hôte (get_current_host). Si elle revient
-    à l'ancien hôte ou ne switch pas, retry automatique (délai min 2s, timeout 30s).
+    Pas de retry automatique — send once, clear target.
+  P5 Réactivité → étendu : Grâce period 1.5s après reconnexion clavier
+    pour ignorer les notifications CHANGE_HOST parasites du firmware BLE.
 
 Specs modifiées:
   ✅ .github/instructions.md (descriptions modules, contrainte macOS, retry)

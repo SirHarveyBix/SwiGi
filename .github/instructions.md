@@ -37,10 +37,10 @@ Avant toute modification, lire dans cet ordre :
 
 Sur macOS Bluetooth, le kernel peut fermer le handle HID AVANT que la notification CHANGE_HOST soit lisible en userspace. Le code maximise le temps passé dans `hid_read_timeout()` pour capturer cette notification, mais un échec est possible. Si la souris ne suit pas, le probe retente automatiquement (toutes les 2-3s pendant 30s). Au-delà du timeout, l'utilisateur re-appuie sur Easy-Switch.
 
-## Mécanisme de vérification post-switch
+## Dispatch et envoi différé
 
-Après envoi de CHANGE_HOST à la souris, `last_target_host` reste actif. Le probe vérifie régulièrement via `get_current_host()` :
+Au moment du dispatch, si la souris est disponible → envoi immédiat. Sinon, `last_target_host` est conservé et le probe envoie dès qu'il découvre une souris. Pas de retry automatique — en cas d'échec, l'utilisateur re-appuie sur Easy-Switch.
 
-- Souris sur le bon hôte → confirmé, target effacé
-- Souris sur le mauvais hôte → retry automatique (délai min 2s entre envois)
-- Timeout 30s → abandon
+## Grâce period post-reconnexion clavier
+
+Après reconnexion du clavier (1.5s), les notifications CHANGE_HOST sont ignorées. Le firmware émet des notifications parasites à la reconnexion BLE.

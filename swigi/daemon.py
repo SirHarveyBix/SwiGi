@@ -320,7 +320,6 @@ def run_daemon(
     state["mice"] = [mouse_device.name for mouse_device in mice]
     state.setdefault("switches", 0)
     state["last_target_host"] = None
-    state["last_switch_time"] = 0.0
 
     event_queue: queue.Queue = queue.Queue()
     mouse_lock = threading.Lock()
@@ -412,7 +411,6 @@ def run_daemon(
                     mouse.close()
 
         with lock:
-            state["last_switch_time"] = time.time()
             state["switches"] = state.get("switches", 0) + 1
             if sent > 0:
                 state["last_target_host"] = None

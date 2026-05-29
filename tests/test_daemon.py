@@ -91,7 +91,7 @@ class TestMiceProbeLoop(unittest.TestCase):
         mock_get_host.return_value = 1
 
         mice = [mouse]
-        state = {"last_target_host": 1, "last_switch_time": time.time()}
+        state = {"last_target_host": 1}
         stop_event = threading.Event()
         hunt_trigger = threading.Event()
         mouse_lock = threading.Lock()
@@ -127,7 +127,7 @@ class TestMiceProbeLoop(unittest.TestCase):
         mock_get_host.return_value = 0
 
         mice = [mouse]
-        state = {"last_target_host": 1, "last_switch_time": time.time() - 6.0}
+        state = {"last_target_host": 1}
         stop_event = threading.Event()
         hunt_trigger = threading.Event()
         mouse_lock = threading.Lock()
