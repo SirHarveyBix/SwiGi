@@ -436,6 +436,7 @@ def run_daemon(
                         event.target_host + 1,
                         event.source,
                     )
+                    log.info("🔌 🖱️ [%s] Déconnectée (switch en cours)", mouse.name)
                     sent += 1
                 except (TransportError, OSError):
                     mouse.close()

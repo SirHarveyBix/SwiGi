@@ -122,7 +122,7 @@ def watch_keyboard_push(
                     log.info("★ [%s] Easy-Switch → hôte %d (drain)", name, target + 1)
                     event_queue.put(_SwitchEvent(target, name, "push"))
 
-                log.info("🔌 [%s] Déconnecté", name)
+                log.info("🔌 ⌨️ [%s] Déconnecté", name)
                 keyboard.close()
                 _set_keyboard_status(state, keyboard.product_id, name, False)
                 keyboard = _reconnect_keyboard(keyboard.product_id, stop_event)

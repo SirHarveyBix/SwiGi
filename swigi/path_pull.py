@@ -67,7 +67,7 @@ def watch_keyboard_pull(
             last_response = time.time()
         except (TransportError, OSError):
             # Déconnexion détectée — reconnexion immédiate
-            log.info("🔌 [%s] Déconnecté", name)
+            log.info("🔌 ⌨️ [%s] Déconnecté", name)
             keyboard.close()
             _set_keyboard_status(state, keyboard.product_id, name, False)
             keyboard = _reconnect_keyboard(keyboard.product_id, stop_event)
