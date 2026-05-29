@@ -25,6 +25,7 @@ _PING_INTERVAL = 0.5
 _READ_WINDOW = 0.5
 _DEBOUNCE = 1.0
 _WATCHDOG_TIMEOUT = 10.0
+_RECONNECT_GRACE = 1.5
 
 
 # ── Drain switch ──────────────────────────────────────────────────────────────
@@ -86,6 +87,8 @@ def watch_keyboard_push(
     except (TransportError, OSError):
         log.info("⌨️ [%s] Surveillance PUSH démarrée", name)
 
+    reconnect_time = 0.0
+
     while not stop_event.is_set():
         # Watchdog
         if time.time() - last_response > _WATCHDOG_TIMEOUT:
@@ -99,6 +102,7 @@ def watch_keyboard_push(
             _set_keyboard_status(state, keyboard.product_id, name, True)
             log.info("🔄 ⌨️ [%s] Reconnecté", name)
             last_response = time.time()
+            reconnect_time = time.time()
             continue
 
         # Ping
@@ -132,6 +136,7 @@ def watch_keyboard_push(
 
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
+                reconnect_time = time.time()
                 continue
 
         # Lecture notifications (fenêtre READ_WINDOW)
@@ -154,6 +159,11 @@ def watch_keyboard_push(
                 num_hosts = raw[4] or 3
                 target = raw[5]
                 if not (0 <= target < num_hosts):
+                    continue
+                if time.time() - reconnect_time < _RECONNECT_GRACE:
+                    log.debug(
+                        "⏭️  [%s] Notification ignorée (grâce reconnexion)", name
+                    )
                     continue
                 if (
                     target == last_switch_target
