@@ -441,9 +441,14 @@ def run_daemon(
                     mouse.close()
 
         with lock:
-            state["last_target_host"] = event.target_host
             state["last_switch_time"] = time.time()
             state["switches"] = state.get("switches", 0) + 1
+            if sent > 0:
+                # Envoyé avec succès — pas de ré-envoi par le probe
+                state["last_target_host"] = None
+            else:
+                # Aucune souris disponible — le probe enverra quand elle apparaît
+                state["last_target_host"] = event.target_host
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()
         hunt_trigger.set()

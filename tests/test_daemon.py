@@ -357,6 +357,43 @@ class TestRunDaemon(unittest.TestCase):
         # Un seul dispatch malgré 2 notifications (debounce)
         self.assertEqual(state.get("switches"), 1)
 
+    @_fast_timing()
+    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.daemon.send_change_host")
+    def test_sent_clears_last_target(self, mock_send, mock_find, mock_get_host):
+        """Après envoi réussi (sent > 0), last_target_host est None."""
+        mock_find.return_value = []
+        keyboard = _make_device(change_host_index=5)
+        mouse = _make_device(change_host_index=9)
+
+        state = {}
+        stop_event = threading.Event()
+
+        packet = bytes([0x11, 0xFF, 5, 0x00, 2, 0] + [0] * 14)
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] == 1:
+                return packet
+            time.sleep(0.1)
+            stop_event.set()
+            return None
+
+        keyboard.transport.read.side_effect = mock_read
+
+        thread = threading.Thread(
+            target=run_daemon,
+            args=([keyboard], [mouse], state, stop_event),
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=3.0)
+
+        mock_send.assert_called_once()
+        # Target nettoyé : pas de ré-envoi ultérieur par le probe
+        self.assertIsNone(state.get("last_target_host"))
+
 
 # ── Tests _reconnect_keyboard ─────────────────────────────────────────────────
 

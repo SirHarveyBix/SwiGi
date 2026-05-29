@@ -40,7 +40,6 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 ### Prérequis
 
 - Un clavier **et** une souris Logitech avec Easy-Switch et Bluetooth (série MX, série Ergo, etc.)
-- **Pas besoin de savoir coder.**
 
 ---
 
