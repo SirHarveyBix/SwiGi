@@ -33,6 +33,7 @@ _DISPATCHER_DEBOUNCE = 1.0
 _RECONNECT_DELAY = 0.5
 _RECONNECT_MAX_DELAY = 5.0
 _STABILITY_WAIT = 0.5
+_VERIFY_TIMEOUT = 30.0
 
 
 # ── Événements ────────────────────────────────────────────────────────────────
@@ -141,44 +142,6 @@ def _mice_probe_loop(
             hunt_trigger.clear()
             fast_until = time.time() + _PROBE_FAST_DURATION
 
-            # Fast path : envoi immédiat aux souris déjà connectées
-            target = state.get("last_target_host")
-            if target is not None:
-                with mouse_lock:
-                    open_mice = [d for d in mice if d.transport.is_open]
-                for mouse in open_mice:
-                    try:
-                        current = get_current_host(
-                            mouse.transport,
-                            DEVICE_NUMBER_DIRECT,
-                            mouse.change_host_index,
-                        )
-                    except (TransportError, OSError):
-                        mouse.close()
-                        continue
-                    if current == target:
-                        log.info("✓ %s déjà sur hôte %d", mouse.name, target + 1)
-                        state["last_target_host"] = None
-                        _apply_better_mouse(mouse.name)
-                        break
-                    elif current is not None:
-                        log.info(
-                            "⚡ %s → hôte %d (immédiat)",
-                            mouse.name,
-                            target + 1,
-                        )
-                        try:
-                            send_change_host(
-                                mouse.transport,
-                                DEVICE_NUMBER_DIRECT,
-                                mouse.change_host_index,
-                                target,
-                            )
-                        except (TransportError, OSError):
-                            mouse.close()
-                        state["last_target_host"] = None
-                        break
-
         if stop_event.is_set():
             break
 
@@ -250,8 +213,18 @@ def _mice_probe_loop(
         if state_lock:
             with state_lock:
                 target = state.get("last_target_host")
+                switch_sent = state.get("last_switch_sent", False)
+                switch_time = state.get("last_switch_time", 0.0)
         else:
             target = state.get("last_target_host")
+            switch_sent = state.get("last_switch_sent", False)
+            switch_time = state.get("last_switch_time", 0.0)
+
+        # TTL : si > _VERIFY_TIMEOUT secondes, abandonner silencieusement
+        if target is not None and time.time() - switch_time > _VERIFY_TIMEOUT:
+            log.debug("⏳ last_target_host expiré (>%ds) — abandonné", _VERIFY_TIMEOUT)
+            state["last_target_host"] = None
+            target = None
 
         if target is not None:
             with mouse_lock:
@@ -267,29 +240,43 @@ def _mice_probe_loop(
                     mouse.close()
                     continue
                 if current == target:
-                    log.info("✓ %s déjà sur hôte %d", mouse.name, target + 1)
+                    log.info("✓ %s sur hôte %d — confirmé", mouse.name, target + 1)
                     state["last_target_host"] = None
                     _apply_better_mouse(mouse.name)
                     break
                 elif current is not None:
-                    log.info(
-                        "⚡ %s → hôte %d (différé)",
-                        mouse.name,
-                        target + 1,
-                    )
-                    try:
-                        send_change_host(
-                            mouse.transport,
-                            DEVICE_NUMBER_DIRECT,
-                            mouse.change_host_index,
-                            target,
+                    if switch_sent:
+                        # Dispatcher a envoyé — log warning, pas de retry (anti ping-pong)
+                        log.warning(
+                            "⚠ %s sur hôte %d, attendu %d — switch non confirmé",
+                            mouse.name,
+                            current + 1,
+                            target + 1,
                         )
-                    except (TransportError, OSError):
-                        mouse.close()
-                    state["last_target_host"] = None
+                        state["last_target_host"] = None
+                    else:
+                        # Dispatcher n'a pas pu envoyer — envoi différé unique
+                        log.info(
+                            "→ %s sur hôte %d, envoi différé → hôte %d",
+                            mouse.name,
+                            current + 1,
+                            target + 1,
+                        )
+                        try:
+                            send_change_host(
+                                mouse.transport,
+                                DEVICE_NUMBER_DIRECT,
+                                mouse.change_host_index,
+                                target,
+                            )
+                            log.info("⚡ %s → hôte %d (différé)", mouse.name, target + 1)
+                        except (TransportError, OSError):
+                            mouse.close()
+                        state["last_target_host"] = None
                     break
         else:
-            for mouse in new_mice:
+            # Pas de switch en attente → BetterMouse sur nouvelles/reconnectées
+            for mouse in new_mice + reconnected_mice:
                 if mouse.transport.is_open:
                     _apply_better_mouse(mouse.name)
 
@@ -329,6 +316,8 @@ def run_daemon(
     state["mice"] = [mouse_device.name for mouse_device in mice]
     state.setdefault("switches", 0)
     state["last_target_host"] = None
+    state["last_switch_sent"] = False
+    state["last_switch_time"] = 0.0
 
     event_queue: queue.Queue = queue.Queue()
     mouse_lock = threading.Lock()
@@ -414,20 +403,18 @@ def run_daemon(
                         event.target_host + 1,
                         event.source,
                     )
-                    log.info("🔌 🖱️ [%s] Déconnectée (switch en cours)", mouse.name)
                     sent += 1
                 except (TransportError, OSError):
                     mouse.close()
 
         with lock:
+            state["last_target_host"] = event.target_host
+            state["last_switch_sent"] = sent > 0
+            state["last_switch_time"] = time.time()
             state["switches"] = state.get("switches", 0) + 1
-            if sent > 0:
-                state["last_target_host"] = None
-            else:
-                state["last_target_host"] = event.target_host
+        hunt_trigger.set()
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()
-        hunt_trigger.set()
 
         if sent == 0:
             log.warning("⚠ Aucune souris — retry au prochain probe")

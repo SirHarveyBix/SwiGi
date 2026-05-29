@@ -47,6 +47,12 @@
 | T36 | Mettre à jour `tests/test_daemon.py` (dispatcher unifié, mixed keyboards)    | test     | P1       | T32         | ✔️      | 6     |
 | T37 | Nettoyage : supprimer _watch_keyboard monolithique, _pull_mouse_on_reconnect | refactor | P2       | T32         | ✔️      | 6     |
 | T38 | Validation finale Phase 6 (pytest + ruff + constitution check)               | qa       | P0       | T33-T37     | ✔️      | 6     |
+| T39 | Fix `path_pull.py` : _SwitchEvent + get_current_host post-reconnect + watchdog correct | fix | P0 | T31 | 🔲 | 7 |
+| T40 | Fix `daemon.py` : last_switch_sent + last_switch_time + hunt_trigger.set() dans dispatcher | fix | P0 | T32 | 🔲 | 7 |
+| T41 | Fix `_mice_probe_loop` : BetterMouse reconnected_mice + TTL _VERIFY_TIMEOUT + logique sent/unsent | fix | P0 | T40 | 🔲 | 7 |
+| T42 | Fix `path_push.py` : raw[3] sw_id=0 filtre + hunt_trigger.set() + drain_switch sur TransportError read | fix | P1 | T30 | 🔲 | 7 |
+| T43 | Tests phase 7 : test_pull_posts_switch_event, test_bettermouse_on_reconnect, test_verify_timeout, test_no_pingpong | test | P1 | T39-T42 | 🔲 | 7 |
+| T44 | Validation finale Phase 7 (pytest + ruff)                                    | qa       | P0       | T43         | 🔲      | 7     |
 
 ---
 

@@ -42,7 +42,10 @@ def _drain_switch(keyboard: DeviceInfo) -> int | None:
             continue
         if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
             continue
-        if raw[2] == keyboard.change_host_index:
+        if (
+            raw[2] == keyboard.change_host_index
+            and (raw[3] & 0x0F) == 0x00
+        ):
             num_hosts = raw[4] or 3
             target = raw[5]
             if 0 <= target < num_hosts:
@@ -121,6 +124,7 @@ def watch_keyboard_push(
                     last_switch_target = target
                     log.info("★ [%s] Easy-Switch → hôte %d (drain)", name, target + 1)
                     event_queue.put(_SwitchEvent(target, name, "push"))
+                    hunt_trigger.set()
 
                 log.info("🔌 ⌨️ [%s] Déconnecté", name)
                 keyboard.close()
@@ -146,6 +150,19 @@ def watch_keyboard_push(
             try:
                 raw = keyboard.transport.read(timeout=50)
             except (TransportError, OSError):
+                # Connexion fermée pendant lecture → tenter capture notification buffered
+                target = _drain_switch(keyboard)
+                if target is not None and not (
+                    target == last_switch_target
+                    and time.time() - last_switch_time < _DEBOUNCE
+                ):
+                    last_switch_time = time.time()
+                    last_switch_target = target
+                    log.info(
+                        "★ [%s] Easy-Switch → hôte %d (drain-read)", name, target + 1
+                    )
+                    event_queue.put(_SwitchEvent(target, name, "push"))
+                    hunt_trigger.set()
                 break
             if not raw or len(raw) < 4:
                 continue
@@ -154,8 +171,12 @@ def watch_keyboard_push(
             last_response = time.time()
             got_data = True
 
-            # CHANGE_HOST notification
-            if raw[2] == keyboard.change_host_index and len(raw) > 5:
+            # CHANGE_HOST notification (sw_id=0 pour notifications firmware)
+            if (
+                raw[2] == keyboard.change_host_index
+                and len(raw) > 5
+                and (raw[3] & 0x0F) == 0x00
+            ):
                 num_hosts = raw[4] or 3
                 target = raw[5]
                 if not (0 <= target < num_hosts):
@@ -175,6 +196,7 @@ def watch_keyboard_push(
                 log.info("━" * 40)
                 log.info("★ [%s] Easy-Switch → hôte %d", name, target + 1)
                 event_queue.put(_SwitchEvent(target, name, "push"))
+                hunt_trigger.set()
                 break
 
         if not got_data:

@@ -91,7 +91,11 @@ class TestMiceProbeLoop(unittest.TestCase):
         mock_get_host.return_value = 1
 
         mice = [mouse]
-        state = {"last_target_host": 1}
+        state = {
+            "last_target_host": 1,
+            "last_switch_sent": True,
+            "last_switch_time": time.time(),
+        }
         stop_event = threading.Event()
         hunt_trigger = threading.Event()
         mouse_lock = threading.Lock()
@@ -127,7 +131,11 @@ class TestMiceProbeLoop(unittest.TestCase):
         mock_get_host.return_value = 0
 
         mice = [mouse]
-        state = {"last_target_host": 1}
+        state = {
+            "last_target_host": 1,
+            "last_switch_sent": False,
+            "last_switch_time": time.time(),
+        }
         stop_event = threading.Event()
         hunt_trigger = threading.Event()
         mouse_lock = threading.Lock()
@@ -271,8 +279,8 @@ class TestRunDaemon(unittest.TestCase):
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.send_change_host")
-    def test_sent_clears_last_target(self, mock_send, mock_find, mock_get_host):
-        """Après envoi réussi (sent > 0), last_target_host est None."""
+    def test_sent_sets_last_switch_sent_true(self, mock_send, mock_find, mock_get_host):
+        """Après envoi réussi (sent > 0), last_switch_sent=True et last_target_host set."""
         mock_find.return_value = []
         keyboard = _make_device(change_host_index=5)
         mouse = _make_device(change_host_index=9)
@@ -302,7 +310,9 @@ class TestRunDaemon(unittest.TestCase):
         thread.join(timeout=3.0)
 
         mock_send.assert_called_once()
-        self.assertIsNone(state.get("last_target_host"))
+        # Après dispatch réussi : last_switch_sent=True, last_target_host=target
+        self.assertTrue(state.get("last_switch_sent"))
+        self.assertEqual(state.get("last_target_host"), 2)
 
 
 # ── Tests _reconnect_keyboard ─────────────────────────────────────────────────

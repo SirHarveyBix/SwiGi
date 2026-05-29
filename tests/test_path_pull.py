@@ -43,10 +43,12 @@ def _make_keyboard(
 @patch("swigi.path_pull.get_current_host", return_value=0)
 class TestWatchKeyboardPull(unittest.TestCase):
     @patch("swigi.daemon._reconnect_keyboard")
-    def test_reconnect_no_pull_event(self, mock_reconnect, mock_get_host):
-        """Déconnexion → reconnexion → aucun event PULL posté (supprimé)."""
+    @patch("swigi.daemon._set_keyboard_status")
+    def test_reconnect_posts_pull_event(self, mock_set_status, mock_reconnect, mock_get_host):
+        """Déconnexion → reconnexion → _SwitchEvent PULL posté avec l'hôte courant."""
         keyboard = _make_keyboard()
         new_keyboard = _make_keyboard(name="MX Keys Wireless (new)")
+        new_keyboard.transport.read.return_value = None
         mock_reconnect.return_value = new_keyboard
 
         event_queue = queue.Queue()
@@ -87,11 +89,18 @@ class TestWatchKeyboardPull(unittest.TestCase):
             thread.start()
             thread.join(timeout=3.0)
 
-        self.assertTrue(event_queue.empty())
+        # Maintenant un SwitchEvent PULL est posté (get_current_host retourne 0)
+        self.assertFalse(event_queue.empty(), "SwitchEvent PULL devrait être posté")
+        from swigi.daemon import _SwitchEvent
+        event = event_queue.get_nowait()
+        self.assertIsInstance(event, _SwitchEvent)
+        self.assertEqual(event.source, "pull")
 
-    def test_no_hid_read_in_connected_loop(self, mock_get_host):
-        """Le watcher PULL ne fait PAS de transport.read() (pas de notification)."""
+    def test_read_called_for_ping_response(self, mock_get_host):
+        """Le watcher PULL fait transport.read() pour capter la réponse au ping."""
         keyboard = _make_keyboard()
+        # read retourne None (pas de réponse), ne plante pas
+        keyboard.transport.read.return_value = None
         event_queue = queue.Queue()
         state = {
             "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}
@@ -117,8 +126,8 @@ class TestWatchKeyboardPull(unittest.TestCase):
             thread.start()
             thread.join(timeout=2.0)
 
-        # Verify: transport.read was NOT called (no HID++ reading in PULL path)
-        keyboard.transport.read.assert_not_called()
+        # Verify: transport.read IS called (PULL path reads ping response)
+        keyboard.transport.read.assert_called()
 
     @patch("swigi.daemon._reconnect_keyboard")
     def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):
