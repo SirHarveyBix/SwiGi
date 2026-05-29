@@ -30,6 +30,7 @@ _PROBE_INTERVAL = 3.0
 _PROBE_FAST_INTERVAL = 1.0
 _PROBE_FAST_DURATION = 15.0
 _VERIFY_TIMEOUT = 30.0
+_MIN_RETRY_DELAY = 0.5
 _DISPATCHER_DEBOUNCE = 1.0
 _RECONNECT_DELAY = 0.5
 _RECONNECT_MAX_DELAY = 5.0
@@ -136,6 +137,7 @@ def _mice_probe_loop(
             # Fast path : envoi immédiat aux souris déjà connectées
             target = state.get("last_target_host")
             if target is not None:
+                last_send = state.get("last_send_time", 0.0)
                 with mouse_lock:
                     open_mice = [d for d in mice if d.transport.is_open]
                 for mouse in open_mice:
@@ -154,21 +156,22 @@ def _mice_probe_loop(
                         _apply_better_mouse(mouse.name)
                         break
                     elif current is not None:
-                        log.info(
-                            "⚡ %s → hôte %d (immédiat)",
-                            mouse.name,
-                            target + 1,
-                        )
-                        try:
-                            send_change_host(
-                                mouse.transport,
-                                DEVICE_NUMBER_DIRECT,
-                                mouse.change_host_index,
-                                target,
+                        if time.time() - last_send >= _MIN_RETRY_DELAY:
+                            log.info(
+                                "⚡ %s → hôte %d (immédiat)",
+                                mouse.name,
+                                target + 1,
                             )
-                        except (TransportError, OSError):
-                            mouse.close()
-                        state["last_target_host"] = None
+                            try:
+                                send_change_host(
+                                    mouse.transport,
+                                    DEVICE_NUMBER_DIRECT,
+                                    mouse.change_host_index,
+                                    target,
+                                )
+                            except (TransportError, OSError):
+                                mouse.close()
+                            state["last_send_time"] = time.time()
                         break
 
         if stop_event.is_set():
@@ -270,22 +273,24 @@ def _mice_probe_loop(
                         _apply_better_mouse(mouse.name)
                         break
                     elif current is not None:
-                        log.info(
-                            "→ %s sur hôte %d, envoi vers hôte %d",
-                            mouse.name,
-                            current + 1,
-                            target + 1,
-                        )
-                        try:
-                            send_change_host(
-                                mouse.transport,
-                                DEVICE_NUMBER_DIRECT,
-                                mouse.change_host_index,
-                                target,
+                        last_send = state.get("last_send_time", 0.0)
+                        if time.time() - last_send >= _MIN_RETRY_DELAY:
+                            log.info(
+                                "🔄 %s sur hôte %d, retry → hôte %d",
+                                mouse.name,
+                                current + 1,
+                                target + 1,
                             )
-                        except (TransportError, OSError):
-                            mouse.close()
-                        state["last_target_host"] = None
+                            try:
+                                send_change_host(
+                                    mouse.transport,
+                                    DEVICE_NUMBER_DIRECT,
+                                    mouse.change_host_index,
+                                    target,
+                                )
+                            except (TransportError, OSError):
+                                mouse.close()
+                            state["last_send_time"] = time.time()
                         break
         else:
             for mouse in new_mice:
@@ -422,12 +427,9 @@ def run_daemon(
         with lock:
             state["last_switch_time"] = time.time()
             state["switches"] = state.get("switches", 0) + 1
+            state["last_target_host"] = event.target_host
             if sent > 0:
-                # Envoyé avec succès — pas de ré-envoi par le probe
-                state["last_target_host"] = None
-            else:
-                # Aucune souris disponible — le probe enverra quand elle apparaît
-                state["last_target_host"] = event.target_host
+                state["last_send_time"] = time.time()
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()
         hunt_trigger.set()

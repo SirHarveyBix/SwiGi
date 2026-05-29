@@ -1,6 +1,25 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.3.0 → 1.4.0
+Type: MINOR — amendement P1 + P5 (suppression PULL auto, ajout retry)
+
+Principes modifiés:
+  P1 Simplicité → étendu : Le mécanisme _post_pull_event est supprimé.
+    Les helpers centralisés dans daemon.py sont désormais : _reconnect_keyboard,
+    _set_keyboard_status, _sync_keyboard_display, _apply_better_mouse.
+    Pas de resync automatique à la reconnexion clavier — l'utilisateur
+    re-appuie sur Easy-Switch si la souris n'a pas suivi.
+  P5 Réactivité → étendu : Après envoi de CHANGE_HOST, le probe vérifie
+    que la souris est bien sur le bon hôte (get_current_host). Si elle revient
+    à l'ancien hôte ou ne switch pas, retry automatique (délai min 2s, timeout 30s).
+
+Specs modifiées:
+  ✅ .github/instructions.md (descriptions modules, contrainte macOS, retry)
+  ✅ Docstrings path_push.py et path_pull.py (suppression mention PULL)
+  ✅ state["this_mac_host"] mort supprimé des deux paths
+
+---
 Version change: 1.2.0 → 1.3.0
 Type: MINOR — amendement P1 (architecture dual-path PUSH/PULL)
 
@@ -55,9 +74,9 @@ Follow-up TODOs:
 
 # Constitution du Projet SwiGi
 
-**Version:** 1.3.0
+**Version:** 1.4.0
 **Date de ratification:** 2026-05-22
-**Dernière modification:** 2026-05-29
+**Dernière modification:** 2026-06-05
 **Mainteneur principal:** SirHarveyBix (gui.lefort.17@gmail.com)
 
 ---

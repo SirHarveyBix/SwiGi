@@ -61,6 +61,7 @@ def _fast_timing():
         patch("swigi.daemon._PROBE_FAST_INTERVAL", 0.02),
         patch("swigi.daemon._PROBE_FAST_DURATION", 0.2),
         patch("swigi.daemon._VERIFY_TIMEOUT", 2.0),
+        patch("swigi.daemon._MIN_RETRY_DELAY", 0.1),
         patch("swigi.daemon._DISPATCHER_DEBOUNCE", 0.1),
         patch("swigi.daemon._STABILITY_WAIT", 0.0),
         patch("swigi.daemon._RECONNECT_DELAY", 0.01),
@@ -120,7 +121,7 @@ class TestMiceProbeLoop(unittest.TestCase):
     @patch("swigi.daemon.get_current_host")
     @patch("swigi.daemon.send_change_host")
     def test_wrong_host_deferred_send(self, mock_send, mock_get_host, mock_find):
-        """Souris sur mauvais hôte → envoi différé et clear target."""
+        """Souris sur mauvais hôte → envoi et target conservé pour vérification."""
         mouse = _make_device(name="MX Vertical", product_id=0xB034, change_host_index=9)
         # find_all_devices retourne un nouvel objet (pas le même que dans mice)
         found_mouse = _make_device(
@@ -150,7 +151,9 @@ class TestMiceProbeLoop(unittest.TestCase):
         thread.join(timeout=2.0)
 
         mock_send.assert_called_once()
-        self.assertIsNone(state.get("last_target_host"))
+        # Target conservé pour retry — ne se clear que sur confirmation ou timeout
+        self.assertEqual(state.get("last_target_host"), 1)
+        self.assertIsNotNone(state.get("last_send_time"))
 
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
@@ -305,10 +308,11 @@ class TestRunDaemon(unittest.TestCase):
         self.assertEqual(state.get("switches"), 1)
 
     @_fast_timing()
+    @patch("swigi.daemon.get_current_host", return_value=None)
     @patch("swigi.daemon.find_all_devices")
     @patch("swigi.daemon.send_change_host")
-    def test_sent_clears_last_target(self, mock_send, mock_find, mock_get_host):
-        """Après envoi réussi (sent > 0), last_target_host est None."""
+    def test_sent_keeps_target_for_verification(self, mock_send, mock_find, mock_daemon_get, mock_get_host):
+        """Après envoi réussi (sent > 0), last_target_host est conservé pour vérification."""
         mock_find.return_value = []
         keyboard = _make_device(change_host_index=5)
         mouse = _make_device(change_host_index=9)
@@ -316,7 +320,8 @@ class TestRunDaemon(unittest.TestCase):
         state = {}
         stop_event = threading.Event()
 
-        packet = bytes([0x11, 0xFF, 5, 0x00, 2, 0] + [0] * 14)
+        # num_hosts=3, target=2 (hôte 3)
+        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
         calls = [0]
 
         def mock_read(timeout=10):
@@ -338,8 +343,9 @@ class TestRunDaemon(unittest.TestCase):
         thread.join(timeout=3.0)
 
         mock_send.assert_called_once()
-        # Target nettoyé : pas de ré-envoi ultérieur par le probe
-        self.assertIsNone(state.get("last_target_host"))
+        # Target conservé pour vérification par le probe
+        self.assertEqual(state.get("last_target_host"), 2)
+        self.assertIsNotNone(state.get("last_send_time"))
 
 
 # ── Tests _reconnect_keyboard ─────────────────────────────────────────────────

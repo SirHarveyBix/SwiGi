@@ -35,4 +35,12 @@ Avant toute modification, lire dans cet ordre :
 
 ## Contrainte macOS BT critique
 
-Sur macOS Bluetooth, le kernel peut fermer le handle HID AVANT que la notification CHANGE_HOST soit lisible en userspace. Le code maximise le temps passé dans `hid_read_timeout()` pour capturer cette notification, mais un échec est possible. Si la souris ne suit pas, l'utilisateur re-appuie sur Easy-Switch.
+Sur macOS Bluetooth, le kernel peut fermer le handle HID AVANT que la notification CHANGE_HOST soit lisible en userspace. Le code maximise le temps passé dans `hid_read_timeout()` pour capturer cette notification, mais un échec est possible. Si la souris ne suit pas, le probe retente automatiquement (toutes les 2-3s pendant 30s). Au-delà du timeout, l'utilisateur re-appuie sur Easy-Switch.
+
+## Mécanisme de vérification post-switch
+
+Après envoi de CHANGE_HOST à la souris, `last_target_host` reste actif. Le probe vérifie régulièrement via `get_current_host()` :
+
+- Souris sur le bon hôte → confirmé, target effacé
+- Souris sur le mauvais hôte → retry automatique (délai min 2s entre envois)
+- Timeout 30s → abandon
