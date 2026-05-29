@@ -574,10 +574,21 @@ If SwiGi saves you time / Si SwiGi t'économise du temps :
 
 ## 📋 Historique des correctifs
 
-| Version    | Symptôme                                                             | Fix                                            |
-| ---------- | -------------------------------------------------------------------- | ---------------------------------------------- |
-| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)    | MSG_LENGTHS check accepte len >= au lieu de == |
-| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O) | I/O sorti du lock dans probe loop              |
+| Version    | Symptôme                                                                 | Fix                                                        |
+| ---------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 2026-05-26 | Souris ne suit pas (macOS BT retourne réponses paddées 32 octets)        | MSG_LENGTHS check accepte len >= au lieu de ==             |
+| 2026-05-26 | Delay jusqu'à 500ms lors du switch (mouse_lock tenu pendant HID I/O)     | I/O sorti du lock dans probe loop                          |
+| 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                        | Backoff exponentiel 0.5s→5s                                |
+| 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                     | Détection + message d'erreur clair, git clone recommandé   |
+| 2026-05-26 | launchctl load/unload déprécié macOS 13+                                 | Remplacé par bootstrap/bootout                             |
+| 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)            | tempfile + os.replace()                                    |
+| 2026-05-27 | Architecture daemon trop complexe (1200L, pending_host, correction auto) | Réécriture v2 : pipe unidirectionnel ~340L, envoi immédiat |
+| 2026-05-27 | Boucle infinie `get_device_name` si device retourne nom tronqué          | Guard `to_read <= 0: break`                                |
+| 2026-05-27 | `_build_message` tronque silencieusement paramètres > 16 bytes           | `ValueError` explicite si `len(parameters) > 16`           |
+| 2026-05-27 | Profil BetterMouse rejeté si casse du nom souris différente              | Comparaison case-insensitive                               |
+| 2026-05-27 | Backups BetterMouse `.swigi_bak_*` jamais nettoyés                       | `os.unlink(backup)` après succès apply_profile             |
+| 2026-05-27 | `RuntimeError` itération dict menu bar sous changement concurrent        | `list(menu.items())` avant itération                       |
+| 2026-05-27 | Tests flaky : seuil timing `< 0.15s` trop serré (CI échoue)              | Event-based wait + seuil 0.25s                             |
 
 ---
 
@@ -615,17 +626,6 @@ pip install --upgrade -r requirements.txt
 ```
 
 > **Note :** `hidapi` n'est pas dans `requirements.txt` — c'est une bibliothèque C chargée via ctypes. Sur macOS : `brew install hidapi`. Sur Linux : `sudo apt install libhidapi-hidraw0`.
-| 2026-05-26 | CPU spike pendant reconnexion (600 scans HID/60s)                    | Backoff exponentiel 0.5s→5s                              |
-| 2026-05-26 | install_mac.sh curl\|bash cassé ($SCRIPT_DIR = bash)                 | Détection + message d'erreur clair, git clone recommandé |
-| 2026-05-26 | launchctl load/unload déprécié macOS 13+                             | Remplacé par bootstrap/bootout                           |
-| 2026-05-26 | Écriture plist BetterMouse non atomique (corruption si crash)        | tempfile + os.replace()                                  |
-| 2026-05-27 | Architecture daemon trop complexe (1200L, pending_host, correction auto) | Réécriture v2 : pipe unidirectionnel ~340L, envoi immédiat |
-| 2026-05-27 | Boucle infinie `get_device_name` si device retourne nom tronqué      | Guard `to_read <= 0: break`                              |
-| 2026-05-27 | `_build_message` tronque silencieusement paramètres > 16 bytes       | `ValueError` explicite si `len(parameters) > 16`         |
-| 2026-05-27 | Profil BetterMouse rejeté si casse du nom souris différente          | Comparaison case-insensitive                             |
-| 2026-05-27 | Backups BetterMouse `.swigi_bak_*` jamais nettoyés                   | `os.unlink(backup)` après succès apply_profile           |
-| 2026-05-27 | `RuntimeError` itération dict menu bar sous changement concurrent    | `list(menu.items())` avant itération                     |
-| 2026-05-27 | Tests flaky : seuil timing `< 0.15s` trop serré (CI échoue)          | Event-based wait + seuil 0.25s                           |
 
 ---
 

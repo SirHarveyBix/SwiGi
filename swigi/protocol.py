@@ -193,3 +193,18 @@ def get_current_host(
         if num_hosts > 0 and 0 <= current_host < num_hosts:
             return current_host
     return None
+
+
+def get_protocol_version(
+    transport: HIDTransport, device_number: int, *, timeout: int = 500
+) -> tuple[int, int] | None:
+    """Query IRoot getProtocolVersion (feature 0x0000, fn 1).
+
+    Retourne (major, minor) ou None si timeout/erreur.
+    """
+    reply = hidpp_request(
+        transport, device_number, (FEATURE_ROOT << 8) | 0x10, timeout=timeout
+    )
+    if reply and len(reply) >= 2:
+        return (reply[0], reply[1])
+    return None

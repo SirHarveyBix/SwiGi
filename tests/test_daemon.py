@@ -1,4 +1,4 @@
-"""Tests pour swigi.daemon — daemon simplifié."""
+"""Tests pour swigi.daemon — daemon dual-path orchestrateur."""
 
 import contextlib
 import queue
@@ -26,12 +26,9 @@ if "swigi.gui" not in sys.modules:
 
 from swigi.daemon import (
     _apply_better_mouse,
-    _drain_switch,
     _mice_probe_loop,
     _reconnect_keyboard,
     _set_keyboard_status,
-    _SwitchEvent,
-    _watch_keyboard,
     run_daemon,
 )
 from swigi.transport import TransportError
@@ -39,11 +36,14 @@ from swigi.transport import TransportError
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _make_device(name="MX Keys S", product_id=0xB35B, change_host_index=5):
+def _make_device(
+    name="MX Keys S", product_id=0xB35B, change_host_index=5, generation="push"
+):
     device = MagicMock()
     device.name = name
     device.product_id = product_id
     device.change_host_index = change_host_index
+    device.generation = generation
     device.transport = MagicMock()
     device.transport.is_open = True
 
@@ -61,178 +61,20 @@ def _fast_timing():
         patch("swigi.daemon._PROBE_INTERVAL", 0.05),
         patch("swigi.daemon._PROBE_FAST_INTERVAL", 0.02),
         patch("swigi.daemon._PROBE_FAST_DURATION", 0.2),
+        patch("swigi.daemon._VERIFY_TIMEOUT", 2.0),
+        patch("swigi.daemon._DISPATCHER_DEBOUNCE", 0.1),
         patch("swigi.daemon._STABILITY_WAIT", 0.0),
         patch("swigi.daemon._RECONNECT_DELAY", 0.01),
         patch("swigi.daemon._RECONNECT_MAX_DELAY", 0.02),
-        patch("swigi.daemon._PING_INTERVAL", 0.0),
-        patch("swigi.daemon._READ_WINDOW", 0.05),
-        patch("swigi.daemon._DEBOUNCE", 0.1),
-        patch("swigi.daemon._VERIFY_TIMEOUT", 2.0),
+        patch("swigi.path_push._PING_INTERVAL", 0.0),
+        patch("swigi.path_push._READ_WINDOW", 0.05),
+        patch("swigi.path_push._DEBOUNCE", 0.1),
+        patch("swigi.path_pull._PING_INTERVAL", 0.01),
     ]
     with contextlib.ExitStack() as stack:
         for timing_patch in patches:
             stack.enter_context(timing_patch)
         yield
-
-
-# ── Tests _drain_switch ───────────────────────────────────────────────────────
-
-
-class TestDrainSwitch(unittest.TestCase):
-    def test_captures_switch_in_buffer(self):
-        """Capture un paquet CHANGE_HOST dans le buffer de lecture."""
-        keyboard = _make_device(change_host_index=5)
-        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 1] + [0] * 14)
-        keyboard.transport.read.return_value = packet
-        result = _drain_switch(keyboard)
-        self.assertEqual(result, 1)
-
-    def test_returns_none_if_no_switch(self):
-        """Retourne None si aucun paquet CHANGE_HOST n'est trouvé."""
-        keyboard = _make_device(change_host_index=5)
-        keyboard.transport.read.return_value = None
-        result = _drain_switch(keyboard)
-        self.assertIsNone(result)
-
-    def test_accepts_non_zero_swid(self):
-        """Accepte les paquets avec swid non-zéro (firmware MX Keys)."""
-        keyboard = _make_device(change_host_index=5)
-        packet = bytes([0x11, 0xFF, 5, 0x0A, 3, 1] + [0] * 14)
-        keyboard.transport.read.side_effect = [packet] + [None] * 10
-        result = _drain_switch(keyboard)
-        self.assertEqual(result, 1)
-
-    def test_stops_on_transport_error(self):
-        """Arrête la lecture sur TransportError et retourne None."""
-        keyboard = _make_device(change_host_index=5)
-        keyboard.transport.read.side_effect = TransportError("dead")
-        result = _drain_switch(keyboard)
-        self.assertIsNone(result)
-
-    def test_invalid_target_ignored(self):
-        """Ignore un target hors limites (target >= num_hosts)."""
-        keyboard = _make_device(change_host_index=5)
-        # target=5, num_hosts=3 → invalid
-        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 5] + [0] * 14)
-        keyboard.transport.read.side_effect = [packet] + [None] * 10
-        result = _drain_switch(keyboard)
-        self.assertIsNone(result)
-
-
-# ── Tests _watch_keyboard ─────────────────────────────────────────────────────
-
-
-@patch("swigi.daemon.get_current_host", return_value=0)
-class TestWatchKeyboard(unittest.TestCase):
-    @_fast_timing()
-    def test_switch_posted_immediately(self, mock_get_host):
-        """Switch détecté → événement posté immédiatement (pas de commit wait)."""
-        keyboard = _make_device(change_host_index=5)
-        event_queue = queue.Queue()
-        state = {
-            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}
-        }
-        stop_event = threading.Event()
-        hunt_trigger = threading.Event()
-
-        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
-        calls = [0]
-
-        def mock_read(timeout=10):
-            calls[0] += 1
-            if calls[0] == 1:
-                return packet
-            stop_event.set()
-            return None
-
-        keyboard.transport.read.side_effect = mock_read
-
-        thread = threading.Thread(
-            target=_watch_keyboard,
-            args=(keyboard, event_queue, state, stop_event, hunt_trigger),
-            daemon=True,
-        )
-        thread.start()
-        event = event_queue.get(timeout=2.0)
-        stop_event.set()
-        thread.join(timeout=2.0)
-
-        self.assertIsInstance(event, _SwitchEvent)
-        self.assertEqual(event.target_host, 2)
-
-    @_fast_timing()
-    def test_debounce(self, mock_get_host):
-        """Même switch dans la fenêtre de debounce → un seul événement."""
-        keyboard = _make_device(change_host_index=5)
-        event_queue = queue.Queue()
-        state = {
-            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}
-        }
-        stop_event = threading.Event()
-        hunt_trigger = threading.Event()
-
-        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 1] + [0] * 14)
-        calls = [0]
-
-        def mock_read(timeout=10):
-            calls[0] += 1
-            if calls[0] <= 3:
-                return packet
-            stop_event.set()
-            return None
-
-        keyboard.transport.read.side_effect = mock_read
-
-        thread = threading.Thread(
-            target=_watch_keyboard,
-            args=(keyboard, event_queue, state, stop_event, hunt_trigger),
-            daemon=True,
-        )
-        thread.start()
-        thread.join(timeout=2.0)
-
-        events = []
-        while not event_queue.empty():
-            events.append(event_queue.get_nowait())
-        self.assertEqual(len(events), 1)
-
-    @_fast_timing()
-    @patch("swigi.daemon._reconnect_keyboard")
-    def test_reconnect_on_write_failure(self, mock_reconnect, mock_get_host):
-        """Échec write → reconnexion automatique."""
-        keyboard = _make_device(change_host_index=5)
-        new_keyboard = _make_device(change_host_index=5, name="MX Keys S (new)")
-        new_keyboard.transport.read.return_value = None
-        mock_reconnect.return_value = new_keyboard
-
-        event_queue = queue.Queue()
-        state = {
-            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}
-        }
-        stop_event = threading.Event()
-        hunt_trigger = threading.Event()
-
-        calls = [0]
-        keyboard.transport.write.side_effect = TransportError("dead")
-        keyboard.transport.read.return_value = None
-
-        def new_read(timeout=10):
-            calls[0] += 1
-            if calls[0] > 2:
-                stop_event.set()
-            return None
-
-        new_keyboard.transport.read.side_effect = new_read
-
-        thread = threading.Thread(
-            target=_watch_keyboard,
-            args=(keyboard, event_queue, state, stop_event, hunt_trigger),
-            daemon=True,
-        )
-        thread.start()
-        thread.join(timeout=3.0)
-
-        mock_reconnect.assert_called_once()
 
 
 # ── Tests _mice_probe_loop ────────────────────────────────────────────────────
@@ -348,7 +190,7 @@ class TestMiceProbeLoop(unittest.TestCase):
 # ── Tests run_daemon ──────────────────────────────────────────────────────────
 
 
-@patch("swigi.daemon.get_current_host", return_value=0)
+@patch("swigi.path_push.get_current_host", return_value=0)
 class TestRunDaemon(unittest.TestCase):
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
@@ -357,9 +199,11 @@ class TestRunDaemon(unittest.TestCase):
         """Switch → CHANGE_HOST envoyé immédiatement à la souris."""
         mock_find.return_value = []
         keyboard = _make_device(
-            name="MX Keys S", product_id=0xB35B, change_host_index=5
+            name="MX Keys S", product_id=0xB35B, change_host_index=5, generation="push"
         )
-        mouse = _make_device(name="MX Vertical", product_id=0xB034, change_host_index=9)
+        mouse = _make_device(
+            name="MX Vertical", product_id=0xB034, change_host_index=9
+        )
 
         state = {}
         stop_event = threading.Event()
@@ -423,6 +267,95 @@ class TestRunDaemon(unittest.TestCase):
         thread.join(timeout=3.0)
 
         mock_send.assert_not_called()
+
+    @_fast_timing()
+    @patch("swigi.daemon.find_all_devices", return_value=[])
+    @patch("swigi.daemon.send_change_host")
+    def test_pull_keyboard_reconnect_sends(self, mock_send, mock_find, mock_get_host):
+        """Clavier PULL : déconnexion → reconnexion → PULL event → CHANGE_HOST envoyé."""
+        keyboard = _make_device(
+            name="MX Keys Wireless", product_id=0xB35B, change_host_index=5, generation="pull"
+        )
+        new_keyboard = _make_device(
+            name="MX Keys Wireless", product_id=0xB35B, change_host_index=5, generation="pull"
+        )
+        mouse = _make_device(
+            name="MX Vertical", product_id=0xB034, change_host_index=9
+        )
+
+        state = {}
+        stop_event = threading.Event()
+
+        # First ping fails → disconnect
+        call_count = [0]
+
+        def write_side_effect(data):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise TransportError("dead")
+
+        keyboard.transport.write.side_effect = write_side_effect
+
+        # After reconnect, stop quickly
+        new_calls = [0]
+
+        def new_write(data):
+            new_calls[0] += 1
+            if new_calls[0] >= 2:
+                stop_event.set()
+
+        new_keyboard.transport.write.side_effect = new_write
+
+        with patch("swigi.path_pull.get_current_host", return_value=0), \
+             patch("swigi.daemon.get_current_host", return_value=1), \
+             patch("swigi.daemon._reconnect_keyboard", return_value=new_keyboard):
+            thread = threading.Thread(
+                target=run_daemon,
+                args=([keyboard], [mouse], state, stop_event),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=4.0)
+
+        mock_send.assert_called()
+        self.assertEqual(state.get("switches"), 1)
+
+    @_fast_timing()
+    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.daemon.send_change_host")
+    def test_dispatcher_debounce_same_target(self, mock_send, mock_find, mock_get_host):
+        """Debounce : même target < 1s → un seul dispatch."""
+        mock_find.return_value = []
+        keyboard = _make_device(change_host_index=5)
+        mouse = _make_device(change_host_index=9)
+
+        state = {}
+        stop_event = threading.Event()
+
+        # Deux notifications identiques rapprochées
+        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 1] + [0] * 14)
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] <= 2:
+                return packet
+            time.sleep(0.1)
+            stop_event.set()
+            return None
+
+        keyboard.transport.read.side_effect = mock_read
+
+        thread = threading.Thread(
+            target=run_daemon,
+            args=([keyboard], [mouse], state, stop_event),
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=3.0)
+
+        # Un seul dispatch malgré 2 notifications (debounce)
+        self.assertEqual(state.get("switches"), 1)
 
 
 # ── Tests _reconnect_keyboard ─────────────────────────────────────────────────
@@ -522,6 +455,61 @@ class TestReconnectKeyboard(unittest.TestCase):
         wrong_keyboard.close.assert_called_once()
 
 
+# ── Tests _post_pull_event ────────────────────────────────────────────────────
+
+
+class TestPostPullEvent(unittest.TestCase):
+    @patch("swigi.daemon.get_current_host", return_value=1)
+    def test_posts_event_with_current_host(self, mock_get_host):
+        """Post un _SwitchEvent(this_mac_host, source='pull') après reconnexion."""
+        from swigi.daemon import _post_pull_event, _SwitchEvent
+
+        keyboard = _make_device()
+        event_queue = queue.Queue()
+        state = {}
+        hunt_trigger = threading.Event()
+
+        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
+
+        event = event_queue.get_nowait()
+        self.assertIsInstance(event, _SwitchEvent)
+        self.assertEqual(event.target_host, 1)
+        self.assertEqual(event.source, "pull")
+        self.assertEqual(state["this_mac_host"], 1)
+        self.assertTrue(hunt_trigger.is_set())
+
+    @patch("swigi.daemon.get_current_host", side_effect=TransportError("dead"))
+    def test_falls_back_to_state(self, mock_get_host):
+        """Fallback sur state['this_mac_host'] si get_current_host échoue."""
+        from swigi.daemon import _post_pull_event
+
+        keyboard = _make_device()
+        event_queue = queue.Queue()
+        state = {"this_mac_host": 2}
+        hunt_trigger = threading.Event()
+
+        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
+
+        event = event_queue.get_nowait()
+        self.assertEqual(event.target_host, 2)
+        self.assertEqual(event.source, "pull")
+
+    @patch("swigi.daemon.get_current_host", return_value=None)
+    def test_no_event_if_host_unknown(self, mock_get_host):
+        """Pas d'event si get_current_host retourne None et pas de state."""
+        from swigi.daemon import _post_pull_event
+
+        keyboard = _make_device()
+        event_queue = queue.Queue()
+        state = {}
+        hunt_trigger = threading.Event()
+
+        _post_pull_event(keyboard, event_queue, state, hunt_trigger, "MX Keys S")
+
+        self.assertTrue(event_queue.empty())
+        self.assertFalse(hunt_trigger.is_set())
+
+
 # ── Tests _set_keyboard_status ────────────────────────────────────────────────
 
 
@@ -586,53 +574,6 @@ class TestApplyBetterMouse(unittest.TestCase):
     def test_exception_logged_not_raised(self, mock_apply):
         """Exception dans apply_profile est loguée, pas propagée."""
         _apply_better_mouse("MX Vertical")  # Should not raise
-
-
-# ── Tests _watch_keyboard watchdog ────────────────────────────────────────────
-
-
-class TestWatchKeyboardWatchdog(unittest.TestCase):
-    @_fast_timing()
-    @patch("swigi.daemon.get_current_host", return_value=0)
-    @patch("swigi.daemon._reconnect_keyboard")
-    def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):
-        """Watchdog → reconnexion après 10s sans réponse."""
-        keyboard = _make_device(change_host_index=5)
-        mock_reconnect.return_value = None  # reconnect fails → thread exits
-
-        event_queue = queue.Queue()
-        state = {
-            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}
-        }
-        stop_event = threading.Event()
-        hunt_trigger = threading.Event()
-
-        # Make write succeed but read never returns valid data
-        keyboard.transport.write.return_value = None
-        keyboard.transport.read.return_value = None
-
-        # Patch time: first call sets last_response, all subsequent trigger watchdog
-        base = 1000.0
-        call_n = [0]
-
-        def fake_time():
-            call_n[0] += 1
-            if call_n[0] == 1:
-                return base  # last_response = time.time()
-            return base + 15.0  # Immediately triggers watchdog (15 > 10)
-
-        with patch("swigi.daemon.time.time", side_effect=fake_time):
-            with patch("swigi.daemon.time.sleep"):
-                thread = threading.Thread(
-                    target=_watch_keyboard,
-                    args=(keyboard, event_queue, state, stop_event, hunt_trigger),
-                    daemon=True,
-                )
-                thread.start()
-                thread.join(timeout=3.0)
-
-        mock_reconnect.assert_called_once()
-        keyboard.close.assert_called()
 
 
 if __name__ == "__main__":

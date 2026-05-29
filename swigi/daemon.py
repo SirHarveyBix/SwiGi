@@ -1,6 +1,7 @@
-"""SwiGi daemon — pipe unidirectionnel Easy-Switch clavier → souris.
+"""SwiGi daemon — orchestrateur dual-path PUSH / PULL.
 
-Clavier notifie → SwiGi envoie CHANGE_HOST → souris bascule → log confirme.
+Route chaque clavier vers le watcher approprié (Gen S → PUSH, Legacy → PULL).
+Dispatcher unifié : tous les events → send_change_host aux souris.
 """
 
 import dataclasses
@@ -13,11 +14,10 @@ from swigi.constants import (
     DEVICE_NUMBER_DIRECT,
     DEVICE_TYPE_KEYBOARD,
     DEVICE_TYPE_MOUSE,
-    MSG_LENGTHS,
     PING_MESSAGE,
     SYSTEM,
 )
-from swigi.discovery import DeviceInfo, find_all_devices
+from swigi.discovery import GENERATION_PUSH, DeviceInfo, find_all_devices
 from swigi.gui import _prefs_lock, notify, prefs
 from swigi.protocol import get_current_host, send_change_host
 from swigi.transport import TransportError
@@ -26,16 +26,14 @@ log = logging.getLogger("swigi.daemon")
 
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
-_PING_INTERVAL = 0.5
-_READ_WINDOW = 0.5
-_RECONNECT_DELAY = 0.5
-_RECONNECT_MAX_DELAY = 5.0
-_STABILITY_WAIT = 0.5
 _PROBE_INTERVAL = 3.0
 _PROBE_FAST_INTERVAL = 1.0
 _PROBE_FAST_DURATION = 15.0
-_DEBOUNCE = 1.0
 _VERIFY_TIMEOUT = 30.0
+_DISPATCHER_DEBOUNCE = 1.0
+_RECONNECT_DELAY = 0.5
+_RECONNECT_MAX_DELAY = 5.0
+_STABILITY_WAIT = 0.5
 
 
 # ── Événements ────────────────────────────────────────────────────────────────
@@ -45,9 +43,10 @@ _VERIFY_TIMEOUT = 30.0
 class _SwitchEvent:
     target_host: int
     keyboard_name: str
+    source: str  # "push" ou "pull"
 
 
-# ── Reconnexion clavier ───────────────────────────────────────────────────────
+# ── Helpers partagés (utilisés par path_push et path_pull) ────────────────────
 
 
 def _reconnect_keyboard(
@@ -74,149 +73,66 @@ def _reconnect_keyboard(
     return None
 
 
-# ── Thread clavier ────────────────────────────────────────────────────────────
-
-
-def _watch_keyboard(
+def _post_pull_event(
     keyboard: DeviceInfo,
     event_queue: queue.Queue,
     state: dict,
-    stop_event: threading.Event,
     hunt_trigger: threading.Event,
+    name: str,
 ) -> None:
-    """Écoute CHANGE_HOST, poste dans la queue, reconnecte si nécessaire."""
-    name = keyboard.name
-    last_response = time.time()
-    last_ping = 0.0
-    last_switch_time = 0.0
-    last_switch_target = -1
-
-    # Déterminer l'index de ce Mac via le clavier
+    """Post un event PULL après reconnexion clavier."""
     try:
         this_mac_host = get_current_host(
             keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index
         )
-        if this_mac_host is not None:
-            state["this_mac_host"] = this_mac_host
-            log.info("⌨️  [%s] Surveillance démarrée (hôte %d)", name, this_mac_host + 1)
-        else:
-            log.info("⌨️  [%s] Surveillance démarrée", name)
     except (TransportError, OSError):
-        log.info("⌨️  [%s] Surveillance démarrée", name)
+        this_mac_host = state.get("this_mac_host")
 
-    while not stop_event.is_set():
-        # Watchdog
-        if time.time() - last_response > 10.0:
-            log.warning("👁️  [%s] Pas de réponse → reconnexion", name)
-            keyboard.close()
-            _set_keyboard_status(state, keyboard.product_id, name, False)
-            keyboard = _reconnect_keyboard(keyboard.product_id, stop_event)
-            if keyboard is None:
-                break
-            name = keyboard.name
-            _set_keyboard_status(state, keyboard.product_id, name, True)
-            log.info("🔄 ⌨️ [%s] Reconnecté", name)
-            notify(f"{name} reconnecté", "Clavier")
-            last_response = time.time()
-            _pull_mouse_on_reconnect(state)
-            hunt_trigger.set()
-            continue
-
-        # Ping
-        if time.time() - last_ping >= _PING_INTERVAL:
-            try:
-                keyboard.transport.write(PING_MESSAGE)
-                last_ping = time.time()
-            except (TransportError, OSError):
-                # Drain : capturer un switch juste avant la déco
-                target = _drain_switch(keyboard)
-                if target is not None and not (
-                    target == last_switch_target
-                    and time.time() - last_switch_time < _DEBOUNCE
-                ):
-                    last_switch_time = time.time()
-                    last_switch_target = target
-                    log.info("★ [%s] Easy-Switch → hôte %d (drain)", name, target + 1)
-                    event_queue.put(_SwitchEvent(target, name))
-
-                log.info("🔌 [%s] Déconnecté", name)
-                keyboard.close()
-                _set_keyboard_status(state, keyboard.product_id, name, False)
-                keyboard = _reconnect_keyboard(keyboard.product_id, stop_event)
-                if keyboard is None:
-                    break
-                name = keyboard.name
-                _set_keyboard_status(state, keyboard.product_id, name, True)
-                log.info("🔄 ⌨️ [%s] Reconnecté", name)
-                if time.time() - last_switch_time > 5.0:
-                    notify(f"{name} reconnecté", "Clavier")
-                last_response = time.time()
-                _pull_mouse_on_reconnect(state)
-                hunt_trigger.set()
-                continue
-
-        # Lecture notifications
-        deadline = time.time() + _READ_WINDOW
-        got_data = False
-        while time.time() < deadline and not stop_event.is_set():
-            try:
-                raw = keyboard.transport.read(timeout=50)
-            except (TransportError, OSError):
-                break
-            if not raw or len(raw) < 4:
-                continue
-            if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
-                continue
-            last_response = time.time()
-            got_data = True
-
-            # CHANGE_HOST notification (accepte tout sw_id — le MX Keys
-            # peut envoyer avec sw_id != 0 selon le firmware)
-            if (
-                raw[2] == keyboard.change_host_index
-                and len(raw) > 5
-            ):
-                num_hosts = raw[4] or 3
-                target = raw[5]
-                if not (0 <= target < num_hosts):
-                    continue
-                if (
-                    target == last_switch_target
-                    and time.time() - last_switch_time < _DEBOUNCE
-                ):
-                    continue
-                last_switch_time = time.time()
-                last_switch_target = target
-                log.info("━" * 40)
-                log.info("★ [%s] Easy-Switch → hôte %d", name, target + 1)
-                event_queue.put(_SwitchEvent(target, name))
-                break
-
-        if not got_data:
-            time.sleep(0.01)
-
-    if keyboard is not None:
-        keyboard.close()
-    log.info("🔴 [%s] Arrêté", name)
+    if this_mac_host is not None:
+        state["this_mac_host"] = this_mac_host
+        log.info("🔁 Clavier revenu → ramener souris sur hôte %d", this_mac_host + 1)
+        event_queue.put(_SwitchEvent(this_mac_host, name, "pull"))
+        hunt_trigger.set()
 
 
-def _drain_switch(keyboard: DeviceInfo) -> int | None:
-    """Lit jusqu'à 10 paquets pour capturer un switch en buffer avant déconnexion."""
-    for _ in range(10):
-        try:
-            raw = keyboard.transport.read(timeout=200)
-        except (TransportError, OSError):
-            break
-        if not raw or len(raw) < 6:
-            continue
-        if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
-            continue
-        if raw[2] == keyboard.change_host_index:
-            num_hosts = raw[4] or 3
-            target = raw[5]
-            if 0 <= target < num_hosts:
-                return target
-    return None
+def _set_keyboard_status(state: dict, product_id: int, name: str, ok: bool) -> None:
+    """Met à jour le statut d'un clavier dans state."""
+    lock = state.get("_lock")
+    if lock:
+        with lock:
+            state["keyboards"][product_id] = {"name": name, "ok": ok}
+            _sync_keyboard_display(state)
+    else:
+        state["keyboards"][product_id] = {"name": name, "ok": ok}
+        _sync_keyboard_display(state)
+
+
+def _sync_keyboard_display(state: dict) -> None:
+    """Met à jour state['keyboard'] pour la GUI."""
+    for keyboard_data in state.get("keyboards", {}).values():
+        if keyboard_data.get("ok"):
+            state["keyboard"] = keyboard_data["name"]
+            return
+    state["keyboard"] = None
+
+
+def _apply_better_mouse(mouse_name: str | None = None) -> None:
+    """Applique le profil BetterMouse si configuré. Silencieux en cas d'erreur."""
+    if SYSTEM != "Darwin":
+        return
+    with _prefs_lock:
+        if not prefs.get("better_mouse_auto_apply") or not prefs.get(
+            "better_mouse_profile"
+        ):
+            return
+        profile = prefs["better_mouse_profile"]
+    try:
+        from swigi.bettermouse import apply_profile
+
+        apply_profile(profile, mouse_name=mouse_name)
+        log.info("🐭 Profil '%s' appliqué", profile)
+    except Exception as error:
+        log.debug("🐭 BetterMouse : %s", error)
 
 
 # ── Thread probe souris ───────────────────────────────────────────────────────
@@ -238,6 +154,44 @@ def _mice_probe_loop(
         if hunt_trigger.wait(timeout=interval):
             hunt_trigger.clear()
             fast_until = time.time() + _PROBE_FAST_DURATION
+
+            # Fast path : envoi immédiat aux souris déjà connectées
+            target = state.get("last_target_host")
+            if target is not None:
+                with mouse_lock:
+                    open_mice = [d for d in mice if d.transport.is_open]
+                for mouse in open_mice:
+                    try:
+                        current = get_current_host(
+                            mouse.transport,
+                            DEVICE_NUMBER_DIRECT,
+                            mouse.change_host_index,
+                        )
+                    except (TransportError, OSError):
+                        mouse.close()
+                        continue
+                    if current == target:
+                        log.info("✓ %s déjà sur hôte %d", mouse.name, target + 1)
+                        state["last_target_host"] = None
+                        _apply_better_mouse(mouse.name)
+                        break
+                    elif current is not None:
+                        log.info(
+                            "⚡ %s → hôte %d (immédiat)",
+                            mouse.name,
+                            target + 1,
+                        )
+                        try:
+                            send_change_host(
+                                mouse.transport,
+                                DEVICE_NUMBER_DIRECT,
+                                mouse.change_host_index,
+                                target,
+                            )
+                        except (TransportError, OSError):
+                            mouse.close()
+                        state["last_target_host"] = None
+                        break
 
         if stop_event.is_set():
             break
@@ -268,7 +222,7 @@ def _mice_probe_loop(
                     reconnected_mice.append(mouse)
                 else:
                     mouse.close()
-            # Retirer mortes — détecter les déconnexions
+            # Retirer mortes
             disconnected = [
                 device
                 for device in mice
@@ -290,7 +244,6 @@ def _mice_probe_loop(
         for mouse in reconnected_mice:
             log.info("🔄 🖱️ [%s] Reconnectée", mouse.name)
             notify(f"{mouse.name} reconnectée", "Souris")
-            # Loguer l'hôte actuel pour traçabilité
             try:
                 current = get_current_host(
                     mouse.transport,
@@ -339,8 +292,6 @@ def _mice_probe_loop(
                         _apply_better_mouse(mouse.name)
                         break
                     elif current is not None:
-                        # Souris sur mauvais hôte → envoi différé (la commande
-                        # n'a pas été reçue ou le dispatcher n'avait pas de souris)
                         log.info(
                             "→ %s sur hôte %d, envoi vers hôte %d",
                             mouse.name,
@@ -359,7 +310,6 @@ def _mice_probe_loop(
                         state["last_target_host"] = None
                         break
         else:
-            # Pas de switch en cours — BetterMouse sur nouvelles souris
             for mouse in new_mice:
                 if mouse.transport.is_open:
                     _apply_better_mouse(mouse.name)
@@ -375,65 +325,6 @@ def _mice_probe_loop(
             mouse.close()
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _pull_mouse_on_reconnect(state: dict) -> None:
-    """Après reconnexion clavier, positionner le target pour ramener la souris sur ce Mac."""
-    this_mac_host = state.get("this_mac_host")
-    if this_mac_host is None:
-        return
-    lock = state.get("_lock")
-    if lock:
-        with lock:
-            state["last_target_host"] = this_mac_host
-            state["last_switch_time"] = time.time()
-    else:
-        state["last_target_host"] = this_mac_host
-        state["last_switch_time"] = time.time()
-    log.info("🔁 Clavier revenu → ramener souris sur hôte %d", this_mac_host + 1)
-
-
-def _set_keyboard_status(state: dict, product_id: int, name: str, ok: bool) -> None:
-    """Met à jour le statut d'un clavier dans state."""
-    lock = state.get("_lock")
-    if lock:
-        with lock:
-            state["keyboards"][product_id] = {"name": name, "ok": ok}
-            _sync_keyboard_display(state)
-    else:
-        state["keyboards"][product_id] = {"name": name, "ok": ok}
-        _sync_keyboard_display(state)
-
-
-def _sync_keyboard_display(state: dict) -> None:
-    """Met à jour state['keyboard'] pour la GUI."""
-    for keyboard_data in state.get("keyboards", {}).values():
-        if keyboard_data.get("ok"):
-            state["keyboard"] = keyboard_data["name"]
-            return
-    state["keyboard"] = None
-
-
-def _apply_better_mouse(mouse_name: str | None = None) -> None:
-    """Applique le profil BetterMouse si configuré. Silencieux en cas d'erreur."""
-    if SYSTEM != "Darwin":
-        return
-    with _prefs_lock:
-        if not prefs.get("better_mouse_auto_apply") or not prefs.get(
-            "better_mouse_profile"
-        ):
-            return
-        profile = prefs["better_mouse_profile"]
-    try:
-        from swigi.bettermouse import apply_profile
-
-        apply_profile(profile, mouse_name=mouse_name)
-        log.info("🐭 Profil '%s' appliqué", profile)
-    except Exception as error:
-        log.debug("🐭 BetterMouse : %s", error)
-
-
 # ── Point d'entrée ────────────────────────────────────────────────────────────
 
 
@@ -443,7 +334,10 @@ def run_daemon(
     state: dict,
     stop_event: threading.Event,
 ) -> None:
-    """Daemon simplifié. Switch immédiat, vérification par log, pas de correction agressive."""
+    """Daemon dual-path. Route chaque clavier vers PUSH ou PULL selon sa génération."""
+    from swigi.path_pull import watch_keyboard_pull
+    from swigi.path_push import watch_keyboard_push
+
     # Init state
     lock = threading.Lock()
     state["_lock"] = lock
@@ -463,10 +357,22 @@ def run_daemon(
     hunt_trigger = threading.Event()
     mice_list = list(mice)
 
-    # Threads clavier
+    # Threads clavier — route selon generation
     for keyboard in keyboards:
+        if keyboard.generation == GENERATION_PUSH:
+            watcher = watch_keyboard_push
+            path_label = "PUSH"
+        else:
+            watcher = watch_keyboard_pull
+            path_label = "PULL"
+        log.info(
+            "⌨️  [%s] → path %s (generation=%s)",
+            keyboard.name,
+            path_label,
+            keyboard.generation,
+        )
         threading.Thread(
-            target=_watch_keyboard,
+            target=watcher,
             args=(keyboard, event_queue, state, stop_event, hunt_trigger),
             name=f"keyboard-{keyboard.product_id:04X}",
             daemon=True,
@@ -482,7 +388,10 @@ def run_daemon(
 
     log.info("🟢 Prêt — %d clavier(s), %d souris", len(keyboards), len(mice))
 
-    # Boucle principale : dispatch immédiat
+    # Boucle principale : dispatch unifié (PUSH et PULL traités identiquement)
+    last_dispatch_target = -1
+    last_dispatch_time = 0.0
+
     while not stop_event.is_set():
         try:
             event = event_queue.get(timeout=1.0)
@@ -490,6 +399,16 @@ def run_daemon(
             continue
 
         if not isinstance(event, _SwitchEvent):
+            continue
+
+        # Debounce dispatcher : même target < 1s → drop (évite double PUSH+PULL)
+        if (
+            event.target_host == last_dispatch_target
+            and time.time() - last_dispatch_time < _DISPATCHER_DEBOUNCE
+        ):
+            log.debug(
+                "⏭️  Debounce : hôte %d déjà dispatché < 1s", event.target_host + 1
+            )
             continue
 
         with _prefs_lock:
@@ -511,7 +430,12 @@ def run_daemon(
                         mouse.change_host_index,
                         event.target_host,
                     )
-                    log.info("⚡ %s → hôte %d", mouse.name, event.target_host + 1)
+                    log.info(
+                        "⚡ %s → hôte %d (%s)",
+                        mouse.name,
+                        event.target_host + 1,
+                        event.source,
+                    )
                     sent += 1
                 except (TransportError, OSError):
                     mouse.close()
@@ -520,6 +444,8 @@ def run_daemon(
             state["last_target_host"] = event.target_host
             state["last_switch_time"] = time.time()
             state["switches"] = state.get("switches", 0) + 1
+        last_dispatch_target = event.target_host
+        last_dispatch_time = time.time()
         hunt_trigger.set()
 
         if sent == 0:

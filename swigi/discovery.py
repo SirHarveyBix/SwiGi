@@ -18,11 +18,48 @@ from swigi.protocol import (
     _drain_transport,
     get_device_name,
     get_device_type,
+    get_protocol_version,
     resolve_feature,
 )
 from swigi.transport import HIDTransport, TransportError
 
 log = logging.getLogger("swigi.discovery")
+
+# ── Routing : classification Gen S / Legacy ───────────────────────────────────
+
+GEN_S_MIN_VERSION = (4, 5)
+
+GENERATION_PUSH = "push"
+GENERATION_PULL = "pull"
+
+
+def classify_generation(transport: HIDTransport) -> str:
+    """Détermine la génération firmware via HID++ protocol version.
+
+    Retourne "push" (Gen S, HID++ >= 4.5) ou "pull" (Legacy / erreur).
+    """
+    try:
+        version = get_protocol_version(transport, DEVICE_NUMBER_DIRECT)
+    except (TransportError, OSError):
+        log.debug("Protocol version query failed → fallback pull")
+        return GENERATION_PULL
+
+    if version is None:
+        log.debug("Protocol version timeout → fallback pull")
+        return GENERATION_PULL
+
+    major, minor = version
+    if major > GEN_S_MIN_VERSION[0] or (
+        major == GEN_S_MIN_VERSION[0] and minor >= GEN_S_MIN_VERSION[1]
+    ):
+        log.debug("HID++ %d.%d → Gen S (push)", major, minor)
+        return GENERATION_PUSH
+
+    log.debug("HID++ %d.%d → Legacy (pull)", major, minor)
+    return GENERATION_PULL
+
+
+# ── Device discovery ──────────────────────────────────────────────────────────
 
 
 @dataclasses.dataclass
@@ -31,6 +68,7 @@ class DeviceInfo:
     name: str
     product_id: int
     change_host_index: int
+    generation: str = GENERATION_PULL
 
     def close(self):
         try:
@@ -140,8 +178,13 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                 transport.close()
                 transport = None
                 continue
+            generation = GENERATION_PULL
+            if device_type == DEVICE_TYPE_KEYBOARD:
+                generation = classify_generation(transport)
             seen_product_ids.add(product_id)
-            results.append(DeviceInfo(transport, name, product_id, change_host_index))
+            results.append(
+                DeviceInfo(transport, name, product_id, change_host_index, generation)
+            )
             transport = None  # ownership transférée à DeviceInfo
         except (TransportError, OSError):
             pass

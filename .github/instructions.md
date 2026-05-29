@@ -7,6 +7,7 @@ Daemon Python synchronisant Easy-Switch Logitech (clavier → souris) via HID++ 
 ## Documentation obligatoire
 
 Avant toute modification, lire dans cet ordre :
+
 1. `.specify/memory/constitution.md` — 6 principes NON-NÉGOCIABLES
 2. `.specify/plan.md` — architecture actuelle et décisions techniques
 3. `.specify/analysis.md` — diagnostic et bugs résolus
@@ -19,15 +20,18 @@ Avant toute modification, lire dans cet ordre :
 - Tests : `python3 -m pytest tests/ -x -q` + `python3 -m ruff check swigi/ tests/`
 - Lancer les 2 avant de déclarer une tâche terminée
 
-## Architecture (5 modules)
+## Architecture (8 modules principaux)
 
-| Module         | Rôle                                                                     |
-| -------------- | ------------------------------------------------------------------------ |
-| `transport.py` | Wrapper hidapi (read/write/close)                                        |
-| `protocol.py`  | HID++ 2.0 (send_change_host, get_current_host, hidpp_request)            |
-| `discovery.py` | Enumération périphériques Logitech                                       |
-| `daemon.py`    | Pipe unidirectionnel : keyboard watch → event queue → dispatcher → mouse |
-| `gui.py`       | Menu bar macOS (rumps) + prefs JSON                                      |
+| Module         | Rôle                                                                          |
+| -------------- | ----------------------------------------------------------------------------- |
+| `transport.py` | Wrapper hidapi (read/write/close)                                             |
+| `protocol.py`  | HID++ 2.0 (send_change_host, get_current_host, get_protocol_version)          |
+| `discovery.py` | Enumération + routing (classify_generation, DeviceInfo)                       |
+| `daemon.py`    | Orchestrateur dual-path + dispatcher + helpers partagés (_reconnect_keyboard) |
+| `path_push.py` | Watcher Gen S : notification CHANGE_HOST + fallback PULL                      |
+| `path_pull.py` | Watcher Legacy : ping watchdog + PULL on reconnect                            |
+| `gui.py`       | Menu bar macOS (rumps) + prefs JSON                                           |
+| `constants.py` | Constantes HID++, PIDs, messages                                              |
 
 ## Contrainte macOS BT critique
 

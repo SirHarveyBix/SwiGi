@@ -1,6 +1,25 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.2.0 → 1.3.0
+Type: MINOR — amendement P1 (architecture dual-path PUSH/PULL)
+
+Principes modifiés:
+  P1 Simplicité → étendu : Le daemon est structuré en 2 chemins indépendants
+    (path_push.py pour Gen S, path_pull.py pour Legacy). Le routing
+    (classify_generation) est intégré à discovery.py. Les helpers partagés
+    (_reconnect_keyboard, _post_pull_event) sont centralisés dans daemon.py.
+    Le nombre total de modules reste < 15 fichiers .py.
+    Motivation : testabilité indépendante, isolation des bugs, zéro redondance,
+    support multi-génération firmware Logitech sans over-engineering.
+  P5 Réactivité → étendu : Le path PUSH vise < 300ms (notification-driven).
+    Le path PULL accepte < 5s (reconnection-driven, limité par BT stack).
+    Les deux sont documentés comme comportements attendus.
+
+Specs ajoutées:
+  ✅ .specify/plan.md Phase 6 (architecture dual-path)
+
+---
 Version change: 1.1.0 → 1.2.0
 Type: MINOR — amendement P1 (passage au package modulaire)
 
@@ -12,7 +31,7 @@ Principes modifiés:
     Motivation : testabilité, maintenabilité, séparation des responsabilités.
 
 Specs ajoutées:
-  ✅ .specify/features/modular-architecture.md
+  ✅ Architecture modulaire (documentée dans .specify/plan.md Phase 1)
 
 ---
 Version change: 1.0.0 → 1.1.0
@@ -27,9 +46,7 @@ Principes modifiés:
   Exemples : rumps (menu bar macOS)
 
 Specs ajoutées:
-  ✅ .specify/features/menu-bar-macos.md
-  ✅ .specify/features/change-host-reliability.md
-  ✅ .specify/features/log-rotation.md
+  ✅ Menu bar macOS, change-host reliability, log rotation (documentés dans .specify/plan.md)
 
 Follow-up TODOs:
   - TODO(RATIFICATION_DATE): confirmer la date d'adoption officielle si différente de 2026-05-22
@@ -38,9 +55,9 @@ Follow-up TODOs:
 
 # Constitution du Projet SwiGi
 
-**Version:** 1.2.0
+**Version:** 1.3.0
 **Date de ratification:** 2026-05-22
-**Dernière modification:** 2026-05-22
+**Dernière modification:** 2026-05-29
 **Mainteneur principal:** SirHarveyBix (gui.lefort.17@gmail.com)
 
 ---
@@ -109,9 +126,9 @@ Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être
 
 ### Principe 5 — Réactivité
 
-**Règle :** La latence entre la pression de Easy-Switch et le basculement de la souris DOIT être inférieure à 300ms dans des conditions normales. Le polling DOIT utiliser un intervalle ≤ 100ms. La fenêtre de lecture des réponses HID++ DOIT être ≥ 80ms pour capturer les notifications asynchrones.
+**Règle :** La latence entre la pression de Easy-Switch et le basculement de la souris DOIT être inférieure à 300ms dans des conditions normales pour les claviers Gen S (HID++ ≥ 4.5, path PUSH notification-driven). Pour les claviers Legacy (HID++ < 4.5, path PULL reconnection-driven), la latence acceptée est < 5s (limitée par le BT stack). Le polling DOIT utiliser un intervalle ≤ 100ms. La fenêtre de lecture des réponses HID++ DOIT être ≥ 80ms pour capturer les notifications asynchrones.
 
-**Rationale :** Une latence perceptible (> 500ms) dégrade l'expérience utilisateur et remet en question l'utilité du tool. La réactivité est une exigence de qualité de service, pas une optimisation facultative.
+**Rationale :** Une latence perceptible (> 500ms) dégrade l'expérience utilisateur pour les devices Gen S. Les devices Legacy ne peuvent physiquement pas atteindre < 300ms car la notification est perdue — le mécanisme PULL (reconnexion clavier → pull souris) est le seul recours fiable.
 
 **Tests de conformité :**
 
@@ -180,3 +197,7 @@ Ce projet utilise le framework **SpecKit** pour la documentation technique :
 | Fenêtre lecture           | 80ms                             |
 | Timeout watchdog          | 10s                              |
 | Python requis             | 3.10+                            |
+| Seuil Gen S (PUSH)        | HID++ ≥ 4.5                      |
+| Latence PUSH (Gen S)      | < 300ms                          |
+| Latence PULL (Legacy)     | < 5s                             |
+| Modules max (swigi/)      | < 15 fichiers .py                |
