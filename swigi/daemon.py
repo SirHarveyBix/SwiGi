@@ -62,8 +62,17 @@ def _reconnect_keyboard(
                 if _STABILITY_WAIT > 0:
                     time.sleep(_STABILITY_WAIT)
                 try:
+                    # Vider le buffer stale (max 50 lectures)
+                    for _ in range(50):
+                        if not keyboard.transport.read(timeout=10):
+                            break
+                    # Ping + vérification réponse
                     keyboard.transport.write(PING_MESSAGE)
-                    return keyboard
+                    response = keyboard.transport.read(timeout=500)
+                    if response:
+                        return keyboard
+                    # Pas de réponse → clavier pas vraiment ici
+                    keyboard.close()
                 except (TransportError, OSError):
                     keyboard.close()
             else:
