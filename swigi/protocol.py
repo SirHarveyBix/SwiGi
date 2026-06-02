@@ -101,7 +101,7 @@ def resolve_feature(
         feature_code >> 8,
         feature_code & 0xFF,
         0x00,
-        timeout=500,
+        timeout=200,
     )
     if reply and reply[0] != 0x00:
         return reply[0]
@@ -112,7 +112,7 @@ def get_device_type(
     transport: HIDTransport, device_number: int, feature_index: int
 ) -> int | None:
     reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x20, timeout=500
+        transport, device_number, (feature_index << 8) | 0x20, timeout=200
     )
     return reply[0] if reply else None
 
@@ -121,7 +121,7 @@ def get_device_name(
     transport: HIDTransport, device_number: int, feature_index: int
 ) -> str | None:
     reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x00, timeout=500
+        transport, device_number, (feature_index << 8) | 0x00, timeout=200
     )
     if not reply:
         return None
@@ -137,7 +137,7 @@ def get_device_name(
             device_number,
             (feature_index << 8) | 0x10,
             len(chars),
-            timeout=500,
+            timeout=200,
         )
         if not reply:
             break

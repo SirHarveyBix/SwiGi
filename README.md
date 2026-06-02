@@ -25,7 +25,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                          |
 | 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT              |
 | 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé                  |
-| ⚡ **Faible latence**            | Réponse < 300ms dans des conditions normales                                    |
+| ⚡ **Faible latence**            | Détection notification < 5ms (lecture bloquante kernel), switch < 100ms typique |
 | 🖱️ **Multi-souris**              | Envoie CHANGE_HOST à toutes les souris connectées simultanément                 |
 | 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements           |
 | ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris             |
@@ -316,15 +316,15 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 
 ### Comment ça marche
 
-1. SwiGi surveille le clavier via Bluetooth HID (ping régulier)
-2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST`
-3. SwiGi la capture et envoie **immédiatement** la même commande à toutes les souris connectées
-4. Les périphériques basculent sur le même hôte
-5. Le probe loop vérifie et confirme dans les logs que la souris est bien sur le bon hôte
+1. SwiGi surveille le clavier via Bluetooth HID — une lecture bloquante `hid_read_timeout` (500 ms) par cycle ; la notification est détectée en quelques millisecondes dès son arrivée kernel, sans busy-loop
+2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST` (protocole HID++ 2.0, feature `0x1814`)
+3. SwiGi la capture et envoie **immédiatement** la même commande à toutes les souris connectées (fire-and-forget, conforme spec)
+4. Les périphériques basculent sur le même hôte (0 = Mac 1, 1 = Mac 2, 2 = Mac 3)
+5. Un probe loop (0,5 s après switch, 3 s en veille) détecte les reconnexions souris et réexécute les switches différés si la souris n'était pas disponible
 
-Architecture pipe unidirectionnel : clavier notifie → SwiGi envoie CHANGE_HOST → souris bascule → log confirme. Pas de correction agressive, pas de boucle de feedback.
+Architecture pipeline unidirectionnel : clavier notifie → SwiGi dispatch → souris bascule. Pas de correction agressive, pas de boucle de feedback.
 
-Utilise le protocole HID++ 2.0 (feature CHANGE_HOST `0x1814`). Un package Python modulaire, aucune dépendance sauf hidapi.
+Utilise HID++ 2.0. Un package Python modulaire, une seule dépendance (hidapi).
 
 ---
 
@@ -340,7 +340,9 @@ SwiGi est extrêmement léger — conçu pour tourner 24h/24 en arrière-plan sa
 | Réseau    | 0 octet (100 % Bluetooth local, aucune connexion internet)       |
 | Batterie  | Négligeable — équivalent à avoir le Bluetooth activé normalement |
 
-La boucle principale passe la majorité du temps bloquée dans `hid_read_timeout` (appel système kernel). Python ne s'exécute que quelques microsecondes par cycle. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
+La boucle principale passe 100 % de son temps bloquée dans `hid_read_timeout` (appel système kernel, 500 ms timeout). Python ne s'exécute que quelques microsecondes à chaque notification ou cycle de ping. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
+
+Démarrage/reconnexion rapide : les requêtes HID++ de découverte utilisent un timeout de 200 ms (RTT BLE ≈ 15–30 ms), soit ~600 ms d'économie par cycle de découverte.
 
 ---
 

@@ -147,6 +147,7 @@ if HAS_RUMPS and _rumps:
         def _refresh(self, _):
             state_lock = self._state.get("_lock")
             keyboard = None
+            mice_copy = []
             if state_lock:
                 with state_lock:
                     keyboards_copy = dict(self._state.get("keyboards") or {})
@@ -161,19 +162,6 @@ if HAS_RUMPS and _rumps:
                         keyboard = ", ".join(actifs) if actifs else None
                     else:
                         keyboard = self._state.get("keyboard")
-            else:
-                keyboards_copy = dict(self._state.get("keyboards") or {})
-                mice_copy = list(self._state.get("mice") or [])
-                if keyboards_copy:
-                    actifs = [
-                        keyboard_data["name"]
-                        for keyboard_data in keyboards_copy.values()
-                        if keyboard_data.get("ok") and keyboard_data.get("name")
-                    ]
-                    self._state["keyboard"] = actifs[0] if actifs else None
-                    keyboard = ", ".join(actifs) if actifs else None
-                else:
-                    keyboard = self._state.get("keyboard")
 
             mouse_display = (
                 ", ".join(mice_copy) if mice_copy else self._state.get("mouse")

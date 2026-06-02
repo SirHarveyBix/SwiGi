@@ -194,60 +194,70 @@ def watch_keyboard_push(
                 reconnect_time = time.time()
                 continue
 
-        # Lecture notifications (fenêtre READ_WINDOW)
-        deadline = time.time() + _READ_WINDOW
-        got_data = False
-        while time.time() < deadline and not stop_event.is_set():
+        # Lecture bloquante — une seule lecture par cycle, faible latence de détection
+        try:
+            raw = keyboard.transport.read(timeout=int(_READ_WINDOW * 1000))
+        except (TransportError, OSError):
+            last_switch_time, last_switch_target = _emit_drain_switch(
+                keyboard, event_queue, hunt_trigger, this_mac_host,
+                last_switch_time, last_switch_target, name, "drain-read",
+            )
+            log.info("🔌 ⌨️ [%s] Déconnecté (lecture)", name)
+            keyboard = _do_reconnect_push(keyboard, state, stop_event)
+            if keyboard is None:
+                break
+            name = keyboard.name
             try:
-                raw = keyboard.transport.read(timeout=20)
-            except (TransportError, OSError):
-                last_switch_time, last_switch_target = _emit_drain_switch(
-                    keyboard, event_queue, hunt_trigger, this_mac_host,
-                    last_switch_time, last_switch_target, name, "drain-read",
+                this_mac_host = get_current_host(
+                    keyboard.transport, DEVICE_NUMBER_DIRECT,
+                    keyboard.change_host_index, timeout=200,
                 )
-                break
-            if not raw or len(raw) < 4:
-                continue
-            if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
-                continue
+            except (TransportError, OSError):
+                pass
+            if time.time() - last_switch_time > 5.0:
+                notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
-            got_data = True
+            reconnect_time = time.time()
+            continue
 
-            # Notification CHANGE_HOST (sw_id=0 = firmware, pas réponse à notre requête)
+        if not raw or len(raw) < 4:
+            continue
+        if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
+            continue
+
+        last_response = time.time()
+
+        # Notification CHANGE_HOST (sw_id=0 = firmware, pas réponse à notre requête)
+        if (
+            raw[2] == keyboard.change_host_index
+            and len(raw) > 5
+            and (raw[3] & 0x0F) == 0x00
+        ):
+            num_hosts = raw[4] if raw[4] > 0 else 3
+            target = raw[5]
+            if not (0 <= target < num_hosts):
+                continue
+            # Ignorer : clavier reste sur ce Mac (reconnect artifact firmware)
+            if this_mac_host is not None and target == this_mac_host:
+                log.debug("⏭️  [%s] Notification ignorée — hôte local", name)
+                continue
+            # Anti-stale : ping uniquement dans la fenêtre post-reconnect (Mac receveur).
+            # Hors fenêtre (Mac source, clavier connecté depuis longtemps) → notification réelle.
             if (
-                raw[2] == keyboard.change_host_index
-                and len(raw) > 5
-                and (raw[3] & 0x0F) == 0x00
+                time.time() - reconnect_time < _RECONNECT_STALE_WINDOW
+                and _is_stale_notification(keyboard)
             ):
-                num_hosts = raw[4] if raw[4] > 0 else 3
-                target = raw[5]
-                if not (0 <= target < num_hosts):
-                    continue
-                # Ignorer : clavier reste sur ce Mac (reconnect artifact firmware)
-                if this_mac_host is not None and target == this_mac_host:
-                    log.debug("⏭️  [%s] Notification ignorée — hôte local", name)
-                    continue
-                # Anti-stale : ping uniquement dans la fenêtre post-reconnect (Mac receveur).
-                # Hors fenêtre (Mac source, clavier connecté depuis longtemps) → notification réelle.
-                if (
-                    time.time() - reconnect_time < _RECONNECT_STALE_WINDOW
-                    and _is_stale_notification(keyboard)
-                ):
-                    log.info("⏭️  [%s] Notification ignorée — stale (ping OK) ; fenêtre anti-stale fermée", name)
-                    reconnect_time = 0.0  # expire window : prochain switch réel accepté sans ping
-                    continue
-                # Debounce : même cible < 1s
-                if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
-                    continue
-                last_switch_time = time.time()
-                last_switch_target = target
-                log.info("★ [%s] Easy-Switch → hôte %d", name, target + 1)
-                event_queue.put(_SwitchEvent(target, name, "push"))
-                hunt_trigger.set()
-                break
-
-        if not got_data:
-            time.sleep(0.01)
+                log.info("⏭️  [%s] Notification ignorée — stale (ping OK) ; fenêtre anti-stale fermée", name)
+                reconnect_time = 0.0  # expire window : prochain switch réel accepté sans ping
+                continue
+            # Debounce : même cible < 1s
+            if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
+                continue
+            last_switch_time = time.time()
+            last_switch_target = target
+            log.info("★ [%s] Easy-Switch → hôte %d", name, target + 1)
+            event_queue.put(_SwitchEvent(target, name, "push"))
+            hunt_trigger.set()
 
     if keyboard is not None:
         keyboard.close()

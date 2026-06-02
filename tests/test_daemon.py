@@ -580,6 +580,10 @@ class TestSetKeyboardStatus(unittest.TestCase):
 
 
 class TestApplyBetterMouse(unittest.TestCase):
+    def setUp(self):
+        import swigi.daemon
+        swigi.daemon._last_bettermouse_apply = 0.0
+
     @patch("swigi.daemon.SYSTEM", "Darwin")
     @patch(
         "swigi.daemon.prefs",

@@ -39,15 +39,23 @@ __all__ = [
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
 _PROBE_INTERVAL = 3.0
-_PROBE_FAST_INTERVAL = 1.0
+_PROBE_FAST_INTERVAL = 0.5
 _PROBE_FAST_DURATION = 15.0
 _DISPATCHER_DEBOUNCE = 1.0
 _VERIFY_TIMEOUT = 5.0        # s — TTL last_target_host
+_BETTERMOUSE_APPLY_THROTTLE = 5.0     # s — évite double-restart BetterMouse après switch
+
+_last_bettermouse_apply: float = 0.0
 
 
 def _apply_better_mouse(mouse_name: str | None = None) -> None:
     """Applique le profil BetterMouse si configuré. Silencieux en cas d'erreur."""
+    global _last_bettermouse_apply
     if SYSTEM != "Darwin":
+        return
+    now = time.time()
+    if now - _last_bettermouse_apply < _BETTERMOUSE_APPLY_THROTTLE:
+        log.debug("🐭 BetterMouse : throttle actif, skip")
         return
     with _prefs_lock:
         if not prefs.get("better_mouse_auto_apply") or not prefs.get(
@@ -55,6 +63,7 @@ def _apply_better_mouse(mouse_name: str | None = None) -> None:
         ):
             return
         profile = prefs["better_mouse_profile"]
+    _last_bettermouse_apply = now
     try:
         from swigi.bettermouse import apply_profile
 

@@ -5,7 +5,10 @@ Module indépendant (pas de dépendance sur gui) — chargeable sur toutes plate
 
 import json
 import logging
+import os
+import tempfile
 import threading
+from pathlib import Path
 
 from swigi.constants import PREFS_FILE
 
@@ -28,8 +31,14 @@ def load_prefs() -> dict:
 
 def save_prefs(data: dict) -> None:
     try:
-        with open(PREFS_FILE, "w") as prefs_file:
-            json.dump(data, prefs_file)
+        prefs_dir = Path(PREFS_FILE).parent
+        with tempfile.NamedTemporaryFile(
+            "w", dir=prefs_dir, delete=False, suffix=".tmp", encoding="utf-8"
+        ) as tmp:
+            json.dump(data, tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp.name, PREFS_FILE)
     except Exception as error:
         log.warning("Impossible de sauvegarder les préférences : %s", error)
 
