@@ -139,14 +139,14 @@ class TestDrainTransport(unittest.TestCase):
         """Arrête le drain quand read retourne None."""
         transport = MockTransport()
         transport.responses_to_read = [b"\x11\xff" + b"\x00" * 18, None]
-        protocol._drain_transport(transport)
+        protocol.drain_transport(transport)
         self.assertEqual(len(transport.written_messages), 0)
 
     def test_drain_stops_after_max_reads(self):
         """Arrête après max_reads même s'il y a encore des données."""
         transport = MockTransport()
         transport.responses_to_read = [b"\x11\xff" + b"\x00" * 18] * 100
-        protocol._drain_transport(transport, max_reads=5)
+        protocol.drain_transport(transport, max_reads=5)
         self.assertEqual(len(transport.written_messages), 0)
 
 
@@ -395,7 +395,7 @@ class TestGetDeviceNameChunks(unittest.TestCase):
             return None
 
         with patch("swigi.protocol.hidpp_request", side_effect=mock_hidpp_request):
-            with patch("swigi.protocol._drain_transport"):
+            with patch("swigi.protocol.drain_transport"):
                 result = get_device_name(transport, 0xFF, feature_index)
         self.assertEqual(result, "MX Keys S Wireless")
 
@@ -405,7 +405,7 @@ class TestDrainTransportOSError(unittest.TestCase):
         """Arrête le drain sur OSError."""
         transport = MagicMock()
         transport.read.side_effect = OSError("HID gone")
-        protocol._drain_transport(transport, max_reads=10)
+        protocol.drain_transport(transport, max_reads=10)
         # Should not raise
 
     def test_drain_stops_on_transport_error(self):
@@ -414,7 +414,7 @@ class TestDrainTransportOSError(unittest.TestCase):
         from swigi.transport import TransportError
 
         transport.read.side_effect = TransportError("dead")
-        protocol._drain_transport(transport, max_reads=10)
+        protocol.drain_transport(transport, max_reads=10)
 
 
 if __name__ == "__main__":

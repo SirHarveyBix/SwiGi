@@ -19,21 +19,21 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 ## ✨ Fonctionnalités
 
-| Fonctionnalité                   | Description                                                           |
-| -------------------------------- | --------------------------------------------------------------------- |
-| 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement       |
-| 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                |
-| 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT    |
-| 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé        |
-| ⚡ **Faible latence**            | Réponse < 300ms dans des conditions normales                          |
-| 🖱️ **Multi-souris**              | Envoie CHANGE_HOST à toutes les souris connectées simultanément       |
-| 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements |
-| ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris   |
-| 🔔 **Notifications système**     | Alerte à la connexion/déconnexion de chaque périphérique (macOS)      |
-| 🔁 **Démarrage automatique**     | launchd (macOS), Startup folder (Windows), systemd (Linux)            |
-| 📄 **Log rotation**              | `--log-file` : max 4 Mo au total, aucune croissance infinie           |
-| 🔒 **Non-intrusif**              | Mode non-exclusif macOS — coexiste avec Logi Options+                 |
-| 📦 **Zéro friction**             | Un package Python, une dépendance (hidapi)                            |
+| Fonctionnalité                   | Description                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement                 |
+| 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                          |
+| 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT              |
+| 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé                  |
+| ⚡ **Faible latence**            | Réponse < 300ms dans des conditions normales                                    |
+| 🖱️ **Multi-souris**              | Envoie CHANGE_HOST à toutes les souris connectées simultanément                 |
+| 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements           |
+| ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris             |
+| 🔔 **Notifications système**     | Alerte à la connexion/déconnexion de chaque périphérique (macOS)                |
+| 🔁 **Démarrage automatique**     | launchd (macOS), Startup folder (Windows), systemd (Linux)                      |
+| 📄 **Log rotation**              | `--log-file` : 1 Mo × 4 fichiers (3 backups + actif), aucune croissance infinie |
+| 🔒 **Non-intrusif**              | Mode non-exclusif macOS — coexiste avec Logi Options+                           |
+| 📦 **Zéro friction**             | Un package Python, une dépendance (hidapi)                                      |
 
 ---
 
@@ -43,6 +43,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 
 - Un clavier **et** une souris Logitech **Gen S** avec Easy-Switch et Bluetooth (MX Keys S, MX Keys Mini, MX Master 3S, MX Master 4, MX Vertical…)
 - **Anciens modèles non supportés** : SwiGi utilise les notifications CHANGE_HOST du firmware Gen S uniquement.
+- **Python 3.11+** requis
 
 ---
 
@@ -82,10 +83,11 @@ Ouvre le Terminal et colle :
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-**Étape 3 — Installer hidapi**
+**Étape 3 — Installer hidapi et rumps**
 
 ```bash
 brew install hidapi
+pip3 install rumps  # optionnel : icône menu bar macOS
 ```
 
 **Étape 4 — Télécharger SwiGi**
@@ -292,22 +294,22 @@ scp ~/.swigi_profiles/mon-profil.json user@mac3:~/.swigi_profiles/
 | Rien ne se passe sur macOS                     | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service                                                                                            |
 | L'icône n'apparaît pas (installation)          | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"`                                      |
 | L'icône n'apparaît pas (général)               | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie aussi les logs : `tail -50 ~/Library/Logs/swigi.log`                                                                |
+| Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie les logs via launchd : `tail -50 ~/Library/Logs/swigi.log` (ou le terminal si lancement manuel)                     |
 | 2 Macs OK, 3e Mac instable au retour           | Vérifie les reconnexions clavier répétées dans les logs : c'est un signe de reconnexion BT lente (instabilité radio/Bluetooth locale).                                                            |
 | `hidapi introuvable` sur macOS                 | Lance `brew install hidapi`                                                                                                                                                                       |
 | `hidapi introuvable` sur Windows               | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py`                                                                                                                                  |
-| SwiGi se lance mais ne fait rien               | Lance avec `-v` pour plus de détails : `python3 swigi.py -v`                                                                                                                                      |
+| SwiGi se lance mais ne fait rien               | Par défaut les logs sont déjà en mode DEBUG — relance depuis un terminal et lis la sortie. `-q` réduit les logs, ne pas l'utiliser pour diagnostiquer.                                            |
 | Permission perdue après update Homebrew Python | Ré-autoriser le nouveau binaire dans Surveillance des entrées. Trouver le chemin avec `which python3`.                                                                                            |
-| Logs : où les trouver                          | `tail -50 ~/Library/Logs/swigi.log` ou `cat ~/Library/Logs/swigi.log`                                                                                                                             |
+| Logs : où les trouver                          | Via launchd : `tail -50 ~/Library/Logs/swigi.log`. En lancement manuel : les logs s'affichent dans le terminal (ajouter `--log-file swigi.log` pour écrire dans un fichier)                       |
 
 ---
 
 ### ⚙️ Options
 
 ```bash
-python3 swigi.py                          # mode normal
-python3 swigi.py -v                       # mode verbose (logs détaillés)
-python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rotation auto)
+python3 swigi.py                          # mode normal (logs DEBUG par défaut)
+python3 swigi.py -q                       # mode quiet (logs INFO seulement)
+python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rotation auto : 1 Mo × 4 fichiers)
 ```
 
 ---
@@ -445,9 +447,9 @@ python3 swigi.py
 ### ⚙️ Options
 
 ```bash
-python3 swigi.py                          # normal mode
-python3 swigi.py -v                       # verbose (detailed logs)
-python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation)
+python3 swigi.py                          # normal mode (DEBUG logs by default)
+python3 swigi.py -q                       # quiet mode (INFO logs only)
+python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation: 1 MB × 4 files)
 ```
 
 ### 🖥️ Multi-Mac setup
@@ -520,12 +522,12 @@ scp ~/.swigi_profiles/my-profile.json user@mac3:~/.swigi_profiles/
 | Nothing happens on macOS                     | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service                                                                                              |
 | Menu bar icon missing (install)              | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"`                                              |
 | Menu bar icon missing (general)              | 1) `python3` in Input Monitoring. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Mouse doesn't come back after switch         | SwiGi must run on **all 3 Macs simultaneously** (see above). Check logs: `tail -50 ~/Library/Logs/swigi.log`                                                                            |
+| Mouse doesn't come back after switch         | SwiGi must run on **all 3 Macs simultaneously** (see above). Via launchd: `tail -50 ~/Library/Logs/swigi.log`. Manual: logs print to terminal.                                          |
 | `hidapi not found` on macOS                  | Run `brew install hidapi`                                                                                                                                                               |
 | `hidapi not found` on Windows                | Check `hidapi.dll` is in the same folder as `swigi.py`                                                                                                                                  |
-| SwiGi starts but does nothing                | Run with `-v` for details: `python3 swigi.py -v`                                                                                                                                        |
+| SwiGi starts but does nothing                | Logs are already in DEBUG mode by default — run from terminal and read the output. `-q` reduces logs; don't use it for debugging.                                                       |
 | Permission lost after Homebrew Python update | Re-authorize the new binary in Input Monitoring. Find the path with `which python3`.                                                                                                    |
-| Where to find logs                           | `tail -50 ~/Library/Logs/swigi.log`                                                                                                                                                     |
+| Where to find logs                           | Via launchd: `tail -50 ~/Library/Logs/swigi.log`. Manual launch: logs print to terminal (add `--log-file swigi.log` to write to a file).                                                |
 
 ### How it works
 

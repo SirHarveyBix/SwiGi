@@ -4,5 +4,5 @@ Ce package gère la capture des notifications CHANGE_HOST depuis un clavier Logi
 et réplique l'ordre de basculement vers la souris Logitech associée.
 """
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 __author__ = "SirHarveyBix"

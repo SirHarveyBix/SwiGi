@@ -298,13 +298,13 @@ class TestFindDevice(unittest.TestCase):
 
 
 class TestFindAllDevicesDrainsTransport(unittest.TestCase):
-    """Vérifie que _drain_transport est appelé après ouverture du transport HID."""
+    """Vérifie que drain_transport est appelé après ouverture du transport HID."""
 
     def setUp(self):
         _mock_loader.lib.reset_mock()
 
     def test_drain_called_after_transport_open(self):
-        """_drain_transport appelé juste après HIDTransport() pour vider le buffer kernel."""
+        """drain_transport appelé juste après HIDTransport() pour vider le buffer kernel."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
@@ -314,7 +314,7 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
             patch("swigi.discovery.get_device_name", return_value="MX Keys S"),
-            patch("swigi.discovery._drain_transport") as mock_drain,
+            patch("swigi.discovery.drain_transport") as mock_drain,
         ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
@@ -322,7 +322,7 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         self.assertEqual(mock_drain.call_args_list[0].args[0], mock_transport)
 
     def test_drain_called_on_failed_device_too(self):
-        """_drain_transport appelé même si le périphérique est du mauvais type (avant fermeture)."""
+        """drain_transport appelé même si le périphérique est du mauvais type (avant fermeture)."""
         enumeration_node = _make_hid_node(product_id=0xB042)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
         mock_transport = MagicMock()
@@ -332,7 +332,7 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
             patch("swigi.discovery.resolve_feature", side_effect=[3, 11]),
             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE),
             patch("swigi.discovery.get_device_name", return_value="MX Master 4"),
-            patch("swigi.discovery._drain_transport") as mock_drain,
+            patch("swigi.discovery.drain_transport") as mock_drain,
         ):
             result = find_all_devices(
                 DEVICE_TYPE_KEYBOARD
@@ -343,13 +343,13 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_no_drain_when_transport_open_fails(self):
-        """Si HIDTransport() lève OSError, _drain_transport ne doit pas être appelé."""
+        """Si HIDTransport() lève OSError, drain_transport ne doit pas être appelé."""
         enumeration_node = _make_hid_node(product_id=0xB35B)
         _mock_loader.lib.hid_enumerate.return_value = enumeration_node
 
         with (
             patch("swigi.discovery.HIDTransport", side_effect=OSError("no device")),
-            patch("swigi.discovery._drain_transport") as mock_drain,
+            patch("swigi.discovery.drain_transport") as mock_drain,
         ):
             find_all_devices(DEVICE_TYPE_KEYBOARD)
 
@@ -358,7 +358,7 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
     def test_drain_before_hidpp_requests_prevents_stale_name(self):
         """Sans drain, une réponse stale peut corrompre le nom (MX Keys WirelessMX Keys W).
 
-        Ce test vérifie que get_device_name n'est appelé qu'après _drain_transport.
+        Ce test vérifie que get_device_name n'est appelé qu'après drain_transport.
         """
         call_order = []
         enumeration_node = _make_hid_node(product_id=0xB35B)
@@ -374,7 +374,7 @@ class TestFindAllDevicesDrainsTransport(unittest.TestCase):
 
         with (
             patch("swigi.discovery.HIDTransport", return_value=mock_transport),
-            patch("swigi.discovery._drain_transport", side_effect=record_drain),
+            patch("swigi.discovery.drain_transport", side_effect=record_drain),
             patch("swigi.discovery.resolve_feature", side_effect=[5, 9]),
             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_KEYBOARD),
             patch("swigi.discovery.get_device_name", side_effect=record_get_name),

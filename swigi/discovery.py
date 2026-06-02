@@ -15,7 +15,7 @@ from swigi.constants import (
 )
 from swigi.hidapi_loader import lib
 from swigi.protocol import (
-    _drain_transport,
+    drain_transport,
     get_device_name,
     get_device_type,
     get_protocol_version,
@@ -94,7 +94,7 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             transport = HIDTransport(path, product_id)
             # Vide le buffer kernel avant toute requête HID++ — évite de lire une réponse
             # stale d'une session précédente (cause du nom corrompu après reconnexion BT).
-            _drain_transport(transport)
+            drain_transport(transport)
             feature_index = resolve_feature(
                 transport, DEVICE_NUMBER_DIRECT, FEATURE_DEVICE_TYPE_AND_NAME
             )
@@ -127,14 +127,14 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             # Important: après les lectures de nom/type, des réponses HID++ peuvent encore
             # traîner dans le buffer. Sans ce drain, resolve_feature(CHANGE_HOST) peut lire
             # un paquet stale et retourner un index incohérent (désync/false switch).
-            _drain_transport(transport)
+            drain_transport(transport)
             change_host_index = resolve_feature(
                 transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST
             )
             if change_host_index == feature_index:
                 # Rare sur reconnect BT instable : même index que DEVICE_TYPE_AND_NAME.
                 # Retenter une fois ; si toujours incohérent, rejeter le device.
-                _drain_transport(transport)
+                drain_transport(transport)
                 retry_index = resolve_feature(
                     transport, DEVICE_NUMBER_DIRECT, FEATURE_CHANGE_HOST
                 )
@@ -152,7 +152,7 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                 transport.close()
                 transport = None
                 continue
-            _drain_transport(transport)
+            drain_transport(transport)
             proto = get_protocol_version(transport, DEVICE_NUMBER_DIRECT, timeout=200)
             push_capable = proto[0] >= 4 if proto is not None else True
             seen_product_ids.add(product_id)
@@ -160,8 +160,8 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                 DeviceInfo(transport, name, product_id, change_host_index, push_capable)
             )
             transport = None  # ownership transférée à DeviceInfo
-        except (TransportError, OSError):
-            pass
+        except (TransportError, OSError) as err:
+            log.debug("PID=0x%04X ignoré — erreur HID : %s", product_id, err)
         finally:
             if transport is not None:
                 transport.close()

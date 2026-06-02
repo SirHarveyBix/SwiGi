@@ -3,7 +3,6 @@
 Dispatcher unifié : easy-switch event → send_change_host aux souris.
 """
 
-import dataclasses
 import logging
 import queue
 import threading
@@ -11,17 +10,31 @@ import time
 
 from swigi.constants import (
     DEVICE_NUMBER_DIRECT,
-    DEVICE_TYPE_KEYBOARD,
     DEVICE_TYPE_MOUSE,
-    PING_MESSAGE,
     SYSTEM,
 )
 from swigi.discovery import DeviceInfo, find_all_devices
-from swigi.gui import _prefs_lock, notify, prefs
+from swigi.gui import notify
+from swigi.path_push import watch_keyboard_push
+from swigi.prefs import _prefs_lock, prefs
 from swigi.protocol import send_change_host
+from swigi.state import (
+    _reconnect_keyboard,
+    _set_keyboard_status,
+    _SwitchEvent,
+    _sync_keyboard_display,
+)
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
+
+# Re-exports pour compatibilité avec les imports existants
+__all__ = [
+    "_SwitchEvent",
+    "_reconnect_keyboard",
+    "_set_keyboard_status",
+    "_sync_keyboard_display",
+]
 
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
@@ -29,71 +42,7 @@ _PROBE_INTERVAL = 3.0
 _PROBE_FAST_INTERVAL = 1.0
 _PROBE_FAST_DURATION = 15.0
 _DISPATCHER_DEBOUNCE = 1.0
-_RECONNECT_DELAY = 0.5
-_RECONNECT_MAX_DELAY = 5.0
-_STABILITY_WAIT = 0.5
-_VERIFY_TIMEOUT = 5.0        # s — TTL last_target_host : au-delà, l'utilisateur a peut-être changé la souris manuellement
-
-
-# ── Événements ────────────────────────────────────────────────────────────────
-
-
-@dataclasses.dataclass(slots=True)
-class _SwitchEvent:
-    target_host: int
-    keyboard_name: str
-    source: str  # "push"
-
-
-# ── Helpers partagés ─────────────────────────────────────────────────────────
-
-
-def _reconnect_keyboard(
-    product_id: int, stop_event: threading.Event
-) -> DeviceInfo | None:
-    """Backoff exponentiel jusqu'à retrouver le clavier ou stop."""
-    delay = _RECONNECT_DELAY
-    while not stop_event.is_set():
-        time.sleep(delay)
-        if stop_event.is_set():
-            return None
-        for keyboard in find_all_devices(DEVICE_TYPE_KEYBOARD):
-            if keyboard.product_id == product_id:
-                time.sleep(_STABILITY_WAIT)
-                try:
-                    # Vider le buffer stale (max 10 lectures)
-                    for _ in range(10):
-                        if not keyboard.transport.read(timeout=10):
-                            break
-                    # Ping + vérification réponse
-                    keyboard.transport.write(PING_MESSAGE)
-                    response = keyboard.transport.read(timeout=200)
-                    if response:
-                        return keyboard
-                    # Pas de réponse → clavier pas vraiment ici
-                    keyboard.close()
-                except (TransportError, OSError):
-                    keyboard.close()
-            else:
-                keyboard.close()
-        delay = min(delay * 1.5, _RECONNECT_MAX_DELAY)
-    return None
-
-
-def _set_keyboard_status(state: dict, product_id: int, name: str, ok: bool) -> None:
-    """Met à jour le statut d'un clavier dans state."""
-    with state["_lock"]:
-        state["keyboards"][product_id] = {"name": name, "ok": ok}
-        _sync_keyboard_display(state)
-
-
-def _sync_keyboard_display(state: dict) -> None:
-    """Met à jour state['keyboard'] pour la GUI."""
-    for keyboard_data in state.get("keyboards", {}).values():
-        if keyboard_data.get("ok"):
-            state["keyboard"] = keyboard_data["name"]
-            return
-    state["keyboard"] = None
+_VERIFY_TIMEOUT = 5.0        # s — TTL last_target_host
 
 
 def _apply_better_mouse(mouse_name: str | None = None) -> None:
@@ -197,12 +146,16 @@ def _mice_probe_loop(
                 _apply_better_mouse(mouse.name)
 
         # Envoi différé post-switch (souris indisponible au moment du dispatch)
+        # Claim atomique : on efface last_target_host sous lock avant d'envoyer
+        # pour éviter la double-émission avec le thread dispatcher.
         with state["_lock"]:
             target = state.get("last_target_host")
             if target is not None and time.time() - state.get("last_switch_time", 0.0) > _VERIFY_TIMEOUT:
                 log.warning("⏳ TTL %ds expiré — switch hôte %d perdu (aucune souris n'a répondu)", int(_VERIFY_TIMEOUT), target + 1)
                 state["last_target_host"] = None
                 target = None
+            elif target is not None:
+                state["last_target_host"] = None  # claim atomique
 
         if target is not None:
             with mouse_lock:
@@ -222,9 +175,11 @@ def _mice_probe_loop(
                 except (TransportError, OSError):
                     with mouse_lock:
                         mouse.close()
-            if sent > 0:
+            if sent == 0:
+                # Aucun envoi réussi (souris absentes ou toutes en erreur) — remettre en attente
                 with state["_lock"]:
-                    state["last_target_host"] = None
+                    if state.get("last_target_host") is None:
+                        state["last_target_host"] = target
 
         # Mise à jour état
         with mouse_lock:
@@ -248,8 +203,6 @@ def run_daemon(
     stop_event: threading.Event,
 ) -> None:
     """Daemon PUSH. Lance un watcher par clavier, dispatch les events aux souris."""
-    from swigi.path_push import watch_keyboard_push
-
     # Init state — préserver le lock et le compteur à travers les restarts
     if "_lock" not in state:
         state["_lock"] = threading.Lock()
@@ -269,15 +222,8 @@ def run_daemon(
     hunt_trigger = threading.Event()
     mice_list = list(mice)
 
-    # Threads clavier
+    # Threads clavier — tous push_capable (filtrés par _wait_for_keyboard)
     for keyboard in keyboards:
-        if not keyboard.push_capable:
-            log.warning(
-                "⚠️ ⌨️ [%s] Non pris en charge — ancienne génération (Gen S requis)",
-                keyboard.name,
-            )
-            keyboard.close()
-            continue
         log.info("⌨️ [%s] → path PUSH", keyboard.name)
         threading.Thread(
             target=watch_keyboard_push,

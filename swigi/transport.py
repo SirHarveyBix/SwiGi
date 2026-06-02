@@ -23,24 +23,28 @@ class HIDTransport:
         return self._device is not None
 
     def read(self, timeout: int = 500) -> bytes | None:
-        if self._device is None:
+        with self._lock:
+            device = self._device
+        if device is None:
             raise TransportError("lecture sur transport fermé")
         buffer = (ctypes.c_ubyte * MAX_READ_SIZE)()
-        bytes_read = lib.hid_read_timeout(self._device, buffer, MAX_READ_SIZE, timeout)
+        bytes_read = lib.hid_read_timeout(device, buffer, MAX_READ_SIZE, timeout)
         if bytes_read < 0:
-            error_message = hid_error(self._device) or ""
+            error_message = hid_error(device) or ""
             if "success" in error_message.lower() or error_message == "":
                 return None  # quirk BT macOS
             raise TransportError(f"hid_read échoué : {error_message}")
         return bytes(buffer[:bytes_read]) if bytes_read > 0 else None
 
     def write(self, message: bytes) -> None:
-        if self._device is None:
+        with self._lock:
+            device = self._device
+        if device is None:
             raise TransportError("écriture sur transport fermé")
         buffer = (ctypes.c_ubyte * len(message))(*message)
-        bytes_written = lib.hid_write(self._device, buffer, len(message))
+        bytes_written = lib.hid_write(device, buffer, len(message))
         if bytes_written < 0:
-            raise TransportError(f"hid_write échoué : {hid_error(self._device)}")
+            raise TransportError(f"hid_write échoué : {hid_error(device)}")
         if bytes_written != len(message):
             raise TransportError(
                 f"hid_write partiel : {bytes_written}/{len(message)} octets écrits"

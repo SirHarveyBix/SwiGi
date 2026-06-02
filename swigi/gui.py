@@ -1,10 +1,10 @@
-import json
 import logging
 import os
 import subprocess
 import threading
 
-from swigi.constants import PREFS_FILE, SYSTEM
+from swigi.constants import SYSTEM
+from swigi.prefs import _prefs_lock, prefs, save_prefs
 
 log = logging.getLogger("swigi.gui")
 
@@ -18,27 +18,10 @@ except ImportError:
     HAS_RUMPS = False
 
 
-def load_prefs() -> dict:
-    try:
-        with open(PREFS_FILE) as prefs_file:
-            data = json.load(prefs_file)
-            data.setdefault("notifications", True)
-            data.setdefault("mouse_follow", True)
-            return data
-    except Exception:
-        return {"notifications": True, "mouse_follow": True}
 
-
-def save_prefs(prefs: dict) -> None:
-    try:
-        with open(PREFS_FILE, "w") as prefs_file:
-            json.dump(prefs, prefs_file)
-    except Exception as error:
-        log.warning("Impossible de sauvegarder les préférences : %s", error)
-
-
-prefs = load_prefs()
-_prefs_lock = threading.Lock()
+def _escape_string(text: str) -> str:
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return "".join(char for char in text if char >= " " or char in "\t")
 
 
 def notify(message: str, subtitle: str = "") -> None:
@@ -47,10 +30,6 @@ def notify(message: str, subtitle: str = "") -> None:
         notifications_enabled = prefs.get("notifications", True)
     if SYSTEM != "Darwin" or not notifications_enabled:
         return
-
-    def _escape_string(text: str) -> str:
-        text = text.replace("\\", "\\\\").replace('"', '\\"')
-        return "".join(char for char in text if char >= " " or char in "\t")
 
     script = f'display notification "{_escape_string(message)}" with title "SwiGi"'
     if subtitle:
@@ -166,28 +145,35 @@ if HAS_RUMPS and _rumps:
 
         @_rumps.timer(2)
         def _refresh(self, _):
-            # Support multi-clavier : construire le nom depuis state["keyboards"] si disponible
-            # Lire sous lock pour éviter une iteration concurrente avec le thread daemon
             state_lock = self._state.get("_lock")
+            keyboard = None
             if state_lock:
                 with state_lock:
                     keyboards_copy = dict(self._state.get("keyboards") or {})
                     mice_copy = list(self._state.get("mice") or [])
+                    if keyboards_copy:
+                        actifs = [
+                            keyboard_data["name"]
+                            for keyboard_data in keyboards_copy.values()
+                            if keyboard_data.get("ok") and keyboard_data.get("name")
+                        ]
+                        self._state["keyboard"] = actifs[0] if actifs else None
+                        keyboard = ", ".join(actifs) if actifs else None
+                    else:
+                        keyboard = self._state.get("keyboard")
             else:
                 keyboards_copy = dict(self._state.get("keyboards") or {})
                 mice_copy = list(self._state.get("mice") or [])
-
-            if keyboards_copy:
-                actifs = [
-                    keyboard_data["name"]
-                    for keyboard_data in keyboards_copy.values()
-                    if keyboard_data.get("ok") and keyboard_data.get("name")
-                ]
-                keyboard = ", ".join(actifs) if actifs else None
-                # Garder state["keyboard"] cohérent pour le reste du code
-                self._state["keyboard"] = actifs[0] if actifs else None
-            else:
-                keyboard = self._state.get("keyboard")
+                if keyboards_copy:
+                    actifs = [
+                        keyboard_data["name"]
+                        for keyboard_data in keyboards_copy.values()
+                        if keyboard_data.get("ok") and keyboard_data.get("name")
+                    ]
+                    self._state["keyboard"] = actifs[0] if actifs else None
+                    keyboard = ", ".join(actifs) if actifs else None
+                else:
+                    keyboard = self._state.get("keyboard")
 
             mouse_display = (
                 ", ".join(mice_copy) if mice_copy else self._state.get("mouse")

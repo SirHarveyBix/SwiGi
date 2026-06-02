@@ -151,8 +151,8 @@ Aucun framework, aucun gestionnaire de paquets (pip, poetry, etc.) ne DOIT être
 
 **Tests de conformité :**
 
-- `time.sleep(0.01)` dans la boucle principale (10ms).
-- Fenêtre de lecture à 80ms (`deadline = time.time() + 0.08`).
+- `time.sleep(0.01)` comme fallback quand aucune donnée reçue.
+- Fenêtre de lecture à 500ms (`_READ_WINDOW = 0.5`) — valeur justifiée en Phase 5.7 pour maximiser la capture PUSH.
 - Pas de `time.sleep()` > 1s dans le chemin critique de traitement d'un événement.
 
 ### Principe 6 — Clarté et Lisibilité
@@ -212,9 +212,9 @@ Ce projet utilise le framework **SpecKit** pour la documentation technique :
 | VID Logitech              | `0x046D`                         |
 | Bolt PID                  | `0xC548`                         |
 | Unifying PIDs             | `0xC52B`, `0xC532`               |
-| Intervalle polling        | 10ms                             |
-| Fenêtre lecture           | 80ms                             |
+| Intervalle polling        | 10ms (fallback no-data)          |
+| Fenêtre lecture           | 500ms (\_READ_WINDOW)            |
 | Timeout watchdog          | 10s                              |
-| Python requis             | 3.10+                            |
+| Python requis             | 3.11+                            |
 | Latence (Gen S PUSH)      | < 300ms                          |
 | Modules max (swigi/)      | < 15 fichiers .py                |

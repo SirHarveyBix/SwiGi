@@ -12,9 +12,12 @@ from swigi.constants import (
     DEVICE_NUMBER_DIRECT,
     MSG_LENGTHS,
     PING_MESSAGE,
+    SW_ID,
 )
 from swigi.discovery import DeviceInfo
+from swigi.gui import notify
 from swigi.protocol import get_current_host
+from swigi.state import _reconnect_keyboard, _set_keyboard_status, _SwitchEvent
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.path_push")
@@ -62,19 +65,44 @@ def _is_stale_notification(keyboard: DeviceInfo) -> bool:
     try:
         keyboard.transport.write(PING_MESSAGE)
         resp = keyboard.transport.read(timeout=_STALE_PING_TIMEOUT)
-        return resp is not None and len(resp) > 2 and resp[2] == 0x00
+        # Vérifie que la réponse correspond bien au PING (feature 0x00, SW_ID)
+        return resp is not None and len(resp) > 3 and resp[2] == 0x00 and resp[3] == SW_ID
     except (TransportError, OSError):
         return False  # pas de réponse = déconnexion = switch réel
 
 
+def _emit_drain_switch(
+    keyboard: DeviceInfo,
+    event_queue: queue.Queue,
+    hunt_trigger: threading.Event,
+    this_mac_host: int | None,
+    last_switch_time: float,
+    last_switch_target: int,
+    name: str,
+    log_suffix: str,
+) -> tuple[float, int]:
+    """Vide le buffer HID, émet un _SwitchEvent si un switch y est buffered.
+
+    Retourne (last_switch_time, last_switch_target) mis à jour.
+    """
+    target = _drain_switch(keyboard)
+    if target is not None and not (
+        target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE
+    ) and not (this_mac_host is not None and target == this_mac_host):
+        last_switch_time = time.time()
+        last_switch_target = target
+        log.info("★ [%s] Easy-Switch → hôte %d (%s)", name, target + 1, log_suffix)
+        event_queue.put(_SwitchEvent(target, name, "push"))
+        hunt_trigger.set()
+    return last_switch_time, last_switch_target
+
+
 def _do_reconnect_push(
-    keyboard: "DeviceInfo",
+    keyboard: DeviceInfo,
     state: dict,
     stop_event: threading.Event,
 ) -> "DeviceInfo | None":
     """Reconnecte clavier PUSH. Easy-Switch seul déclenche les switchs souris."""
-    from swigi.daemon import _reconnect_keyboard, _set_keyboard_status
-
     name = keyboard.name
     product_id = keyboard.product_id
     keyboard.close()
@@ -99,8 +127,6 @@ def watch_keyboard_push(
     hunt_trigger: threading.Event,
 ) -> None:
     """Watcher Gen S : capture notification CHANGE_HOST."""
-    from swigi.daemon import _SwitchEvent
-
     name = keyboard.name
     last_response = time.time()
     last_ping = 0.0
@@ -146,16 +172,10 @@ def watch_keyboard_push(
                 keyboard.transport.write(PING_MESSAGE)
                 last_ping = time.time()
             except (TransportError, OSError):
-                target = _drain_switch(keyboard)
-                if target is not None and not (
-                    target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE
-                ) and not (this_mac_host is not None and target == this_mac_host):
-                    last_switch_time = time.time()
-                    last_switch_target = target
-                    log.info("★ [%s] Easy-Switch → hôte %d (drain)", name, target + 1)
-                    event_queue.put(_SwitchEvent(target, name, "push"))
-                    hunt_trigger.set()
-
+                last_switch_time, last_switch_target = _emit_drain_switch(
+                    keyboard, event_queue, hunt_trigger, this_mac_host,
+                    last_switch_time, last_switch_target, name, "drain",
+                )
                 log.info("🔌 ⌨️ [%s] Déconnecté", name)
                 keyboard = _do_reconnect_push(keyboard, state, stop_event)
                 if keyboard is None:
@@ -169,7 +189,6 @@ def watch_keyboard_push(
                 except (TransportError, OSError):
                     pass
                 if time.time() - last_switch_time > 5.0:
-                    from swigi.gui import notify
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
                 reconnect_time = time.time()
@@ -182,15 +201,10 @@ def watch_keyboard_push(
             try:
                 raw = keyboard.transport.read(timeout=20)
             except (TransportError, OSError):
-                target = _drain_switch(keyboard)
-                if target is not None and not (
-                    target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE
-                ) and not (this_mac_host is not None and target == this_mac_host):
-                    last_switch_time = time.time()
-                    last_switch_target = target
-                    log.info("★ [%s] Easy-Switch → hôte %d (drain-read)", name, target + 1)
-                    event_queue.put(_SwitchEvent(target, name, "push"))
-                    hunt_trigger.set()
+                last_switch_time, last_switch_target = _emit_drain_switch(
+                    keyboard, event_queue, hunt_trigger, this_mac_host,
+                    last_switch_time, last_switch_target, name, "drain-read",
+                )
                 break
             if not raw or len(raw) < 4:
                 continue

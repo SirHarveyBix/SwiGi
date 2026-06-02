@@ -18,7 +18,7 @@ if "swigi.gui" not in sys.modules:
     _mock_gui._prefs_lock = threading.Lock()
     sys.modules["swigi.gui"] = _mock_gui
 
-from swigi.daemon import _SwitchEvent
+from swigi.state import _SwitchEvent
 from swigi.path_push import _drain_switch, watch_keyboard_push
 from swigi.transport import TransportError
 
@@ -167,7 +167,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
             events.append(event_queue.get_nowait())
         self.assertEqual(len(events), 1)
 
-    @patch("swigi.daemon._reconnect_keyboard")
+    @patch("swigi.path_push._reconnect_keyboard")
     def test_drain_on_disconnect(self, mock_reconnect, mock_get_host):
         """Write fail → drain capture notification buffered → SwitchEvent."""
         keyboard = _make_keyboard()
@@ -187,7 +187,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
 
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.01
-        ), patch("swigi.daemon._STABILITY_WAIT", 0.0):
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
@@ -203,7 +203,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
         self.assertGreaterEqual(len(push_events), 1)
         self.assertEqual(push_events[0].target_host, 2)
 
-    @patch("swigi.daemon._reconnect_keyboard")
+    @patch("swigi.path_push._reconnect_keyboard")
     def test_reconnect_posts_no_pull_event(self, mock_reconnect, mock_get_host):
         """Reconnexion Gen S → aucun SwitchEvent : seul Easy-Switch déclenche les switchs."""
         keyboard = _make_keyboard()
@@ -234,7 +234,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
 
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.01
-        ), patch("swigi.daemon._STABILITY_WAIT", 0.0):
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
@@ -249,7 +249,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
         pull_events = [e for e in events if e.source == "pull"]
         self.assertEqual(len(pull_events), 0)
 
-    @patch("swigi.daemon._reconnect_keyboard")
+    @patch("swigi.path_push._reconnect_keyboard")
     def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):
         """10s sans réponse → watchdog → reconnexion."""
         keyboard = _make_keyboard()
@@ -288,7 +288,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
 
         mock_reconnect.assert_called_once()
 
-    @patch("swigi.daemon._reconnect_keyboard")
+    @patch("swigi.path_push._reconnect_keyboard")
     def test_stale_notification_filtered_by_ping(self, mock_reconnect, mock_get_host):
         """Notification stale → ping OK (keyboard répond) → ignorée."""
         keyboard = _make_keyboard()
@@ -325,7 +325,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
 
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.01
-        ), patch("swigi.daemon._STABILITY_WAIT", 0.0):
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
@@ -340,7 +340,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
         push_events = [e for e in events if e.target_host == 2]
         self.assertEqual(len(push_events), 1, "stale notification must be filtered by ping")
 
-    @patch("swigi.daemon._reconnect_keyboard")
+    @patch("swigi.path_push._reconnect_keyboard")
     def test_local_host_notification_filtered(self, mock_reconnect, mock_get_host):
         """Notification firmware 'hôte local' (target == this_mac_host) → ignorée."""
         keyboard = _make_keyboard()
@@ -502,8 +502,8 @@ class TestSwIdFilter(unittest.TestCase):
     """raw[3] sw_id filtre : notifications firmware (sw_id=0) vs réponses requêtes (sw_id!=0)."""
 
     @patch("swigi.path_push.get_current_host", return_value=0)
-    @patch("swigi.daemon._reconnect_keyboard")
-    @patch("swigi.daemon._set_keyboard_status")
+    @patch("swigi.path_push._reconnect_keyboard")
+    @patch("swigi.path_push._set_keyboard_status")
     def test_push_ignores_non_notification_packets(
         self, mock_set_status, mock_reconnect, mock_get_host
     ):
@@ -543,8 +543,8 @@ class TestSwIdFilter(unittest.TestCase):
         self.assertTrue(event_queue.empty(), "SwitchEvent posté pour paquet non-notification")
 
     @patch("swigi.path_push.get_current_host", return_value=0)
-    @patch("swigi.daemon._reconnect_keyboard")
-    @patch("swigi.daemon._set_keyboard_status")
+    @patch("swigi.path_push._reconnect_keyboard")
+    @patch("swigi.path_push._set_keyboard_status")
     def test_push_accepts_notification_packets(
         self, mock_set_status, mock_reconnect, mock_get_host
     ):

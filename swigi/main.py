@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -94,9 +95,6 @@ def _wait_for_keyboard() -> list:
 
 def _log_last_commit() -> None:
     """Affiche la date/heure du dernier commit git dans les logs de démarrage."""
-    import os
-    import subprocess
-
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         result = subprocess.run(

@@ -129,7 +129,9 @@ def get_device_name(
     if name_len == 0:
         return None
     chars = []
-    while len(chars) < name_len:
+    max_iterations = name_len + 1
+    while len(chars) < name_len and max_iterations > 0:
+        max_iterations -= 1
         reply = hidpp_request(
             transport,
             device_number,
@@ -146,7 +148,7 @@ def get_device_name(
     return bytes(chars).decode("utf-8", errors="replace") if chars else None
 
 
-def _drain_transport(transport: HIDTransport, max_reads: int = 8) -> None:
+def drain_transport(transport: HIDTransport, max_reads: int = 8) -> None:
     """Vide le buffer d'entrée HID avant d'écrire une commande.
 
     timeout=1 (1ms) plutôt que 0 : sur macOS Sonoma/Sequoia + BT 5.3 (M3),
@@ -169,7 +171,7 @@ def send_change_host(
     Drain avant envoi (vide le buffer de réponses stale), puis single write.
     Si le write échoue, l'exception est propagée (transport mort).
     """
-    _drain_transport(transport)
+    drain_transport(transport)
 
     request_id = (feature_index << 8) | (CHANGE_HOST_FN_SET & 0xF0) | SW_ID
     parameters = struct.pack("B", target_host)

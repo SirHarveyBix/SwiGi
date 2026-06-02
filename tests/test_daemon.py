@@ -26,10 +26,9 @@ if "swigi.gui" not in sys.modules:
 from swigi.daemon import (
     _apply_better_mouse,
     _mice_probe_loop,
-    _reconnect_keyboard,
-    _set_keyboard_status,
     run_daemon,
 )
+from swigi.state import _reconnect_keyboard, _set_keyboard_status
 from swigi.transport import TransportError
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -42,6 +41,7 @@ def _make_device(
     device.name = name
     device.product_id = product_id
     device.change_host_index = change_host_index
+    device.push_capable = True
     device.transport = MagicMock()
     device.transport.is_open = True
 
@@ -60,10 +60,10 @@ def _fast_timing():
         patch("swigi.daemon._PROBE_FAST_INTERVAL", 0.02),
         patch("swigi.daemon._PROBE_FAST_DURATION", 0.2),
         patch("swigi.daemon._DISPATCHER_DEBOUNCE", 0.1),
-        patch("swigi.daemon._STABILITY_WAIT", 0.0),
-        patch("swigi.daemon._RECONNECT_DELAY", 0.01),
-        patch("swigi.daemon._RECONNECT_MAX_DELAY", 0.02),
-        patch("swigi.daemon._VERIFY_TIMEOUT", 30.0),
+        patch("swigi.state._STABILITY_WAIT", 0.0),
+        patch("swigi.state._RECONNECT_DELAY", 0.01),
+        patch("swigi.state._RECONNECT_MAX_DELAY", 0.02),
+        patch("swigi.daemon._VERIFY_TIMEOUT", 0.5),
         patch("swigi.path_push._PING_INTERVAL", 0.0),
         patch("swigi.path_push._READ_WINDOW", 0.05),
         patch("swigi.path_push._DEBOUNCE", 0.1),
@@ -260,7 +260,7 @@ class TestMiceProbeVerification(unittest.TestCase):
         state = {
             "_lock": threading.Lock(),
             "last_target_host": 1,
-            "last_switch_time": time.time() - 60.0,  # 60s > _VERIFY_TIMEOUT (30s)
+            "last_switch_time": time.time() - 60.0,  # 60s > _VERIFY_TIMEOUT (0.5s en fast mode)
         }
         stop_event = threading.Event()
         hunt_trigger = threading.Event()
@@ -337,7 +337,12 @@ class TestRunDaemon(unittest.TestCase):
     @patch("swigi.daemon.send_change_host")
     @patch("swigi.daemon.prefs", {"mouse_follow": False})
     def test_mouse_follow_disabled(self, mock_send, mock_find, mock_get_host):
-        """Si mouse_follow=False, CHANGE_HOST n'est pas envoyé."""
+        """Si mouse_follow=False, CHANGE_HOST n'est pas envoyé.
+
+        Note: get_current_host retourne 0 (this_mac_host=0).
+        target=2 ≠ 0 → le filtre hôte-local n'intervient pas.
+        Le filtre mouse_follow=False doit être la seule raison du drop.
+        """
         mock_find.return_value = []
         keyboard = _make_device(change_host_index=5)
         mouse = _make_device(change_host_index=9)
@@ -345,7 +350,8 @@ class TestRunDaemon(unittest.TestCase):
         state = {}
         stop_event = threading.Event()
 
-        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 0] + [0] * 14)
+        # target=2, this_mac_host=0 → pas filtré par le filtre hôte-local
+        packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
         calls = [0]
 
         def mock_read(timeout=10):
@@ -367,6 +373,8 @@ class TestRunDaemon(unittest.TestCase):
         thread.join(timeout=3.0)
 
         mock_send.assert_not_called()
+        # Vérifie que le switch a bien été reçu (event dispatché, juste rejeté par mouse_follow=False)
+        self.assertEqual(state.get("switches"), 0)
 
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
@@ -404,6 +412,7 @@ class TestRunDaemon(unittest.TestCase):
 
         # Un seul dispatch malgré 2 notifications (debounce)
         self.assertEqual(state.get("switches"), 1)
+        self.assertEqual(mock_send.call_count, 1)
 
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
@@ -447,11 +456,13 @@ class TestRunDaemon(unittest.TestCase):
 
 class TestReconnectKeyboard(unittest.TestCase):
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.state.find_all_devices")
     def test_finds_keyboard_by_product_id(self, mock_find):
         """Retrouve le clavier par PID et renvoie le DeviceInfo."""
         stop_event = threading.Event()
         keyboard = _make_device(product_id=0xB35B)
+        # Configurer une vraie réponse ping (feature 0x00, SW_ID=0x0A)
+        keyboard.transport.read.return_value = bytes([0x11, 0xFF, 0x00, 0x0A] + [0] * 16)
         mock_find.return_value = [keyboard]
 
         result = _reconnect_keyboard(0xB35B, stop_event)
@@ -460,7 +471,7 @@ class TestReconnectKeyboard(unittest.TestCase):
         keyboard.transport.write.assert_called_once()
 
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.state.find_all_devices")
     def test_returns_none_on_stop(self, mock_find):
         """Retourne None si stop_event est set."""
         stop_event = threading.Event()
@@ -471,7 +482,7 @@ class TestReconnectKeyboard(unittest.TestCase):
         self.assertIsNone(result)
 
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.state.find_all_devices")
     def test_backoff_increases(self, mock_find):
         """Backoff exponentiel — appelle find_all_devices plusieurs fois."""
         stop_event = threading.Event()
@@ -490,7 +501,7 @@ class TestReconnectKeyboard(unittest.TestCase):
         self.assertGreaterEqual(calls[0], 2)
 
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.state.find_all_devices")
     def test_ping_fail_closes_and_retries(self, mock_find):
         """Si ping échoue après trouvaille, close et retente."""
         stop_event = threading.Event()
@@ -515,7 +526,7 @@ class TestReconnectKeyboard(unittest.TestCase):
         bad_keyboard.close.assert_called_once()
 
     @_fast_timing()
-    @patch("swigi.daemon.find_all_devices")
+    @patch("swigi.state.find_all_devices")
     def test_wrong_pid_closed(self, mock_find):
         """Clavier avec mauvais PID est fermé."""
         stop_event = threading.Event()

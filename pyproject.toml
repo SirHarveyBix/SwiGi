@@ -1,6 +1,6 @@
 [project]
 name = "swigi"
-version = "1.1.0"
+version = "2.0.0"
 description = "SwiGi — synchronisation Easy-Switch Logitech via Bluetooth"
 requires-python = ">=3.11"
 dependencies = []
@@ -30,6 +30,7 @@ ignore = [
     "E501",     # line-too-long — le projet utilise 120 mais certaines lignes log/format dépassent volontairement
     "PLR2004",  # magic-value-comparison — constantes HID++ utilisées inline (0xFF, 0x0F, etc.)
     "PLR0912",  # too-many-branches — fonctions de dispatch/probe nécessairement ramifiées
+    "PLR0913",  # too-many-arguments — helpers internes avec état partagé passé en paramètres
     "PLR0915",  # too-many-statements — idem, fonctions daemon longues par design
     "PLC0415",  # import-outside-top-level — imports conditionnels (rumps, bettermouse, AppKit)
 
