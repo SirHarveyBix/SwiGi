@@ -30,6 +30,7 @@ _DEBOUNCE = 1.0
 _WATCHDOG_TIMEOUT = 10.0
 _STALE_PING_TIMEOUT = 100   # ms — BLE Logitech RTT ≈ 15-30 ms ; 100 ms = marge x3
 _RECONNECT_STALE_WINDOW = 2.0  # s — fenêtre post-reconnect : Mac receveur (firmware redelivre notif stale)
+_STALE_CONFIRM_WAIT = 0.2   # s — Gen S envoie la notif AVANT de déco BT ; attendre le déco pour confirmer
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -243,13 +244,17 @@ def watch_keyboard_push(
                 continue
             # Anti-stale : ping uniquement dans la fenêtre post-reconnect (Mac receveur).
             # Hors fenêtre (Mac source, clavier connecté depuis longtemps) → notification réelle.
-            if (
-                time.time() - reconnect_time < _RECONNECT_STALE_WINDOW
-                and _is_stale_notification(keyboard)
-            ):
-                log.info("⏭️  [%s] Notification ignorée — stale (ping OK) ; fenêtre anti-stale fermée", name)
-                reconnect_time = 0.0  # expire window : prochain switch réel accepté sans ping
-                continue
+            # Phase 1 : si le clavier répond au ping, AMBIGU — Gen S envoie la notif avant de
+            # déconnecter le BT. On attend _STALE_CONFIRM_WAIT et on re-ping (phase 2).
+            # Si le clavier ne répond plus en phase 2 → déco BT = switch réel.
+            # Si toujours connecté → vraie notif stale (Mac receveur).
+            if time.time() - reconnect_time < _RECONNECT_STALE_WINDOW and _is_stale_notification(keyboard):
+                time.sleep(_STALE_CONFIRM_WAIT)
+                if _is_stale_notification(keyboard):
+                    log.info("⏭️  [%s] Notification ignorée — stale confirmé ; fenêtre anti-stale fermée", name)
+                    reconnect_time = 0.0
+                    continue
+                log.info("⚡ [%s] Switch réel confirmé après déco BT (délai %dms)", name, int(_STALE_CONFIRM_WAIT * 1000))
             # Debounce : même cible < 1s
             if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
                 continue

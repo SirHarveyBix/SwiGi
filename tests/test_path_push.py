@@ -18,8 +18,8 @@ if "swigi.gui" not in sys.modules:
     _mock_gui._prefs_lock = threading.Lock()
     sys.modules["swigi.gui"] = _mock_gui
 
-from swigi.state import _SwitchEvent
 from swigi.path_push import _drain_switch, watch_keyboard_push
+from swigi.state import _SwitchEvent
 from swigi.transport import TransportError
 
 
@@ -383,7 +383,7 @@ class TestStaleDetection(unittest.TestCase):
 
     @patch("swigi.path_push.get_current_host", return_value=0)
     def test_stale_in_window_dropped_by_ping(self, mock_get_host):
-        """Mac receveur (fresh connect) : notification dans fenêtre + ping OK → droppée."""
+        """Mac receveur (fresh connect) : notification dans fenêtre + ping OK phase1+phase2 → droppée."""
         keyboard = _make_keyboard()
         event_queue = queue.Queue()
         state = {"keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}}
@@ -398,16 +398,20 @@ class TestStaleDetection(unittest.TestCase):
             if calls[0] == 1:
                 return stale_packet
             if calls[0] == 2:
-                return _ping_response()  # keyboard stable → stale
+                return _ping_response()  # phase 1 : keyboard répond → ambigu
+            if calls[0] == 3:
+                return _ping_response()  # phase 2 : keyboard répond encore → stale confirmé
             stop_event.set()
             return None
 
         keyboard.transport.read.side_effect = mock_read
 
-        # _RECONNECT_STALE_WINDOW grand → on est dans la fenêtre au démarrage
+        # _STALE_CONFIRM_WAIT=0.0 pour éviter 200ms de sleep dans les tests
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.05
-        ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 10.0):
+        ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 10.0), patch(
+            "swigi.path_push._STALE_CONFIRM_WAIT", 0.0
+        ):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
@@ -416,7 +420,50 @@ class TestStaleDetection(unittest.TestCase):
             thread.start()
             thread.join(timeout=2.0)
 
-        self.assertTrue(event_queue.empty(), "notification stale doit être droppée (ping OK)")
+        self.assertTrue(event_queue.empty(), "notification stale doit être droppée (ping OK phase1+phase2)")
+
+    @patch("swigi.path_push.get_current_host", return_value=0)
+    def test_real_switch_in_window_accepted_two_phase(self, mock_get_host):
+        """Mac source : switch dans fenêtre, phase1 ping répond (Gen S pre-disconnect), phase2 timeout → accepté."""
+        keyboard = _make_keyboard()
+        event_queue = queue.Queue()
+        state = {"keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}}
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        valid_packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] == 1:
+                return valid_packet
+            if calls[0] == 2:
+                return _ping_response()  # phase 1 : clavier répond encore (Gen S pre-disconnect)
+            if calls[0] == 3:
+                return None  # phase 2 : clavier déco BT → switch réel confirmé
+            stop_event.set()
+            return None
+
+        keyboard.transport.read.side_effect = mock_read
+
+        with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.1
+        ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 10.0), patch(
+            "swigi.path_push._STALE_CONFIRM_WAIT", 0.0
+        ):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            event = event_queue.get(timeout=2.0)
+            stop_event.set()
+            thread.join(timeout=2.0)
+
+        self.assertEqual(event.target_host, 2)
+        self.assertEqual(event.source, "push")
 
     @patch("swigi.path_push.get_current_host", return_value=0)
     def test_real_switch_in_window_accepted_ping_timeout(self, mock_get_host):
