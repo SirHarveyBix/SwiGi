@@ -16,11 +16,12 @@ log = logging.getLogger("swigi.sync")
 SYNC_PORT = 37000
 _BCAST_ADDR = "255.255.255.255"
 _MACHINE_ID = str(uuid.getnode())
+_MAX_HOST = 8  # Logitech supporte au maximum 6 hôtes
 
 
 def broadcast_switch(target_host: int, port: int = SYNC_PORT) -> None:
     """Diffuse 'switch souris → hôte N' sur le réseau local (UDP broadcast)."""
-    msg = json.dumps({"a": "sw", "h": target_host, "id": _MACHINE_ID}).encode()
+    msg = json.dumps({"action": "switch_mouse", "host": target_host, "machine_id": _MACHINE_ID}).encode()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -38,7 +39,7 @@ def start_sync_listener(
 ) -> threading.Thread:
     """Lance thread UDP. Appelle callback(target_host: int) sur chaque broadcast reçu.
 
-    Filtre les broadcasts émis par ce Mac (self-echo).
+    Filtre les broadcasts émis par ce Mac (self-echo) et valide la plage d'hôte.
     """
 
     def _listen() -> None:
@@ -52,8 +53,13 @@ def start_sync_listener(
                     try:
                         data, _ = s.recvfrom(256)
                         msg = json.loads(data)
-                        if msg.get("a") == "sw" and msg.get("id") != _MACHINE_ID:
-                            host = int(msg["h"])
+                        if (
+                            msg.get("action") == "switch_mouse"
+                            and msg.get("machine_id") != _MACHINE_ID
+                        ):
+                            host = int(msg["host"])
+                            if not (0 <= host < _MAX_HOST):
+                                continue
                             log.info("📡 Sync reçu : switch → hôte %d", host + 1)
                             callback(host)
                     except TimeoutError:

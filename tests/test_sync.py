@@ -9,36 +9,37 @@ import unittest
 from unittest.mock import patch
 
 
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
 class TestBroadcastSwitch(unittest.TestCase):
-    def test_sends_udp_packet(self):
-        """broadcast_switch envoie un paquet UDP avec action et host corrects."""
-        from swigi.sync import _MACHINE_ID, SYNC_PORT, broadcast_switch
+    def test_sends_correct_payload(self):
+        """broadcast_switch envoie payload JSON correct avec action, host, machine_id."""
+        from swigi.sync import _MACHINE_ID, broadcast_switch
 
-        received = queue.Queue()
+        captured = []
 
-        def _listen():
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind(("", SYNC_PORT))
-                s.settimeout(2.0)
-                try:
-                    data, _ = s.recvfrom(256)
-                    received.put(json.loads(data))
-                except TimeoutError:
-                    pass
+        class _FakeSocket:
+            def __init__(self, *a, **kw): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def setsockopt(self, *a): pass
+            def settimeout(self, *a): pass
+            def sendto(self, data, addr):
+                captured.append((json.loads(data), addr))
 
-        t = threading.Thread(target=_listen, daemon=True)
-        t.start()
-        time.sleep(0.05)  # laisse le socket se lier
+        with patch("swigi.sync.socket.socket", return_value=_FakeSocket()):
+            broadcast_switch(2)
 
-        broadcast_switch(2)
-        t.join(timeout=3.0)
-
-        self.assertFalse(received.empty(), "aucun paquet UDP reçu")
-        msg = received.get_nowait()
-        self.assertEqual(msg["a"], "sw")
-        self.assertEqual(msg["h"], 2)
-        self.assertEqual(msg["id"], _MACHINE_ID)
+        self.assertEqual(len(captured), 1)
+        msg, (addr, _port) = captured[0]
+        self.assertEqual(msg["action"], "switch_mouse")
+        self.assertEqual(msg["host"], 2)
+        self.assertEqual(msg["machine_id"], _MACHINE_ID)
+        self.assertEqual(addr, "255.255.255.255")
 
     def test_handles_send_error_silently(self):
         """Erreur d'envoi UDP loggée en debug, pas d'exception levée."""
@@ -50,21 +51,21 @@ class TestBroadcastSwitch(unittest.TestCase):
 
 
 class TestSyncListener(unittest.TestCase):
+    """Envoie directement à 127.0.0.1 sur un port aléatoire pour éviter les conflits."""
+
     def test_listener_calls_callback(self):
         """Listener appelle callback avec le bon host sur réception broadcast étranger."""
-        from swigi.sync import SYNC_PORT, start_sync_listener
+        from swigi.sync import start_sync_listener
 
+        port = _free_port()
         stop_event = threading.Event()
         results = queue.Queue()
-        start_sync_listener(results.put, stop_event)
+        start_sync_listener(results.put, stop_event, port=port)
         time.sleep(0.05)
 
-        # Envoyer depuis une machine avec ID différent
-        foreign_id = "foreign-machine-000"
-        msg = json.dumps({"a": "sw", "h": 2, "id": foreign_id}).encode()
+        msg = json.dumps({"action": "switch_mouse", "host": 2, "machine_id": "foreign-mac"}).encode()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            s.sendto(msg, ("127.0.0.1", SYNC_PORT))
+            s.sendto(msg, ("127.0.0.1", port))
 
         try:
             host = results.get(timeout=2.0)
@@ -74,16 +75,17 @@ class TestSyncListener(unittest.TestCase):
 
     def test_listener_ignores_self(self):
         """Listener ignore les broadcasts avec son propre machine ID."""
-        from swigi.sync import _MACHINE_ID, SYNC_PORT, start_sync_listener
+        from swigi.sync import _MACHINE_ID, start_sync_listener
 
+        port = _free_port()
         stop_event = threading.Event()
         results = queue.Queue()
-        start_sync_listener(results.put, stop_event)
+        start_sync_listener(results.put, stop_event, port=port)
         time.sleep(0.05)
 
-        msg = json.dumps({"a": "sw", "h": 1, "id": _MACHINE_ID}).encode()
+        msg = json.dumps({"action": "switch_mouse", "host": 1, "machine_id": _MACHINE_ID}).encode()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.sendto(msg, ("127.0.0.1", SYNC_PORT))
+            s.sendto(msg, ("127.0.0.1", port))
 
         time.sleep(0.2)
         stop_event.set()
@@ -91,15 +93,16 @@ class TestSyncListener(unittest.TestCase):
 
     def test_listener_ignores_invalid_json(self):
         """Paquet JSON invalide ignoré sans crash."""
-        from swigi.sync import SYNC_PORT, start_sync_listener
+        from swigi.sync import start_sync_listener
 
+        port = _free_port()
         stop_event = threading.Event()
         results = queue.Queue()
-        start_sync_listener(results.put, stop_event)
+        start_sync_listener(results.put, stop_event, port=port)
         time.sleep(0.05)
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.sendto(b"not-json!!!", ("127.0.0.1", SYNC_PORT))
+            s.sendto(b"not-json!!!", ("127.0.0.1", port))
 
         time.sleep(0.2)
         stop_event.set()
@@ -107,20 +110,39 @@ class TestSyncListener(unittest.TestCase):
 
     def test_listener_ignores_wrong_action(self):
         """Paquet avec action inconnue ignoré."""
-        from swigi.sync import SYNC_PORT, start_sync_listener
+        from swigi.sync import start_sync_listener
 
+        port = _free_port()
         stop_event = threading.Event()
         results = queue.Queue()
-        start_sync_listener(results.put, stop_event)
+        start_sync_listener(results.put, stop_event, port=port)
         time.sleep(0.05)
 
-        msg = json.dumps({"a": "ping", "h": 0, "id": "other"}).encode()
+        msg = json.dumps({"action": "ping", "host": 0, "machine_id": "other"}).encode()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.sendto(msg, ("127.0.0.1", SYNC_PORT))
+            s.sendto(msg, ("127.0.0.1", port))
 
         time.sleep(0.2)
         stop_event.set()
         self.assertTrue(results.empty(), "action inconnue ne doit pas déclencher callback")
+
+    def test_listener_ignores_out_of_range_host(self):
+        """Host hors plage valide (0-7) ignoré."""
+        from swigi.sync import start_sync_listener
+
+        port = _free_port()
+        stop_event = threading.Event()
+        results = queue.Queue()
+        start_sync_listener(results.put, stop_event, port=port)
+        time.sleep(0.05)
+
+        msg = json.dumps({"action": "switch_mouse", "host": 99, "machine_id": "other"}).encode()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(msg, ("127.0.0.1", port))
+
+        time.sleep(0.2)
+        stop_event.set()
+        self.assertTrue(results.empty(), "host hors plage ne doit pas déclencher callback")
 
 
 if __name__ == "__main__":
