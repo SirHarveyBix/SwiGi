@@ -26,6 +26,27 @@ from swigi.transport import HIDTransport, TransportError
 
 log = logging.getLogger("swigi.discovery")
 
+# ── Enumération légère (sans ouvrir de handles) ───────────────────────────────
+
+
+def enumerate_visible_product_ids() -> set[int]:
+    """Liste les product IDs Logitech BT visibles sans ouvrir de handles HID.
+
+    Utilisé comme pré-filtre rapide avant find_all_devices pour éviter
+    d'ouvrir des handles inutilement sur des périphériques déjà surveillés.
+    """
+    enumeration_head = lib.hid_enumerate(LOGITECH_VID, 0)
+    visible_product_ids: set[int] = set()
+    enumeration_node = enumeration_head
+    while enumeration_node:
+        device_info = enumeration_node.contents
+        enumeration_node = device_info.next
+        if device_info.product_id not in ALL_RECEIVER_PIDS and (device_info.usage_page, device_info.usage) in DIRECT_USAGE_PAIRS:
+            visible_product_ids.add(device_info.product_id)
+    lib.hid_free_enumeration(enumeration_head)
+    return visible_product_ids
+
+
 # ── Device discovery ──────────────────────────────────────────────────────────
 
 
@@ -165,7 +186,7 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                     transport, DEVICE_NUMBER_DIRECT, FEATURE_BACKLIGHT2
                 )
                 if backlight_index is None:
-                    log.info("💡 [%s] PID=0x%04X — feature BACKLIGHT2 (0x8070) absente", name, product_id)
+                    log.info("💡 [%s] 0x%04X — feature BACKLIGHT2 (0x%04X) absente", name, product_id, FEATURE_BACKLIGHT2)
             seen_product_ids.add(product_id)
             results.append(
                 DeviceInfo(transport, name, product_id, change_host_index, push_capable, backlight_index)

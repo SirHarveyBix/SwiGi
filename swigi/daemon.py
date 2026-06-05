@@ -14,7 +14,7 @@ from swigi.constants import (
     DEVICE_TYPE_MOUSE,
     SYSTEM,
 )
-from swigi.discovery import DeviceInfo, find_all_devices
+from swigi.discovery import DeviceInfo, enumerate_visible_product_ids, find_all_devices
 from swigi.gui import notify
 from swigi.path_push import watch_keyboard_push
 from swigi.prefs import _prefs_lock, prefs
@@ -231,10 +231,20 @@ def _keyboard_probe_loop(
         if not product_ids_to_check:
             continue
 
+        # Pré-énumération sans ouvrir de handles — évite les conflits HID
+        # avec les watchers déjà actifs sur d'autres claviers.
+        try:
+            visible_product_ids = enumerate_visible_product_ids()
+        except Exception:
+            log.exception("Erreur enumerate_visible_product_ids — keyboard probe ignorée")
+            continue
+        if not any(product_id in visible_product_ids for product_id in product_ids_to_check):
+            continue
+
         try:
             found = find_all_devices(DEVICE_TYPE_KEYBOARD)
         except Exception:
-            log.exception("Erreur enumerate claviers — keyboard probe ignorée")
+            log.exception("Erreur find_all_devices claviers — keyboard probe ignorée")
             continue
 
         for keyboard in found:
