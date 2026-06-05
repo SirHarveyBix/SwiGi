@@ -25,6 +25,7 @@ from swigi.state import (
     _SwitchEvent,
     _sync_keyboard_display,
 )
+from swigi.sync import broadcast_switch, start_sync_listener
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
@@ -357,6 +358,12 @@ def run_daemon(
         daemon=True,
     ).start()
 
+    # Sync inter-Mac : reçoit les broadcasts des autres Macs et dispatch en local
+    start_sync_listener(
+        lambda host: event_queue.put(_SwitchEvent(host, "sync-relay", "sync")),
+        stop_event,
+    )
+
     log.info("🟢 Prêt — %d clavier(s), %d souris", len(keyboards), len(mice))
 
     # Boucle principale : dispatch unifié
@@ -425,6 +432,10 @@ def run_daemon(
                 else:
                     log.warning("⚠️ Toutes les souris ont échoué — switch hôte %d différé", event.target_host + 1)
         hunt_trigger.set()
+        # Broadcast inter-Mac : informe les autres Macs pour qu'ils switchent leur souris.
+        # Pas de re-broadcast pour les events déjà reçus via sync (anti-boucle).
+        if event.source != "sync":
+            broadcast_switch(event.target_host)
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()
 
