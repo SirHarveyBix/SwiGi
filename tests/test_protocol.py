@@ -400,6 +400,76 @@ class TestGetDeviceNameChunks(unittest.TestCase):
         self.assertEqual(result, "MX Keys S Wireless")
 
 
+class TestBacklightConfig(unittest.TestCase):
+    def _make_response(self, device_number, feature_index, fn_byte, payload):
+        request_id = (feature_index << 8) | fn_byte | SW_ID
+        return (
+            struct.pack("!BB", REPORT_LONG, device_number)
+            + struct.pack("!H", request_id)
+            + bytes(payload)
+            + b"\x00" * (16 - len(payload))
+        )
+
+    def test_get_backlight_config_returns_tuple(self):
+        """get_backlight_config retourne (level, timeout, mode) si réponse valide."""
+        from swigi.protocol import get_backlight_config
+        transport = MockTransport()
+        feature_index = 0x07
+        # fn 0x00, SW_ID → request_id = 0x070A
+        request_id = (feature_index << 8) | 0x00 | SW_ID
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([75, 30, 1])
+            + b"\x00" * 13
+        )
+        transport.responses_to_read.append(response)
+        result = get_backlight_config(transport, 0xFF, feature_index)
+        self.assertEqual(result, (75, 30, 1))
+
+    def test_get_backlight_config_no_reply_returns_none(self):
+        """get_backlight_config retourne None si pas de réponse."""
+        from swigi.protocol import get_backlight_config
+        transport = MockTransport()
+        result = get_backlight_config(transport, 0xFF, 0x07)
+        self.assertIsNone(result)
+
+    def test_set_backlight_config_returns_true_on_success(self):
+        """set_backlight_config retourne True si réponse reçue."""
+        from swigi.protocol import set_backlight_config
+        transport = MockTransport()
+        feature_index = 0x07
+        request_id = (feature_index << 8) | 0x10 | SW_ID
+        response = (
+            struct.pack("!BB", REPORT_LONG, 0xFF)
+            + struct.pack("!H", request_id)
+            + bytes([50])
+            + b"\x00" * 15
+        )
+        transport.responses_to_read.append(response)
+        result = set_backlight_config(transport, 0xFF, feature_index, 50)
+        self.assertTrue(result)
+
+    def test_set_backlight_config_clamps_level(self):
+        """set_backlight_config accepte uniquement 0-100 (clampe les valeurs hors range)."""
+        from swigi.protocol import set_backlight_config
+        transport = MockTransport()
+        # Aucune réponse → False, mais le clamp ne doit pas lever d'erreur
+        result = set_backlight_config(transport, 0xFF, 0x07, 200)
+        self.assertFalse(result)
+        # Vérifie que le message envoyé contient bien 100 (clamped)
+        self.assertEqual(len(transport.written_messages), 1)
+        sent = transport.written_messages[0]
+        self.assertEqual(sent[4], 100)
+
+    def test_set_backlight_config_returns_false_on_no_reply(self):
+        """set_backlight_config retourne False si pas de réponse."""
+        from swigi.protocol import set_backlight_config
+        transport = MockTransport()
+        result = set_backlight_config(transport, 0xFF, 0x07, 50)
+        self.assertFalse(result)
+
+
 class TestDrainTransportOSError(unittest.TestCase):
     def test_drain_stops_on_os_error(self):
         """Arrête le drain sur OSError."""

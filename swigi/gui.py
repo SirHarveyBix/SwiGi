@@ -107,6 +107,29 @@ if HAS_RUMPS and _rumps:
                 _rumps.MenuItem("Masquer l'icône", callback=self._hide_icon),
             ]
 
+            # Section Rétroéclairage — uniquement si un clavier supporte BACKLIGHT2
+            self._backlight_menu = None
+            self._backlight_items = {}
+            self._backlight_level_map = {
+                "Éteint (0%)": 0,
+                "Faible (25%)": 25,
+                "Moyen (50%)": 50,
+                "Fort (75%)": 75,
+                "Maximum (100%)": 100,
+            }
+            backlight_pids = state.get("backlight_pids", [])
+            if backlight_pids:
+                self._backlight_menu = _rumps.MenuItem("Rétroéclairage")
+                first_pid = backlight_pids[0]
+                with _prefs_lock:
+                    current_level = prefs.get(f"backlight_{first_pid}", 100)
+                for label, level in self._backlight_level_map.items():
+                    item = _rumps.MenuItem(label, callback=self._set_backlight)
+                    item.state = (level == current_level)
+                    self._backlight_menu[label] = item
+                    self._backlight_items[label] = item
+                menu_items += [None, self._backlight_menu]
+
             # Section BetterMouse — uniquement si installé
             from swigi.bettermouse import is_available
 
@@ -174,8 +197,33 @@ if HAS_RUMPS and _rumps:
                 f"Souris : {mouse_display or '—'} {'✅' if mouse_display else '❌'}"
             )
             self._count_item.title = f"Basculements : {switches}"
+            # Sync checkmarks backlight depuis prefs
+            if self._backlight_items:
+                pids = self._state.get("backlight_pids", [])
+                if pids:
+                    with _prefs_lock:
+                        current_level = prefs.get(f"backlight_{pids[0]}")
+                    for label, item in self._backlight_items.items():
+                        level = self._backlight_level_map.get(label)
+                        item.state = (level == current_level)
             # Titre statique — l'état détaillé est dans les items du menu
             self.title = "⌨️"
+
+        # ── Rétroéclairage ────────────────────────────────────────────────
+
+        def _set_backlight(self, sender):
+            level = self._backlight_level_map.get(sender.title)
+            if level is None:
+                return
+            pids = self._state.get("backlight_pids", [])
+            with _prefs_lock:
+                for pid in pids:
+                    prefs[f"backlight_{pid}"] = level
+                save_prefs(dict(prefs))
+            self._state["backlight_dirty"] = True
+            for label, item in self._backlight_items.items():
+                item.state = (label == sender.title)
+            log.info("💡 Rétroéclairage → %d%%", level)
 
         # ── Notifications ──────────────────────────────────────────────────
 

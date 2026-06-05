@@ -209,6 +209,38 @@ def get_current_host(
     return info[1] if info is not None else None
 
 
+def get_backlight_config(
+    transport: HIDTransport,
+    device_number: int,
+    feature_index: int,
+    *,
+    timeout: int = 500,
+) -> tuple[int, int, int] | None:
+    """Lit config BACKLIGHT2 (fn 0x00). Retourne (level, timeout_s, mode) ou None."""
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x00, timeout=timeout
+    )
+    if reply and len(reply) >= 3:
+        return (reply[0], reply[1], reply[2])
+    return None
+
+
+def set_backlight_config(
+    transport: HIDTransport,
+    device_number: int,
+    feature_index: int,
+    level: int,
+    *,
+    timeout: int = 500,
+) -> bool:
+    """Définit level BACKLIGHT2 (fn 0x10). level en 0-100. Retourne True si OK."""
+    level = max(0, min(100, level))
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x10, level, timeout=timeout
+    )
+    return reply is not None
+
+
 def get_protocol_version(
     transport: HIDTransport, device_number: int, *, timeout: int = 500
 ) -> tuple[int, int] | None:

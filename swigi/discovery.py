@@ -9,6 +9,7 @@ from swigi.constants import (
     DEVICE_TYPE_TRACKBALL,
     DEVICE_TYPE_TRACKPAD,
     DIRECT_USAGE_PAIRS,
+    FEATURE_BACKLIGHT2,
     FEATURE_CHANGE_HOST,
     FEATURE_DEVICE_TYPE_AND_NAME,
     LOGITECH_VID,
@@ -35,6 +36,7 @@ class DeviceInfo:
     product_id: int
     change_host_index: int
     push_capable: bool = True
+    backlight_index: int | None = None
 
     def close(self):
         try:
@@ -155,9 +157,13 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             drain_transport(transport)
             proto = get_protocol_version(transport, DEVICE_NUMBER_DIRECT, timeout=200)
             push_capable = proto[0] >= 4 if proto is not None else True
+            drain_transport(transport)
+            backlight_index = resolve_feature(
+                transport, DEVICE_NUMBER_DIRECT, FEATURE_BACKLIGHT2
+            )
             seen_product_ids.add(product_id)
             results.append(
-                DeviceInfo(transport, name, product_id, change_host_index, push_capable)
+                DeviceInfo(transport, name, product_id, change_host_index, push_capable, backlight_index)
             )
             transport = None  # ownership transférée à DeviceInfo
         except (TransportError, OSError) as err:

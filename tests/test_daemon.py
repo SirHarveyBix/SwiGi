@@ -42,6 +42,7 @@ def _make_device(
     device.product_id = product_id
     device.change_host_index = change_host_index
     device.push_capable = True
+    device.backlight_index = None
     device.transport = MagicMock()
     device.transport.is_open = True
 

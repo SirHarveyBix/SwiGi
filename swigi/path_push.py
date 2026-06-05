@@ -16,7 +16,8 @@ from swigi.constants import (
 )
 from swigi.discovery import DeviceInfo
 from swigi.gui import notify
-from swigi.protocol import get_host_info
+from swigi.prefs import _prefs_lock, prefs, save_prefs
+from swigi.protocol import get_backlight_config, get_host_info, set_backlight_config
 from swigi.state import _reconnect_keyboard, _set_keyboard_status, _SwitchEvent
 from swigi.transport import TransportError
 
@@ -30,8 +31,56 @@ _DEBOUNCE = 1.0
 _WATCHDOG_TIMEOUT = 10.0
 _STALE_PING_TIMEOUT = 100   # ms — BLE Logitech RTT ≈ 15-30 ms ; 100 ms = marge x3
 _RECONNECT_STALE_WINDOW = 2.0  # s — fenêtre post-reconnect : Mac receveur (firmware redelivre notif stale)
-_STALE_CONFIRM_WAIT = 0.2   # s — Gen S envoie la notif AVANT de déco BT ; attendre le déco pour confirmer
+# MX Keys S prend > 200ms pour finir la déco BLE après notification CHANGE_HOST.
+# Polling toutes les 50ms jusqu'à déco confirmée (max 2s = stale confirmé).
+_STALE_POLL_INTERVAL = 0.05  # s — intervalle entre pings de confirmation
+_STALE_MAX_PINGS = 40        # 40 × 50ms = 2s max avant de confirmer stale
 _ARRIVAL_SWITCH_DELAY = 3.0  # s — seuil min d'absence pour distinguer switch réel d'un blip BT
+
+
+# ── Backlight helpers ─────────────────────────────────────────────────────────
+
+
+def _save_initial_backlight(keyboard: DeviceInfo) -> None:
+    """À la première connexion, lit le level actuel et le sauvegarde dans les prefs."""
+    if keyboard.backlight_index is None:
+        return
+    key = f"backlight_{keyboard.product_id}"
+    with _prefs_lock:
+        if key in prefs:
+            return
+    try:
+        config = get_backlight_config(
+            keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.backlight_index, timeout=300
+        )
+        if config:
+            with _prefs_lock:
+                prefs[key] = config[0]
+                save_prefs(dict(prefs))
+            log.info("💡 [%s] Level rétroéclairage initial sauvegardé : %d%%", keyboard.name, config[0])
+    except (TransportError, OSError) as e:
+        log.debug("💡 [%s] Lecture backlight initiale échouée : %s", keyboard.name, e)
+
+
+def _restore_backlight(keyboard: DeviceInfo) -> None:
+    """Restaure le rétroéclairage depuis les prefs (après reconnexion BT)."""
+    if keyboard.backlight_index is None:
+        return
+    key = f"backlight_{keyboard.product_id}"
+    with _prefs_lock:
+        level = prefs.get(key)
+    if level is None:
+        return
+    try:
+        ok = set_backlight_config(
+            keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.backlight_index, level, timeout=500
+        )
+        if ok:
+            log.info("💡 [%s] Rétroéclairage restauré → %d%%", keyboard.name, level)
+        else:
+            log.debug("💡 [%s] Restauration backlight : pas de réponse", keyboard.name)
+    except (TransportError, OSError) as e:
+        log.debug("💡 [%s] Restauration backlight échouée : %s", keyboard.name, e)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -178,7 +227,12 @@ def watch_keyboard_push(
     except (TransportError, OSError):
         log.info("⌨️ [%s] Surveillance PUSH démarrée", name)
 
+    _save_initial_backlight(keyboard)
+
     while not stop_event.is_set():
+        # Backlight dirty (changement via GUI) — appliqué ici pour ne pas bloquer la GUI
+        if state.pop("backlight_dirty", False) and keyboard.backlight_index is not None:
+            _restore_backlight(keyboard)
         # Watchdog
         if time.time() - last_response > _WATCHDOG_TIMEOUT:
             log.warning("👁️  [%s] Pas de réponse → reconnexion", name)
@@ -195,6 +249,7 @@ def watch_keyboard_push(
                     num_hosts, this_mac_host = info
             except (TransportError, OSError):
                 pass
+            _restore_backlight(keyboard)
             last_response = time.time()
             reconnect_time = time.time()
             continue
@@ -229,6 +284,7 @@ def watch_keyboard_push(
                     _reconnect_duration, this_mac_host,
                     event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
                 )
+                _restore_backlight(keyboard)
                 if time.time() - last_switch_time > 5.0:
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
@@ -263,6 +319,7 @@ def watch_keyboard_push(
                 _reconnect_duration, this_mac_host,
                 event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
             )
+            _restore_backlight(keyboard)
             if time.time() - last_switch_time > 5.0:
                 notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
@@ -294,16 +351,25 @@ def watch_keyboard_push(
             # Anti-stale : ping uniquement dans la fenêtre post-reconnect (Mac receveur).
             # Hors fenêtre (Mac source, clavier connecté depuis longtemps) → notification réelle.
             # Phase 1 : si le clavier répond au ping, AMBIGU — Gen S envoie la notif avant de
-            # déconnecter le BT. On attend _STALE_CONFIRM_WAIT et on re-ping (phase 2).
-            # Si le clavier ne répond plus en phase 2 → déco BT = switch réel.
-            # Si toujours connecté → vraie notif stale (Mac receveur).
+            # déconnecter le BT. Polling jusqu'à déco confirmée ou timeout (stale).
+            # MX Keys S peut prendre > 200ms pour terminer la déco BLE.
             if time.time() - reconnect_time < _RECONNECT_STALE_WINDOW and _is_stale_notification(keyboard):
-                time.sleep(_STALE_CONFIRM_WAIT)
-                if _is_stale_notification(keyboard):
-                    log.info("⏭️  [%s] Notification ignorée — stale confirmé ; fenêtre anti-stale fermée", name)
+                _poll_start = time.time()
+                _is_real = False
+                for _ in range(_STALE_MAX_PINGS):
+                    if stop_event.is_set():
+                        break
+                    time.sleep(_STALE_POLL_INTERVAL)
+                    if not _is_stale_notification(keyboard):
+                        _is_real = True
+                        break
+                if not _is_real:
+                    log.info("⏭️  [%s] Notification stale confirmée (%.0fms) ; fenêtre fermée",
+                             name, (time.time() - _poll_start) * 1000)
                     reconnect_time = 0.0
                     continue
-                log.info("⚡ [%s] Switch réel confirmé après déco BT (délai %dms)", name, int(_STALE_CONFIRM_WAIT * 1000))
+                log.info("⚡ [%s] Switch réel confirmé — déco BLE en %.0fms",
+                         name, (time.time() - _poll_start) * 1000)
             # Debounce : même cible < 1s
             if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
                 continue

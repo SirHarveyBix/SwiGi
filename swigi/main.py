@@ -203,6 +203,7 @@ def _main_inner(arguments) -> int:
         log.info("Ctrl+C pour quitter.")
 
     state: dict = {
+        "_lock": threading.Lock(),
         "keyboard": keyboards[0].name,
         "keyboards": {
             keyboard.product_id: {"name": keyboard.name, "ok": True}
@@ -211,6 +212,7 @@ def _main_inner(arguments) -> int:
         "mouse": mice[0].name if mice else None,
         "mice": [mouse.name for mouse in mice],
         "switches": 0,
+        "backlight_pids": [kb.product_id for kb in keyboards if kb.backlight_index is not None],
     }
     stop_event = threading.Event()
 

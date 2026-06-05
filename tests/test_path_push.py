@@ -28,6 +28,7 @@ def _make_keyboard(name="MX Keys Mini", product_id=0xB369, change_host_index=5):
     device.name = name
     device.product_id = product_id
     device.change_host_index = change_host_index
+    device.backlight_index = None
     device.generation = "push"
     device.transport = MagicMock()
     device.transport.is_open = True
@@ -383,7 +384,7 @@ class TestStaleDetection(unittest.TestCase):
 
     @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_stale_in_window_dropped_by_ping(self, mock_get_host):
-        """Mac receveur (fresh connect) : notification dans fenêtre + ping OK phase1+phase2 → droppée."""
+        """Mac receveur (fresh connect) : notification dans fenêtre + ping OK initial+2polls → droppée."""
         keyboard = _make_keyboard()
         event_queue = queue.Queue()
         state = {"keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}}
@@ -397,21 +398,19 @@ class TestStaleDetection(unittest.TestCase):
             calls[0] += 1
             if calls[0] == 1:
                 return stale_packet
-            if calls[0] == 2:
-                return _ping_response()  # phase 1 : keyboard répond → ambigu
-            if calls[0] == 3:
-                return _ping_response()  # phase 2 : keyboard répond encore → stale confirmé
+            if calls[0] in (2, 3, 4):
+                return _ping_response()  # initial + 2 polls → clavier répond = stale confirmé
             stop_event.set()
             return None
 
         keyboard.transport.read.side_effect = mock_read
 
-        # _STALE_CONFIRM_WAIT=0.0 pour éviter 200ms de sleep dans les tests
+        # _STALE_MAX_PINGS=2, _STALE_POLL_INTERVAL=0.0 pour tests rapides
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.05
         ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 10.0), patch(
-            "swigi.path_push._STALE_CONFIRM_WAIT", 0.0
-        ):
+            "swigi.path_push._STALE_MAX_PINGS", 2
+        ), patch("swigi.path_push._STALE_POLL_INTERVAL", 0.0):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
@@ -420,11 +419,11 @@ class TestStaleDetection(unittest.TestCase):
             thread.start()
             thread.join(timeout=2.0)
 
-        self.assertTrue(event_queue.empty(), "notification stale doit être droppée (ping OK phase1+phase2)")
+        self.assertTrue(event_queue.empty(), "notification stale doit être droppée (ping OK initial+2polls)")
 
     @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_real_switch_in_window_accepted_two_phase(self, mock_get_host):
-        """Mac source : switch dans fenêtre, phase1 ping répond (Gen S pre-disconnect), phase2 timeout → accepté."""
+        """Mac source : switch dans fenêtre, ping initial répond (MX Keys S pre-disconnect), poll1 timeout → accepté."""
         keyboard = _make_keyboard()
         event_queue = queue.Queue()
         state = {"keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}}}
@@ -439,9 +438,9 @@ class TestStaleDetection(unittest.TestCase):
             if calls[0] == 1:
                 return valid_packet
             if calls[0] == 2:
-                return _ping_response()  # phase 1 : clavier répond encore (Gen S pre-disconnect)
+                return _ping_response()  # ping initial : clavier encore connecté (Gen S pre-disconnect)
             if calls[0] == 3:
-                return None  # phase 2 : clavier déco BT → switch réel confirmé
+                return None  # poll 1 : clavier déco BLE → switch réel confirmé
             stop_event.set()
             return None
 
@@ -450,8 +449,8 @@ class TestStaleDetection(unittest.TestCase):
         with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
             "swigi.path_push._READ_WINDOW", 0.1
         ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 10.0), patch(
-            "swigi.path_push._STALE_CONFIRM_WAIT", 0.0
-        ):
+            "swigi.path_push._STALE_MAX_PINGS", 2
+        ), patch("swigi.path_push._STALE_POLL_INTERVAL", 0.0):
             thread = threading.Thread(
                 target=watch_keyboard_push,
                 args=(keyboard, event_queue, state, stop_event, hunt_trigger),
