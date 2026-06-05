@@ -12,6 +12,7 @@ from swigi.constants import DEVICE_TYPE_KEYBOARD, DEVICE_TYPE_MOUSE
 from swigi.daemon import run_daemon
 from swigi.discovery import find_all_devices
 from swigi.gui import HAS_RUMPS, SwiGiMenuBar, notify
+from swigi.prefs import _prefs_lock, prefs, save_prefs
 
 log = logging.getLogger("swigi.main")
 
@@ -58,11 +59,13 @@ def _release_lock() -> None:
 
 
 def _wait_for_keyboard() -> list:
-    """Attend qu'au moins un clavier Gen S soit disponible en BT.
+    """Attend au moins un clavier Gen S disponible en BT.
 
-    Les anciens claviers (push_capable=False) sont rejetés immédiatement :
-    leur handle est fermé et un warning est loggé.
+    Si des PIDs Gen S sont connus (prefs) mais absents → sur autre Mac → retourne [] sans bloquer.
     """
+    with _prefs_lock:
+        known_pids = set(prefs.get("keyboard_pids_gen_s", []))
+
     attempt = 0
     while True:
         all_keyboards = find_all_devices(DEVICE_TYPE_KEYBOARD)
@@ -78,7 +81,25 @@ def _wait_for_keyboard() -> list:
                 )
                 keyboard.close()
         if capable:
+            # Sauvegarder les nouveaux PIDs Gen S découverts
+            new_pids = {kb.product_id for kb in capable} - known_pids
+            if new_pids:
+                with _prefs_lock:
+                    updated = set(prefs.get("keyboard_pids_gen_s", [])) | {kb.product_id for kb in capable}
+                    prefs["keyboard_pids_gen_s"] = list(updated)
+                    save_prefs(dict(prefs))
+                log.info("💾 PIDs Gen S sauvegardés : %s", [f"0x{p:04X}" for p in updated])
             return capable
+
+        # Si PIDs connus → claviers sur autre Mac → démarrer sans bloquer
+        if known_pids and attempt >= 3:
+            log.info(
+                "Claviers Gen S connus (PIDs: %s) absents — sur autre Mac. "
+                "SwiGi démarre, watchers lancés à l'arrivée.",
+                [f"0x{p:04X}" for p in known_pids],
+            )
+            return []
+
         attempt += 1
         if attempt == 1:
             log.info(
@@ -197,14 +218,17 @@ def _main_inner(arguments) -> int:
         notify(f"{mouse.name} connectée", "Souris")
 
     log.info("")
-    keyboard_names = ", ".join(keyboard.name for keyboard in keyboards)
-    log.info("Prêt. Appuie sur Easy-Switch sur %s.", keyboard_names)
+    if keyboards:
+        keyboard_names = ", ".join(keyboard.name for keyboard in keyboards)
+        log.info("Prêt. Appuie sur Easy-Switch sur %s.", keyboard_names)
+    else:
+        log.info("Prêt. En attente de claviers Gen S (actuellement sur autre Mac).")
     if not HAS_RUMPS:
         log.info("Ctrl+C pour quitter.")
 
     state: dict = {
         "_lock": threading.Lock(),
-        "keyboard": keyboards[0].name,
+        "keyboard": keyboards[0].name if keyboards else None,
         "keyboards": {
             keyboard.product_id: {"name": keyboard.name, "ok": True}
             for keyboard in keyboards

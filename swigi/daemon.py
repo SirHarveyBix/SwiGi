@@ -10,6 +10,7 @@ import time
 
 from swigi.constants import (
     DEVICE_NUMBER_DIRECT,
+    DEVICE_TYPE_KEYBOARD,
     DEVICE_TYPE_MOUSE,
     SYSTEM,
 )
@@ -17,7 +18,7 @@ from swigi.discovery import DeviceInfo, find_all_devices
 from swigi.gui import notify
 from swigi.path_push import watch_keyboard_push
 from swigi.prefs import _prefs_lock, prefs
-from swigi.protocol import send_change_host
+from swigi.protocol import get_host_info, send_change_host
 from swigi.state import (
     _reconnect_keyboard,
     _set_keyboard_status,
@@ -44,6 +45,8 @@ _PROBE_FAST_DURATION = 15.0
 _DISPATCHER_DEBOUNCE = 1.0
 _VERIFY_TIMEOUT = 10.0       # s — TTL last_target_host
 _BETTERMOUSE_APPLY_THROTTLE = 5.0     # s — évite double-restart BetterMouse après switch
+_KEYBOARD_SCAN_INTERVAL = 3.0
+_KEYBOARD_ARRIVAL_DELAY = 3.0  # seuil pour distinguer switch réel vs blip
 
 _bettermouse_throttle: dict = {"last_apply": 0.0}
 
@@ -201,6 +204,83 @@ def _mice_probe_loop(
             mouse.close()
 
 
+# ── Thread probe claviers Gen S ───────────────────────────────────────────────
+
+
+def _keyboard_probe_loop(
+    known_pids: list[int],
+    event_queue: queue.Queue,
+    state: dict,
+    stop_event: threading.Event,
+    hunt_trigger: threading.Event,
+    daemon_start: float,
+    watcher_lock: threading.Lock,
+    active_watcher_pids: set,
+) -> None:
+    """Détecte les claviers Gen S connus absents au démarrage et lance leurs watchers."""
+    while not stop_event.is_set():
+        stop_event.wait(timeout=_KEYBOARD_SCAN_INTERVAL)
+        if stop_event.is_set():
+            break
+
+        with watcher_lock:
+            pids_to_check = [p for p in known_pids if p not in active_watcher_pids]
+        if not pids_to_check:
+            continue
+
+        try:
+            found = find_all_devices(DEVICE_TYPE_KEYBOARD)
+        except Exception:
+            log.exception("Erreur enumerate claviers — keyboard probe ignorée")
+            continue
+
+        for keyboard in found:
+            pid = keyboard.product_id
+            if pid not in pids_to_check or not keyboard.push_capable:
+                keyboard.close()
+                continue
+
+            # Vérification atomique: évite double-open si watcher vient de se lancer
+            with watcher_lock:
+                if pid in active_watcher_pids:
+                    keyboard.close()
+                    continue
+                active_watcher_pids.add(pid)
+
+            log.info("⌨️ [%s] PID=0x%04X arrivé — lancement watcher", keyboard.name, pid)
+            _set_keyboard_status(state, pid, keyboard.name, True)
+
+            # Switch d'arrivée si le clavier vient de switcher vers ce Mac
+            since_start = time.time() - daemon_start
+            if since_start > _KEYBOARD_ARRIVAL_DELAY:
+                try:
+                    info = get_host_info(
+                        keyboard.transport, DEVICE_NUMBER_DIRECT,
+                        keyboard.change_host_index, timeout=200,
+                    )
+                    if info is not None:
+                        _, this_mac_host = info
+                        log.info("★ [%s] Easy-Switch → hôte %d (arrivée)", keyboard.name, this_mac_host + 1)
+                        event_queue.put(_SwitchEvent(this_mac_host, keyboard.name, "push"))
+                        hunt_trigger.set()
+                except Exception:
+                    log.debug("get_host_info échoué — switch d'arrivée ignoré")
+
+            def _run_watcher(kb=keyboard, p=pid):
+                try:
+                    watch_keyboard_push(kb, event_queue, state, stop_event, hunt_trigger)
+                finally:
+                    with watcher_lock:
+                        active_watcher_pids.discard(p)
+                    log.debug("⌨️ [0x%04X] Watcher probe terminé", p)
+
+            threading.Thread(
+                target=_run_watcher,
+                name=f"keyboard-{pid:04X}",
+                daemon=True,
+            ).start()
+
+
 # ── Point d'entrée ────────────────────────────────────────────────────────────
 
 
@@ -230,6 +310,10 @@ def run_daemon(
     hunt_trigger = threading.Event()
     mice_list = list(mice)
 
+    daemon_start = time.time()
+    watcher_lock = threading.Lock()
+    active_watcher_pids = {kb.product_id for kb in keyboards}
+
     # Threads clavier — tous push_capable (filtrés par _wait_for_keyboard)
     for keyboard in keyboards:
         log.info("⌨️ [%s] → path PUSH", keyboard.name)
@@ -237,6 +321,18 @@ def run_daemon(
             target=watch_keyboard_push,
             args=(keyboard, event_queue, state, stop_event, hunt_trigger),
             name=f"keyboard-{keyboard.product_id:04X}",
+            daemon=True,
+        ).start()
+
+    # Probe claviers Gen S connus mais absents au démarrage
+    with _prefs_lock:
+        known_pids = list(prefs.get("keyboard_pids_gen_s", []))
+    if known_pids:
+        threading.Thread(
+            target=_keyboard_probe_loop,
+            args=(known_pids, event_queue, state, stop_event, hunt_trigger,
+                  daemon_start, watcher_lock, active_watcher_pids),
+            name="keyboard-probe",
             daemon=True,
         ).start()
 
