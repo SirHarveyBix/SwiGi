@@ -45,7 +45,7 @@ _PROBE_FAST_DURATION = 15.0
 _DISPATCHER_DEBOUNCE = 1.0
 _VERIFY_TIMEOUT = 10.0       # s — TTL last_target_host
 _BETTERMOUSE_APPLY_THROTTLE = 5.0     # s — évite double-restart BetterMouse après switch
-_KEYBOARD_SCAN_INTERVAL = 3.0
+_KEYBOARD_SCAN_INTERVAL = 0.5
 _KEYBOARD_ARRIVAL_DELAY = 3.0  # seuil pour distinguer switch réel vs blip
 
 _bettermouse_throttle: dict = {"last_apply": 0.0}
