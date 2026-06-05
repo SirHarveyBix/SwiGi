@@ -64,7 +64,7 @@ def _wait_for_keyboard() -> list:
     Si des PIDs Gen S sont connus (prefs) mais absents → sur autre Mac → retourne [] sans bloquer.
     """
     with _prefs_lock:
-        known_pids = set(prefs.get("keyboard_pids_gen_s", []))
+        known_product_ids = set(prefs.get("keyboard_pids_gen_s", []))
 
     attempt = 0
     while True:
@@ -81,22 +81,22 @@ def _wait_for_keyboard() -> list:
                 )
                 keyboard.close()
         if capable:
-            # Sauvegarder les nouveaux PIDs Gen S découverts
-            new_pids = {kb.product_id for kb in capable} - known_pids
-            if new_pids:
+            # Sauvegarder les nouveaux product_ids Gen S découverts
+            new_product_ids = {keyboard.product_id for keyboard in capable} - known_product_ids
+            if new_product_ids:
                 with _prefs_lock:
-                    updated = set(prefs.get("keyboard_pids_gen_s", [])) | {kb.product_id for kb in capable}
-                    prefs["keyboard_pids_gen_s"] = list(updated)
+                    updated_product_ids = set(prefs.get("keyboard_pids_gen_s", [])) | {keyboard.product_id for keyboard in capable}
+                    prefs["keyboard_pids_gen_s"] = list(updated_product_ids)
                     save_prefs(dict(prefs))
-                log.info("💾 PIDs Gen S sauvegardés : %s", [f"0x{p:04X}" for p in updated])
+                log.info("💾 Product IDs Gen S sauvegardés : %s", [f"0x{product_id:04X}" for product_id in updated_product_ids])
             return capable
 
-        # Si PIDs connus → claviers sur autre Mac → démarrer sans bloquer
-        if known_pids and attempt >= 3:
+        # Si product_ids connus → claviers sur autre Mac → démarrer sans bloquer
+        if known_product_ids and attempt >= 3:
             log.info(
-                "Claviers Gen S connus (PIDs: %s) absents — sur autre Mac. "
+                "Claviers Gen S connus (0x%s) absents — sur autre Mac. "
                 "SwiGi démarre, watchers lancés à l'arrivée.",
-                [f"0x{p:04X}" for p in known_pids],
+                ", 0x".join(f"{product_id:04X}" for product_id in known_product_ids),
             )
             return []
 
@@ -236,7 +236,7 @@ def _main_inner(arguments) -> int:
         "mouse": mice[0].name if mice else None,
         "mice": [mouse.name for mouse in mice],
         "switches": 0,
-        "backlight_pids": [kb.product_id for kb in keyboards if kb.backlight_index is not None],
+        "backlight_pids": [keyboard.product_id for keyboard in keyboards if keyboard.backlight_index is not None],
     }
     stop_event = threading.Event()
 

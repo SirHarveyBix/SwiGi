@@ -11,7 +11,7 @@ from swigi.protocol import hidpp_request, resolve_feature
 
 FEATURE_SET = 0x0001
 
-KNOWN = {
+KNOWN_FEATURE_NAMES = {
     0x0000: "IRoot",
     0x0001: "IFeatureSet",
     0x0002: "IFirmwareInfo",
@@ -38,7 +38,7 @@ KNOWN = {
     0x4521: "DisableKeysByUsage",
     0x4522: "PointerAxes",
     0x8010: "Gaming",
-    0x8040: "Brightness Control",
+    0x8040: "BrightnessControl",
     0x8060: "AdjustableReportRate",
     0x8070: "Backlight2",
     0x8071: "Backlight2Extended",
@@ -54,33 +54,35 @@ KNOWN = {
 
 
 def scan(transport):
-    fs_idx = resolve_feature(transport, DEVICE_NUMBER_DIRECT, FEATURE_SET)
-    if fs_idx is None:
+    feature_set_index = resolve_feature(transport, DEVICE_NUMBER_DIRECT, FEATURE_SET)
+    if feature_set_index is None:
         print("  IFeatureSet (0x0001) introuvable")
         return
 
-    reply = hidpp_request(transport, DEVICE_NUMBER_DIRECT, (fs_idx << 8) | 0x00, timeout=300)
+    reply = hidpp_request(transport, DEVICE_NUMBER_DIRECT, (feature_set_index << 8) | 0x00, timeout=300)
     if not reply:
         print("  getCount échoué")
         return
     count = reply[0]
-    print(f"  IFeatureSet index={fs_idx}, {count} features\n")
+    print(f"  IFeatureSet index={feature_set_index}, {count} features\n")
 
-    for i in range(1, count + 1):
-        r = hidpp_request(transport, DEVICE_NUMBER_DIRECT, (fs_idx << 8) | 0x10, i, timeout=300)
-        if not r or len(r) < 2:
-            print(f"  [{i:3d}] ??? (lecture échouée)")
+    for index in range(1, count + 1):
+        feature_reply = hidpp_request(
+            transport, DEVICE_NUMBER_DIRECT, (feature_set_index << 8) | 0x10, index, timeout=300
+        )
+        if not feature_reply or len(feature_reply) < 2:
+            print(f"  [{index:3d}] ??? (lecture échouée)")
             continue
-        code = (r[0] << 8) | r[1]
-        flags = r[2] if len(r) > 2 else 0
+        feature_code = (feature_reply[0] << 8) | feature_reply[1]
+        flags = feature_reply[2] if len(feature_reply) > 2 else 0
         tags = []
         if flags & 0x80:
             tags.append("OBSOLETE")
         if flags & 0x40:
             tags.append("HIDDEN")
-        name = KNOWN.get(code, "")
-        tag_str = " ".join(tags)
-        print(f"  [{i:3d}] 0x{code:04X}  {name:<30} {tag_str}")
+        feature_name = KNOWN_FEATURE_NAMES.get(feature_code, "")
+        tag_string = " ".join(tags)
+        print(f"  [{index:3d}] 0x{feature_code:04X}  {feature_name:<30} {tag_string}")
 
 
 def main():
@@ -88,10 +90,10 @@ def main():
     if not keyboards:
         print("Aucun clavier trouvé — connecter le clavier en BT d'abord.")
         return
-    for kb in keyboards:
-        print(f"=== {kb.name}  PID=0x{kb.product_id:04X}  CHANGE_HOST index={kb.change_host_index} ===")
-        scan(kb.transport)
-        kb.close()
+    for keyboard in keyboards:
+        print(f"=== {keyboard.name}  0x{keyboard.product_id:04X}  CHANGE_HOST index={keyboard.change_host_index} ===")
+        scan(keyboard.transport)
+        keyboard.close()
         print()
 
 

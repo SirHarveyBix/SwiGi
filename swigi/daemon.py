@@ -208,14 +208,14 @@ def _mice_probe_loop(
 
 
 def _keyboard_probe_loop(
-    known_pids: list[int],
+    known_product_ids: list[int],
     event_queue: queue.Queue,
     state: dict,
     stop_event: threading.Event,
     hunt_trigger: threading.Event,
     daemon_start: float,
     watcher_lock: threading.Lock,
-    active_watcher_pids: set,
+    active_watcher_product_ids: set,
 ) -> None:
     """Détecte les claviers Gen S connus absents au démarrage et lance leurs watchers."""
     while not stop_event.is_set():
@@ -224,8 +224,11 @@ def _keyboard_probe_loop(
             break
 
         with watcher_lock:
-            pids_to_check = [p for p in known_pids if p not in active_watcher_pids]
-        if not pids_to_check:
+            product_ids_to_check = [
+                product_id for product_id in known_product_ids
+                if product_id not in active_watcher_product_ids
+            ]
+        if not product_ids_to_check:
             continue
 
         try:
@@ -235,20 +238,20 @@ def _keyboard_probe_loop(
             continue
 
         for keyboard in found:
-            pid = keyboard.product_id
-            if pid not in pids_to_check or not keyboard.push_capable:
+            product_id = keyboard.product_id
+            if product_id not in product_ids_to_check or not keyboard.push_capable:
                 keyboard.close()
                 continue
 
             # Vérification atomique: évite double-open si watcher vient de se lancer
             with watcher_lock:
-                if pid in active_watcher_pids:
+                if product_id in active_watcher_product_ids:
                     keyboard.close()
                     continue
-                active_watcher_pids.add(pid)
+                active_watcher_product_ids.add(product_id)
 
-            log.info("⌨️ [%s] PID=0x%04X arrivé — lancement watcher", keyboard.name, pid)
-            _set_keyboard_status(state, pid, keyboard.name, True)
+            log.info("⌨️ [%s] 0x%04X arrivé — lancement watcher", keyboard.name, product_id)
+            _set_keyboard_status(state, product_id, keyboard.name, True)
 
             # Switch d'arrivée si le clavier vient de switcher vers ce Mac
             since_start = time.time() - daemon_start
@@ -266,17 +269,17 @@ def _keyboard_probe_loop(
                 except Exception:
                     log.debug("get_host_info échoué — switch d'arrivée ignoré")
 
-            def _run_watcher(kb=keyboard, p=pid):
+            def _run_watcher(captured_keyboard=keyboard, captured_product_id=product_id):
                 try:
-                    watch_keyboard_push(kb, event_queue, state, stop_event, hunt_trigger)
+                    watch_keyboard_push(captured_keyboard, event_queue, state, stop_event, hunt_trigger)
                 finally:
                     with watcher_lock:
-                        active_watcher_pids.discard(p)
-                    log.debug("⌨️ [0x%04X] Watcher probe terminé", p)
+                        active_watcher_product_ids.discard(captured_product_id)
+                    log.debug("⌨️ [0x%04X] Watcher probe terminé", captured_product_id)
 
             threading.Thread(
                 target=_run_watcher,
-                name=f"keyboard-{pid:04X}",
+                name=f"keyboard-{product_id:04X}",
                 daemon=True,
             ).start()
 
@@ -312,7 +315,7 @@ def run_daemon(
 
     daemon_start = time.time()
     watcher_lock = threading.Lock()
-    active_watcher_pids = {kb.product_id for kb in keyboards}
+    active_watcher_product_ids = {keyboard.product_id for keyboard in keyboards}
 
     # Threads clavier — tous push_capable (filtrés par _wait_for_keyboard)
     for keyboard in keyboards:
@@ -326,12 +329,12 @@ def run_daemon(
 
     # Probe claviers Gen S connus mais absents au démarrage
     with _prefs_lock:
-        known_pids = list(prefs.get("keyboard_pids_gen_s", []))
-    if known_pids:
+        known_product_ids = list(prefs.get("keyboard_pids_gen_s", []))
+    if known_product_ids:
         threading.Thread(
             target=_keyboard_probe_loop,
-            args=(known_pids, event_queue, state, stop_event, hunt_trigger,
-                  daemon_start, watcher_lock, active_watcher_pids),
+            args=(known_product_ids, event_queue, state, stop_event, hunt_trigger,
+                  daemon_start, watcher_lock, active_watcher_product_ids),
             name="keyboard-probe",
             daemon=True,
         ).start()

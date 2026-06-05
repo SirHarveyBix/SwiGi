@@ -58,8 +58,8 @@ def _save_initial_backlight(keyboard: DeviceInfo) -> None:
                 prefs[key] = config[0]
                 save_prefs(dict(prefs))
             log.info("💡 [%s] Level rétroéclairage initial sauvegardé : %d%%", keyboard.name, config[0])
-    except (TransportError, OSError) as e:
-        log.debug("💡 [%s] Lecture backlight initiale échouée : %s", keyboard.name, e)
+    except (TransportError, OSError) as error:
+        log.debug("💡 [%s] Lecture backlight initiale échouée : %s", keyboard.name, error)
 
 
 def _restore_backlight(keyboard: DeviceInfo) -> None:
@@ -79,8 +79,8 @@ def _restore_backlight(keyboard: DeviceInfo) -> None:
             log.info("💡 [%s] Rétroéclairage restauré → %d%%", keyboard.name, level)
         else:
             log.debug("💡 [%s] Restauration backlight : pas de réponse", keyboard.name)
-    except (TransportError, OSError) as e:
-        log.debug("💡 [%s] Restauration backlight échouée : %s", keyboard.name, e)
+    except (TransportError, OSError) as error:
+        log.debug("💡 [%s] Restauration backlight échouée : %s", keyboard.name, error)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
