@@ -157,10 +157,13 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
             drain_transport(transport)
             proto = get_protocol_version(transport, DEVICE_NUMBER_DIRECT, timeout=200)
             push_capable = proto[0] >= 4 if proto is not None else True
-            drain_transport(transport)
-            backlight_index = resolve_feature(
-                transport, DEVICE_NUMBER_DIRECT, FEATURE_BACKLIGHT2
-            )
+            # BACKLIGHT2 uniquement sur les claviers — les souris n'ont pas de rétroéclairage
+            backlight_index = None
+            if device_type == DEVICE_TYPE_KEYBOARD:
+                drain_transport(transport)
+                backlight_index = resolve_feature(
+                    transport, DEVICE_NUMBER_DIRECT, FEATURE_BACKLIGHT2
+                )
             seen_product_ids.add(product_id)
             results.append(
                 DeviceInfo(transport, name, product_id, change_host_index, push_capable, backlight_index)

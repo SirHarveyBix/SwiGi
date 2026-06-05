@@ -219,7 +219,7 @@ class TestFindAllDevices(unittest.TestCase):
         mock_transport = MagicMock()
         with (
             patch("swigi.discovery.HIDTransport", return_value=mock_transport),
-            patch("swigi.discovery.resolve_feature", side_effect=[3, 11, None]),
+            patch("swigi.discovery.resolve_feature", side_effect=[3, 11]),
             patch("swigi.discovery.get_device_type", return_value=DEVICE_TYPE_MOUSE),
             patch("swigi.discovery.get_device_name", return_value="MX Master 4"),
         ):

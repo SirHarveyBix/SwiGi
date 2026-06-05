@@ -27,7 +27,8 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé                  |
 | ⚡ **Faible latence**            | Détection notification < 5ms (lecture bloquante kernel), switch < 100ms typique |
 | 🖱️ **Multi-souris**              | Envoie CHANGE_HOST à toutes les souris connectées simultanément                 |
-| 🍎 **Icône menu bar macOS**      | Statut clavier/souris visible en permanence, compteur de basculements           |
+| 💡 **Rétroéclairage restauré**   | Level backlight sauvegardé et restauré automatiquement à chaque reconnexion BT  |
+| 🍎 **Icône menu bar macOS**      | Statut clavier/souris + slider rétroéclairage (0–100%), compteur basculements   |
 | ☑️ **Suivi souris désactivable** | Checkbox dans le menu pour activer/désactiver le suivi de la souris             |
 | 🔔 **Notifications système**     | Alerte à la connexion/déconnexion de chaque périphérique (macOS)                |
 | 🔁 **Démarrage automatique**     | launchd (macOS), Startup folder (Windows), systemd (Linux)                      |
@@ -321,10 +322,11 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 3. SwiGi la capture et envoie **immédiatement** la même commande à toutes les souris connectées (fire-and-forget, conforme spec)
 4. Les périphériques basculent sur le même hôte (0 = Mac 1, 1 = Mac 2, 2 = Mac 3)
 5. Un probe loop (0,5 s après switch, 3 s en veille) détecte les reconnexions souris et réexécute les switches différés si la souris n'était pas disponible
+6. À chaque reconnexion BT du clavier, SwiGi restaure automatiquement le niveau de rétroéclairage via la feature HID++ `0x8070` (BACKLIGHT2) — le firmware Logitech remet le backlight à zéro à chaque reconnexion, SwiGi joue le rôle que joue normalement Logi Options+
 
 Architecture pipeline unidirectionnel : clavier notifie → SwiGi dispatch → souris bascule. Pas de correction agressive, pas de boucle de feedback.
 
-Utilise HID++ 2.0. Un package Python modulaire, une seule dépendance (hidapi).
+Utilise HID++ 2.0 (features `0x1814` CHANGE_HOST, `0x8070` BACKLIGHT2). Un package Python modulaire, une seule dépendance (hidapi).
 
 ---
 
@@ -348,11 +350,12 @@ Démarrage/reconnexion rapide : les requêtes HID++ de découverte utilisent un 
 
 ### Appareils testés
 
-| Appareil                                | OS              | Connexion |
-| --------------------------------------- | --------------- | --------- |
-| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth |
-| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth |
-| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth |
+| Appareil                                | OS              | Connexion | BACKLIGHT2 |
+| --------------------------------------- | --------------- | --------- | ---------- |
+| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth | ✅         |
+| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth | ✅         |
+| MX Keys Mini + MX Master 4              | macOS 13+       | Bluetooth | ✅         |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth | ✅         |
 
 _Validé en production : 3 Macs simultanément, multi-clavier._
 
@@ -368,21 +371,22 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 
 ### Features
 
-| Feature                     | Description                                                |
-| --------------------------- | ---------------------------------------------------------- |
-| 🔀 **Easy-Switch sync**     | Press once on keyboard → mouse follows automatically       |
-| 🔵 **Native Bluetooth**     | No USB dongle, no Logi Options+, no network required       |
-| 🔄 **Auto-reconnect**       | Watchdog reconnects both devices in < 15s after BT drop    |
-| 🔗 **Verified sync**        | Confirms in logs that the mouse actually switched          |
-| ⚡ **Low latency**          | < 300ms response under normal conditions                   |
-| 🖱️ **Multi-mouse**          | Sends CHANGE_HOST to all connected mice simultaneously     |
-| 🍎 **macOS menu bar**       | Live keyboard/mouse status, switch counter                 |
-| ☑️ **Mouse follow toggle**  | Checkbox in menu bar to enable/disable mouse following     |
-| 🔔 **System notifications** | Alerts on device connect/disconnect (macOS)                |
-| 🔁 **Autostart**            | launchd (macOS), Startup folder (Windows), systemd (Linux) |
-| 📄 **Log rotation**         | `--log-file`: max 4 MB total, no unbounded growth          |
-| 🔒 **Non-intrusive**        | macOS non-exclusive mode — coexists with Logi Options+     |
-| 📦 **Zero friction**        | Single Python package, one dependency (hidapi)             |
+| Feature                       | Description                                                            |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| 🔀 **Easy-Switch sync**       | Press once on keyboard → mouse follows automatically                   |
+| 🔵 **Native Bluetooth**       | No USB dongle, no Logi Options+, no network required                   |
+| 🔄 **Auto-reconnect**         | Watchdog reconnects both devices in < 15s after BT drop                |
+| 🔗 **Verified sync**          | Confirms in logs that the mouse actually switched                      |
+| ⚡ **Low latency**            | < 300ms response under normal conditions                               |
+| 🖱️ **Multi-mouse**            | Sends CHANGE_HOST to all connected mice simultaneously                 |
+| 💡 **Backlight auto-restore** | Saves and restores backlight level on every BT reconnect (BACKLIGHT2)  |
+| 🍎 **macOS menu bar**         | Live keyboard/mouse status, backlight control (0–100%), switch counter |
+| ☑️ **Mouse follow toggle**    | Checkbox in menu bar to enable/disable mouse following                 |
+| 🔔 **System notifications**   | Alerts on device connect/disconnect (macOS)                            |
+| 🔁 **Autostart**              | launchd (macOS), Startup folder (Windows), systemd (Linux)             |
+| 📄 **Log rotation**           | `--log-file`: max 4 MB total, no unbounded growth                      |
+| 🔒 **Non-intrusive**          | macOS non-exclusive mode — coexists with Logi Options+                 |
+| 📦 **Zero friction**          | Single Python package, one dependency (hidapi)                         |
 
 ### Requirements
 
@@ -559,11 +563,12 @@ The main loop spends most of its time blocked in `hid_read_timeout` (a kernel sy
 
 ### Tested
 
-| Device                                  | OS              | Connection |
-| --------------------------------------- | --------------- | ---------- |
-| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth  |
-| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth  |
-| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth  |
+| Device                                  | OS              | Connection | BACKLIGHT2 |
+| --------------------------------------- | --------------- | ---------- | ---------- |
+| MX Keys S + MX Vertical                 | macOS (Sequoia) | Bluetooth  | ✅         |
+| MX Keys S + MX Vertical                 | Windows 11      | Bluetooth  | ✅         |
+| MX Keys Mini + MX Master 4              | macOS 13+       | Bluetooth  | ✅         |
+| 2× MX Keys S (PID=0xB35B) + MX Master 4 | macOS 13+       | Bluetooth  | ✅         |
 
 _Validated in production: 3 Macs simultaneously, multi-keyboard._
 
