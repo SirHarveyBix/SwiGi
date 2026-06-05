@@ -85,7 +85,7 @@ class TestDrainSwitch(unittest.TestCase):
         self.assertEqual(result, 2)
 
 
-@patch("swigi.path_push.get_current_host", return_value=0)
+@patch("swigi.path_push.get_host_info", return_value=(3, 0))
 class TestWatchKeyboardPush(unittest.TestCase):
     def test_notification_posts_switch_event(self, mock_get_host):
         """Notification CHANGE_HOST + ping timeout → _SwitchEvent posté."""
@@ -381,7 +381,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
 class TestStaleDetection(unittest.TestCase):
     """Détection stale : ping actif DANS la fenêtre post-reconnect, pas hors fenêtre."""
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_stale_in_window_dropped_by_ping(self, mock_get_host):
         """Mac receveur (fresh connect) : notification dans fenêtre + ping OK phase1+phase2 → droppée."""
         keyboard = _make_keyboard()
@@ -422,7 +422,7 @@ class TestStaleDetection(unittest.TestCase):
 
         self.assertTrue(event_queue.empty(), "notification stale doit être droppée (ping OK phase1+phase2)")
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_real_switch_in_window_accepted_two_phase(self, mock_get_host):
         """Mac source : switch dans fenêtre, phase1 ping répond (Gen S pre-disconnect), phase2 timeout → accepté."""
         keyboard = _make_keyboard()
@@ -465,7 +465,7 @@ class TestStaleDetection(unittest.TestCase):
         self.assertEqual(event.target_host, 2)
         self.assertEqual(event.source, "push")
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_real_switch_in_window_accepted_ping_timeout(self, mock_get_host):
         """Mac receveur : switch dans fenêtre + ping timeout (déco) → accepté."""
         keyboard = _make_keyboard()
@@ -504,7 +504,7 @@ class TestStaleDetection(unittest.TestCase):
         self.assertEqual(event.target_host, 2)
         self.assertEqual(event.source, "push")
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_source_mac_no_ping_outside_window(self, mock_get_host):
         """Mac source (clavier connecté depuis longtemps) : notification acceptée sans ping."""
         keyboard = _make_keyboard()
@@ -548,7 +548,7 @@ class TestStaleDetection(unittest.TestCase):
 class TestSwIdFilter(unittest.TestCase):
     """raw[3] sw_id filtre : notifications firmware (sw_id=0) vs réponses requêtes (sw_id!=0)."""
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     @patch("swigi.path_push._reconnect_keyboard")
     @patch("swigi.path_push._set_keyboard_status")
     def test_push_ignores_non_notification_packets(
@@ -589,7 +589,7 @@ class TestSwIdFilter(unittest.TestCase):
 
         self.assertTrue(event_queue.empty(), "SwitchEvent posté pour paquet non-notification")
 
-    @patch("swigi.path_push.get_current_host", return_value=0)
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     @patch("swigi.path_push._reconnect_keyboard")
     @patch("swigi.path_push._set_keyboard_status")
     def test_push_accepts_notification_packets(

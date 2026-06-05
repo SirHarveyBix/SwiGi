@@ -16,7 +16,7 @@ from swigi.constants import (
 )
 from swigi.discovery import DeviceInfo
 from swigi.gui import notify
-from swigi.protocol import get_current_host
+from swigi.protocol import get_host_info
 from swigi.state import _reconnect_keyboard, _set_keyboard_status, _SwitchEvent
 from swigi.transport import TransportError
 
@@ -31,6 +31,7 @@ _WATCHDOG_TIMEOUT = 10.0
 _STALE_PING_TIMEOUT = 100   # ms — BLE Logitech RTT ≈ 15-30 ms ; 100 ms = marge x3
 _RECONNECT_STALE_WINDOW = 2.0  # s — fenêtre post-reconnect : Mac receveur (firmware redelivre notif stale)
 _STALE_CONFIRM_WAIT = 0.2   # s — Gen S envoie la notif AVANT de déco BT ; attendre le déco pour confirmer
+_ARRIVAL_SWITCH_DELAY = 3.0  # s — seuil min d'absence pour distinguer switch réel d'un blip BT
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,6 +99,32 @@ def _emit_drain_switch(
     return last_switch_time, last_switch_target
 
 
+def _emit_arrival_switch(
+    reconnect_duration: float,
+    this_mac_host: int | None,
+    event_queue: queue.Queue,
+    hunt_trigger: threading.Event,
+    last_switch_time: float,
+    last_switch_target: int,
+    name: str,
+) -> tuple[float, int]:
+    """Émet switch vers ce Mac si le clavier était absent assez longtemps (switch réel, pas blip).
+
+    Appelé après reconnexion. Fonctionne pour :
+    - Mac source (MX Keys S) : clavier revient après switch→switch retour
+    - Mac destination : clavier arrive depuis un autre Mac (host index = ce Mac)
+    """
+    if reconnect_duration <= _ARRIVAL_SWITCH_DELAY or this_mac_host is None:
+        return last_switch_time, last_switch_target
+    target = this_mac_host
+    if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
+        return last_switch_time, last_switch_target
+    log.info("★ [%s] Easy-Switch → hôte %d (arrival)", name, target + 1)
+    event_queue.put(_SwitchEvent(target, name, "push"))
+    hunt_trigger.set()
+    return time.time(), target
+
+
 def _do_reconnect_push(
     keyboard: DeviceInfo,
     state: dict,
@@ -134,15 +161,18 @@ def watch_keyboard_push(
     last_switch_time = 0.0
     last_switch_target = -1
     this_mac_host = None
+    num_hosts = 3  # default — mis à jour via get_host_info
     # Initialisé à now : sur Mac receveur (fresh connect), le firmware redelivre la dernière
     # notification 0.5-3s après connexion BT. La fenêtre anti-stale est active dès le départ.
     reconnect_time = time.time()
 
     try:
-        this_mac_host = get_current_host(
+        info = get_host_info(
             keyboard.transport, DEVICE_NUMBER_DIRECT, keyboard.change_host_index,
             timeout=200,
         )
+        if info is not None:
+            num_hosts, this_mac_host = info
         suffix = f" (hôte {this_mac_host + 1})" if this_mac_host is not None else ""
         log.info("⌨️ [%s] Surveillance PUSH démarrée%s", name, suffix)
     except (TransportError, OSError):
@@ -157,10 +187,12 @@ def watch_keyboard_push(
                 break
             name = keyboard.name
             try:
-                this_mac_host = get_current_host(
+                info = get_host_info(
                     keyboard.transport, DEVICE_NUMBER_DIRECT,
                     keyboard.change_host_index, timeout=200,
                 )
+                if info is not None:
+                    num_hosts, this_mac_host = info
             except (TransportError, OSError):
                 pass
             last_response = time.time()
@@ -178,17 +210,25 @@ def watch_keyboard_push(
                     last_switch_time, last_switch_target, name, "drain",
                 )
                 log.info("🔌 ⌨️ [%s] Déconnecté", name)
+                _disconnect_time = time.time()
                 keyboard = _do_reconnect_push(keyboard, state, stop_event)
                 if keyboard is None:
                     break
                 name = keyboard.name
+                _reconnect_duration = time.time() - _disconnect_time
                 try:
-                    this_mac_host = get_current_host(
+                    info = get_host_info(
                         keyboard.transport, DEVICE_NUMBER_DIRECT,
                         keyboard.change_host_index, timeout=200,
                     )
+                    if info is not None:
+                        num_hosts, this_mac_host = info
                 except (TransportError, OSError):
                     pass
+                last_switch_time, last_switch_target = _emit_arrival_switch(
+                    _reconnect_duration, this_mac_host,
+                    event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
+                )
                 if time.time() - last_switch_time > 5.0:
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
@@ -204,17 +244,25 @@ def watch_keyboard_push(
                 last_switch_time, last_switch_target, name, "drain-read",
             )
             log.info("🔌 ⌨️ [%s] Déconnecté (lecture)", name)
+            _disconnect_time = time.time()
             keyboard = _do_reconnect_push(keyboard, state, stop_event)
             if keyboard is None:
                 break
             name = keyboard.name
+            _reconnect_duration = time.time() - _disconnect_time
             try:
-                this_mac_host = get_current_host(
+                info = get_host_info(
                     keyboard.transport, DEVICE_NUMBER_DIRECT,
                     keyboard.change_host_index, timeout=200,
                 )
+                if info is not None:
+                    num_hosts, this_mac_host = info
             except (TransportError, OSError):
                 pass
+            last_switch_time, last_switch_target = _emit_arrival_switch(
+                _reconnect_duration, this_mac_host,
+                event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
+            )
             if time.time() - last_switch_time > 5.0:
                 notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
@@ -223,6 +271,7 @@ def watch_keyboard_push(
 
         if not raw or len(raw) < 4:
             continue
+
         if raw[0] not in MSG_LENGTHS or len(raw) < MSG_LENGTHS[raw[0]]:
             continue
 

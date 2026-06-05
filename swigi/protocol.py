@@ -179,6 +179,24 @@ def send_change_host(
     transport.write(message)
 
 
+def get_host_info(
+    transport: HIDTransport,
+    device_number: int,
+    feature_index: int,
+    *,
+    timeout: int = 500,
+) -> tuple[int, int] | None:
+    """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne (num_hosts, current_host) ou None."""
+    reply = hidpp_request(
+        transport, device_number, (feature_index << 8) | 0x00, timeout=timeout
+    )
+    if reply and len(reply) >= 2:
+        num_hosts, current_host = reply[0], reply[1]
+        if num_hosts > 0 and 0 <= current_host < num_hosts:
+            return (num_hosts, current_host)
+    return None
+
+
 def get_current_host(
     transport: HIDTransport,
     device_number: int,
@@ -187,14 +205,8 @@ def get_current_host(
     timeout: int = 500,
 ) -> int | None:
     """Interroge CHANGE_HOST getHostInfo (fn 0). Retourne l'hôte actuel (base 0) ou None."""
-    reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x00, timeout=timeout
-    )
-    if reply and len(reply) >= 2:
-        num_hosts, current_host = reply[0], reply[1]
-        if num_hosts > 0 and 0 <= current_host < num_hosts:
-            return current_host
-    return None
+    info = get_host_info(transport, device_number, feature_index, timeout=timeout)
+    return info[1] if info is not None else None
 
 
 def get_protocol_version(

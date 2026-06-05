@@ -288,7 +288,7 @@ class TestMiceProbeVerification(unittest.TestCase):
 # ── Tests run_daemon ──────────────────────────────────────────────────────────
 
 
-@patch("swigi.path_push.get_current_host", return_value=0)
+@patch("swigi.path_push.get_host_info", return_value=(3, 0))
 class TestRunDaemon(unittest.TestCase):
     @_fast_timing()
     @patch("swigi.daemon.find_all_devices")
