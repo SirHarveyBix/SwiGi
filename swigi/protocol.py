@@ -216,12 +216,12 @@ def get_backlight_config(
     *,
     timeout: int = 500,
 ) -> tuple[int, int, int] | None:
-    """Lit config BACKLIGHT2 (fn 0x00). Retourne (level, timeout_s, mode) ou None."""
+    """Lit état BACKLIGHT2 via fn 0x10 (getBacklight2State). Retourne (hwLevel, cfg, ...) ou None."""
     reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x00, timeout=timeout
+        transport, device_number, (feature_index << 8) | 0x10, timeout=timeout
     )
-    if reply and len(reply) >= 3:
-        return (reply[0], reply[1], reply[2])
+    if reply and len(reply) >= 2:
+        return (reply[0], reply[1], reply[2] if len(reply) > 2 else 0)
     return None
 
 
@@ -233,10 +233,10 @@ def set_backlight_config(
     *,
     timeout: int = 500,
 ) -> bool:
-    """Définit level BACKLIGHT2 (fn 0x10). level en 0-100. Retourne True si OK."""
+    """Définit BACKLIGHT2 via fn 0x20 (setBacklight2State). level en 0-100. Retourne True si OK."""
     level = max(0, min(100, level))
     reply = hidpp_request(
-        transport, device_number, (feature_index << 8) | 0x10, level, timeout=timeout
+        transport, device_number, (feature_index << 8) | 0x20, level, 0, timeout=timeout
     )
     return reply is not None
 

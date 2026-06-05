@@ -415,8 +415,8 @@ class TestBacklightConfig(unittest.TestCase):
         from swigi.protocol import get_backlight_config
         transport = MockTransport()
         feature_index = 0x07
-        # fn 0x00, SW_ID → request_id = 0x070A
-        request_id = (feature_index << 8) | 0x00 | SW_ID
+        # fn 0x10 (getBacklight2State), SW_ID → request_id = 0x071A
+        request_id = (feature_index << 8) | 0x10 | SW_ID
         response = (
             struct.pack("!BB", REPORT_LONG, 0xFF)
             + struct.pack("!H", request_id)
@@ -439,12 +439,13 @@ class TestBacklightConfig(unittest.TestCase):
         from swigi.protocol import set_backlight_config
         transport = MockTransport()
         feature_index = 0x07
-        request_id = (feature_index << 8) | 0x10 | SW_ID
+        # fn 0x20 (setBacklight2State), SW_ID → request_id = 0x072A
+        request_id = (feature_index << 8) | 0x20 | SW_ID
         response = (
             struct.pack("!BB", REPORT_LONG, 0xFF)
             + struct.pack("!H", request_id)
-            + bytes([50])
-            + b"\x00" * 15
+            + bytes([50, 0])
+            + b"\x00" * 14
         )
         transport.responses_to_read.append(response)
         result = set_backlight_config(transport, 0xFF, feature_index, 50)
