@@ -131,10 +131,10 @@ def _emit_drain_switch(
     last_switch_target: int,
     name: str,
     log_suffix: str,
-) -> tuple[float, int]:
+) -> tuple[float, int, bool]:
     """Vide le buffer HID, émet un _SwitchEvent si un switch y est buffered.
 
-    Retourne (last_switch_time, last_switch_target) mis à jour.
+    Retourne (last_switch_time, last_switch_target, emitted) mis à jour.
     """
     target = _drain_switch(keyboard)
     if target is not None and not (
@@ -145,7 +145,8 @@ def _emit_drain_switch(
         log.info("★ [%s] Easy-Switch → hôte %d (%s)", name, target + 1, log_suffix)
         event_queue.put(_SwitchEvent(target, name, "push"))
         hunt_trigger.set()
-    return last_switch_time, last_switch_target
+        return last_switch_time, last_switch_target, True
+    return last_switch_time, last_switch_target, False
 
 
 def _emit_arrival_switch(
@@ -169,6 +170,28 @@ def _emit_arrival_switch(
     if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
         return last_switch_time, last_switch_target
     log.info("★ [%s] Easy-Switch → hôte %d (arrival)", name, target + 1)
+    event_queue.put(_SwitchEvent(target, name, "push"))
+    hunt_trigger.set()
+    return time.time(), target
+
+
+def _maybe_emit_inferred_switch(
+    notification_received: bool,
+    this_mac_host: int | None,
+    num_hosts: int,
+    last_switch_time: float,
+    last_switch_target: int,
+    event_queue: queue.Queue,
+    hunt_trigger: threading.Event,
+    name: str,
+) -> tuple[float, int]:
+    """MX Keys S : aucune notification PUSH reçue → inférer (current+1)%num_hosts."""
+    if notification_received or this_mac_host is None:
+        return last_switch_time, last_switch_target
+    target = (this_mac_host + 1) % num_hosts
+    if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
+        return last_switch_time, last_switch_target
+    log.info("★ [%s] Easy-Switch → hôte %d (inféré, pas de notification PUSH)", name, target + 1)
     event_queue.put(_SwitchEvent(target, name, "push"))
     hunt_trigger.set()
     return time.time(), target
@@ -214,6 +237,9 @@ def watch_keyboard_push(
     # Initialisé à now : sur Mac receveur (fresh connect), le firmware redelivre la dernière
     # notification 0.5-3s après connexion BT. La fenêtre anti-stale est active dès le départ.
     reconnect_time = time.time()
+    # True si notification PUSH reçue depuis la dernière connexion (MX Keys Mini).
+    # False pour MX Keys S (ne envoie pas de notification) → inférence à la déconnexion.
+    notification_received = False
 
     try:
         info = get_host_info(
@@ -250,6 +276,7 @@ def watch_keyboard_push(
             except (TransportError, OSError):
                 pass
             _restore_backlight(keyboard)
+            notification_received = False
             last_response = time.time()
             reconnect_time = time.time()
             continue
@@ -260,10 +287,15 @@ def watch_keyboard_push(
                 keyboard.transport.write(PING_MESSAGE)
                 last_ping = time.time()
             except (TransportError, OSError):
-                last_switch_time, last_switch_target = _emit_drain_switch(
+                last_switch_time, last_switch_target, _emitted = _emit_drain_switch(
                     keyboard, event_queue, hunt_trigger, this_mac_host,
                     last_switch_time, last_switch_target, name, "drain",
                 )
+                if not _emitted:
+                    last_switch_time, last_switch_target = _maybe_emit_inferred_switch(
+                        notification_received, this_mac_host, num_hosts,
+                        last_switch_time, last_switch_target, event_queue, hunt_trigger, name,
+                    )
                 log.info("🔌 ⌨️ [%s] Déconnecté", name)
                 _disconnect_time = time.time()
                 keyboard = _do_reconnect_push(keyboard, state, stop_event)
@@ -280,6 +312,7 @@ def watch_keyboard_push(
                         num_hosts, this_mac_host = info
                 except (TransportError, OSError):
                     pass
+                notification_received = False
                 last_switch_time, last_switch_target = _emit_arrival_switch(
                     _reconnect_duration, this_mac_host,
                     event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
@@ -295,10 +328,15 @@ def watch_keyboard_push(
         try:
             raw = keyboard.transport.read(timeout=int(_READ_WINDOW * 1000))
         except (TransportError, OSError):
-            last_switch_time, last_switch_target = _emit_drain_switch(
+            last_switch_time, last_switch_target, _emitted = _emit_drain_switch(
                 keyboard, event_queue, hunt_trigger, this_mac_host,
                 last_switch_time, last_switch_target, name, "drain-read",
             )
+            if not _emitted:
+                last_switch_time, last_switch_target = _maybe_emit_inferred_switch(
+                    notification_received, this_mac_host, num_hosts,
+                    last_switch_time, last_switch_target, event_queue, hunt_trigger, name,
+                )
             log.info("🔌 ⌨️ [%s] Déconnecté (lecture)", name)
             _disconnect_time = time.time()
             keyboard = _do_reconnect_push(keyboard, state, stop_event)
@@ -315,6 +353,7 @@ def watch_keyboard_push(
                     num_hosts, this_mac_host = info
             except (TransportError, OSError):
                 pass
+            notification_received = False
             last_switch_time, last_switch_target = _emit_arrival_switch(
                 _reconnect_duration, this_mac_host,
                 event_queue, hunt_trigger, last_switch_time, last_switch_target, name,
@@ -370,6 +409,7 @@ def watch_keyboard_push(
                     continue
                 log.info("⚡ [%s] Switch réel confirmé — déco BLE en %.0fms",
                          name, (time.time() - _poll_start) * 1000)
+            notification_received = True
             # Debounce : même cible < 1s
             if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
                 continue

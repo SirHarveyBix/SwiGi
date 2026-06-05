@@ -632,5 +632,163 @@ class TestSwIdFilter(unittest.TestCase):
         self.assertFalse(event_queue.empty(), "Aucun SwitchEvent pour paquet notification")
 
 
+@patch("swigi.path_push.get_host_info", return_value=(3, 0))
+@patch("swigi.path_push._reconnect_keyboard")
+class TestMXKeysSInferredSwitch(unittest.TestCase):
+    """MX Keys S ne envoie pas de notification PUSH → switch inféré à la déconnexion."""
+
+    def test_inferred_switch_on_write_fail(self, mock_reconnect, mock_get_host):
+        """Write fail, aucune notification → switch inféré hôte (0+1)%3=1."""
+        keyboard = _make_keyboard(name="MX Keys S", product_id=0xB378)
+        mock_reconnect.return_value = None
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        keyboard.transport.write.side_effect = TransportError("dead")
+        keyboard.transport.read.return_value = None
+
+        with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.01
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=3.0)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+        inferred = [e for e in events if e.source == "push" and e.target_host == 1]
+        self.assertGreaterEqual(len(inferred), 1, "switch inféré attendu (hôte 1 = (0+1)%3)")
+
+    def test_inferred_switch_on_read_fail(self, mock_reconnect, mock_get_host):
+        """Read fail, aucune notification → switch inféré hôte (0+1)%3=1."""
+        keyboard = _make_keyboard(name="MX Keys S", product_id=0xB378)
+        mock_reconnect.return_value = None
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        keyboard.transport.write.return_value = None
+        keyboard.transport.read.side_effect = TransportError("dead")
+
+        with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.01
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=3.0)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+        inferred = [e for e in events if e.source == "push" and e.target_host == 1]
+        self.assertGreaterEqual(len(inferred), 1, "switch inféré attendu sur read fail")
+
+    def test_no_inferred_if_drain_emitted(self, mock_reconnect, mock_get_host):
+        """Write fail + drain trouve une notification → pas de double switch inféré."""
+        keyboard = _make_keyboard(name="MX Keys S", product_id=0xB378)
+        mock_reconnect.return_value = None
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        keyboard.transport.write.side_effect = TransportError("dead")
+        drain_packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
+        keyboard.transport.read.side_effect = [drain_packet] + [None] * 10
+
+        with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.01
+        ), patch("swigi.state._STABILITY_WAIT", 0.0):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=3.0)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+        push_events = [e for e in events if e.source == "push"]
+        self.assertEqual(len(push_events), 1, "un seul event : drain (pas d'inféré supplémentaire)")
+        self.assertEqual(push_events[0].target_host, 2)
+
+    def test_no_inferred_if_notification_received(self, mock_reconnect, mock_get_host):
+        """Notification PUSH reçue avant déconnexion → pas de switch inféré au disconnect."""
+        keyboard = _make_keyboard(name="MX Keys Mini", product_id=0xB369)
+        new_keyboard = _make_keyboard(name="MX Keys Mini (new)")
+        new_keyboard.transport.read.return_value = None
+        mock_reconnect.return_value = new_keyboard
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {keyboard.product_id: {"name": keyboard.name, "ok": True}},
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        notif_packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] == 1:
+                return notif_packet  # notification PUSH reçue
+            if calls[0] == 2:
+                return None  # ping timeout → switch réel (hors fenêtre stale)
+            stop_event.set()
+            return None
+
+        keyboard.transport.read.side_effect = mock_read
+        keyboard.transport.write.return_value = None
+
+        with patch("swigi.path_push._PING_INTERVAL", 0.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.05
+        ), patch("swigi.path_push._RECONNECT_STALE_WINDOW", 0.0), patch(
+            "swigi.state._STABILITY_WAIT", 0.0
+        ):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keyboard, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=3.0)
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+        push_events = [e for e in events if e.source == "push"]
+        # L'event de la notification (target=2) et possiblement arrival, mais PAS inféré target=1
+        inferred_wrong = [e for e in push_events if e.target_host == 1]
+        self.assertEqual(len(inferred_wrong), 0, "pas de switch inféré si notification déjà reçue")
+
+
 if __name__ == "__main__":
     unittest.main()
