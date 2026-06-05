@@ -164,6 +164,8 @@ def find_all_devices(device_type_wanted: int) -> list[DeviceInfo]:
                 backlight_index = resolve_feature(
                     transport, DEVICE_NUMBER_DIRECT, FEATURE_BACKLIGHT2
                 )
+                if backlight_index is None:
+                    log.info("💡 [%s] PID=0x%04X — feature BACKLIGHT2 (0x8070) absente", name, product_id)
             seen_product_ids.add(product_id)
             results.append(
                 DeviceInfo(transport, name, product_id, change_host_index, push_capable, backlight_index)

@@ -34,7 +34,7 @@ _RECONNECT_STALE_WINDOW = 2.0  # s — fenêtre post-reconnect : Mac receveur (f
 # MX Keys S prend > 200ms pour finir la déco BLE après notification CHANGE_HOST.
 # Polling toutes les 50ms jusqu'à déco confirmée (max 2s = stale confirmé).
 _STALE_POLL_INTERVAL = 0.05  # s — intervalle entre pings de confirmation
-_STALE_MAX_PINGS = 40        # 40 × 50ms = 2s max avant de confirmer stale
+_STALE_MAX_PINGS = 40        # 40 x 50ms = 2s max avant de confirmer stale
 _ARRIVAL_SWITCH_DELAY = 3.0  # s — seuil min d'absence pour distinguer switch réel d'un blip BT
 
 
@@ -131,10 +131,10 @@ def _emit_drain_switch(
     last_switch_target: int,
     name: str,
     log_suffix: str,
-) -> tuple[float, int]:
+) -> tuple[float, int, bool]:
     """Vide le buffer HID, émet un _SwitchEvent si un switch y est buffered.
 
-    Retourne (last_switch_time, last_switch_target) mis à jour.
+    Retourne (last_switch_time, last_switch_target, emitted).
     """
     target = _drain_switch(keyboard)
     if target is not None and not (
@@ -145,7 +145,8 @@ def _emit_drain_switch(
         log.info("★ [%s] Easy-Switch → hôte %d (%s)", name, target + 1, log_suffix)
         event_queue.put(_SwitchEvent(target, name, "push"))
         hunt_trigger.set()
-    return last_switch_time, last_switch_target
+        return last_switch_time, last_switch_target, True
+    return last_switch_time, last_switch_target, False
 
 
 def _emit_arrival_switch(
@@ -211,6 +212,7 @@ def watch_keyboard_push(
     last_switch_target = -1
     this_mac_host = None
     num_hosts = 3  # default — mis à jour via get_host_info
+    notification_received = False  # True si notification PUSH reçue dans la session courante
     # Initialisé à now : sur Mac receveur (fresh connect), le firmware redelivre la dernière
     # notification 0.5-3s après connexion BT. La fenêtre anti-stale est active dès le départ.
     reconnect_time = time.time()
@@ -260,10 +262,19 @@ def watch_keyboard_push(
                 keyboard.transport.write(PING_MESSAGE)
                 last_ping = time.time()
             except (TransportError, OSError):
-                last_switch_time, last_switch_target = _emit_drain_switch(
+                last_switch_time, last_switch_target, _drain_emitted = _emit_drain_switch(
                     keyboard, event_queue, hunt_trigger, this_mac_host,
                     last_switch_time, last_switch_target, name, "drain",
                 )
+                # MX Keys S : pas de notification PUSH ni drain → fallback vers hôte suivant
+                if not _drain_emitted and not notification_received and this_mac_host is not None:
+                    _fb = (this_mac_host + 1) % num_hosts
+                    if _fb != this_mac_host and not (_fb == last_switch_target and time.time() - last_switch_time < _DEBOUNCE):
+                        last_switch_time = time.time()
+                        last_switch_target = _fb
+                        log.info("★ [%s] Easy-Switch → hôte %d (fallback déco)", name, _fb + 1)
+                        event_queue.put(_SwitchEvent(_fb, name, "push"))
+                        hunt_trigger.set()
                 log.info("🔌 ⌨️ [%s] Déconnecté", name)
                 _disconnect_time = time.time()
                 keyboard = _do_reconnect_push(keyboard, state, stop_event)
@@ -289,16 +300,26 @@ def watch_keyboard_push(
                     notify(f"{name} reconnecté", "Clavier")
                 last_response = time.time()
                 reconnect_time = time.time()
+                notification_received = False
                 continue
 
         # Lecture bloquante — une seule lecture par cycle, faible latence de détection
         try:
             raw = keyboard.transport.read(timeout=int(_READ_WINDOW * 1000))
         except (TransportError, OSError):
-            last_switch_time, last_switch_target = _emit_drain_switch(
+            last_switch_time, last_switch_target, _drain_emitted = _emit_drain_switch(
                 keyboard, event_queue, hunt_trigger, this_mac_host,
                 last_switch_time, last_switch_target, name, "drain-read",
             )
+            # MX Keys S : pas de notification PUSH ni drain → fallback vers hôte suivant
+            if not _drain_emitted and not notification_received and this_mac_host is not None:
+                _fb = (this_mac_host + 1) % num_hosts
+                if _fb != this_mac_host and not (_fb == last_switch_target and time.time() - last_switch_time < _DEBOUNCE):
+                    last_switch_time = time.time()
+                    last_switch_target = _fb
+                    log.info("★ [%s] Easy-Switch → hôte %d (fallback déco)", name, _fb + 1)
+                    event_queue.put(_SwitchEvent(_fb, name, "push"))
+                    hunt_trigger.set()
             log.info("🔌 ⌨️ [%s] Déconnecté (lecture)", name)
             _disconnect_time = time.time()
             keyboard = _do_reconnect_push(keyboard, state, stop_event)
@@ -324,6 +345,7 @@ def watch_keyboard_push(
                 notify(f"{name} reconnecté", "Clavier")
             last_response = time.time()
             reconnect_time = time.time()
+            notification_received = False
             continue
 
         if not raw or len(raw) < 4:
@@ -340,6 +362,7 @@ def watch_keyboard_push(
             and len(raw) > 5
             and (raw[3] & 0x0F) == 0x00
         ):
+            notification_received = True  # MX Keys Mini envoie cette notification
             num_hosts = raw[4] if raw[4] > 0 else 3
             target = raw[5]
             if not (0 <= target < num_hosts):
