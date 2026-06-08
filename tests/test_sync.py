@@ -5,7 +5,7 @@ import socket
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class TestBroadcastSwitch(unittest.TestCase):
@@ -43,21 +43,31 @@ class TestSyncListener(unittest.TestCase):
         return json.dumps({"target": target, "from": "other-machine-id"}).encode()
 
     def test_calls_callback_on_foreign_message(self):
-        """Listener appelle callback avec le target_host reçu."""
+        """Listener appelle callback avec le target_host reçu (socket mocké)."""
         received = []
         stop = threading.Event()
 
-        from swigi.sync import _PORT, start_sync_listener
+        from swigi.sync import start_sync_listener
 
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-            sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        foreign_msg = self._make_foreign_msg(2)
+        delivered = [False]
+
+        def fake_recvfrom(_bufsize):
+            if not delivered[0]:
+                delivered[0] = True
+                return foreign_msg, ("192.168.1.100", 37000)
+            stop.set()
+            raise TimeoutError
+
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = lambda s: s
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.recvfrom.side_effect = fake_recvfrom
+
+        with patch("swigi.sync.socket.socket", return_value=mock_sock):
             t = start_sync_listener(received.append, stop)
-            time.sleep(0.05)
-            sender.sendto(self._make_foreign_msg(2), ("127.0.0.1", _PORT))
-            time.sleep(0.1)
+            t.join(timeout=2.0)
 
-        stop.set()
-        t.join(timeout=2.0)
         self.assertIn(2, received)
 
     def test_ignores_own_broadcast(self):

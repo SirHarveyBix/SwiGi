@@ -30,12 +30,12 @@ _READ_WINDOW = 0.5
 _DEBOUNCE = 1.0
 _WATCHDOG_TIMEOUT = 10.0
 _STALE_PING_TIMEOUT = 100   # ms — BLE Logitech RTT ≈ 15-30 ms ; 100 ms = marge x3
-_RECONNECT_STALE_WINDOW = 2.0  # s — fenêtre post-reconnect : Mac receveur (firmware redelivre notif stale)
+_RECONNECT_STALE_WINDOW = 5.0  # s — firmware redelivre notif stale jusqu'à ~4s post-reconnect
 # MX Keys S prend > 200ms pour finir la déco BLE après notification CHANGE_HOST.
 # Polling toutes les 50ms jusqu'à déco confirmée (max 2s = stale confirmé).
 _STALE_POLL_INTERVAL = 0.05  # s — intervalle entre pings de confirmation
 _STALE_MAX_PINGS = 40        # 40 x 50ms = 2s max avant de confirmer stale
-_ARRIVAL_SWITCH_DELAY = 3.0  # s — seuil min d'absence pour distinguer switch réel d'un blip BT
+_ARRIVAL_SWITCH_DELAY = 1.0  # s — blips BT < 0.5s ; switch réel BT >= 1s
 
 
 # ── Backlight helpers ─────────────────────────────────────────────────────────

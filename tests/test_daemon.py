@@ -68,6 +68,8 @@ def _fast_timing():
         patch("swigi.path_push._PING_INTERVAL", 0.0),
         patch("swigi.path_push._READ_WINDOW", 0.05),
         patch("swigi.path_push._DEBOUNCE", 0.1),
+        patch("swigi.daemon.start_sync_listener"),  # pas de socket UDP réel dans les tests
+        patch("swigi.daemon.broadcast_switch"),     # pas de broadcast UDP réel dans les tests
     ]
     with contextlib.ExitStack() as stack:
         for timing_patch in patches:

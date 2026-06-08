@@ -32,9 +32,12 @@ def start_sync_listener(
     def _listen() -> None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if hasattr(socket, "SO_REUSEPORT"):
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 s.bind(("", _PORT))
                 s.settimeout(1.0)
+                log.info("🔗 Sync inter-Mac actif (UDP :%d)", _PORT)
                 while not stop_event.is_set():
                     try:
                         data, _ = s.recvfrom(256)
@@ -49,7 +52,7 @@ def start_sync_listener(
                     except (json.JSONDecodeError, OSError) as e:
                         log.debug("sync listener: %s", e)
         except OSError as e:
-            log.warning("sync listener bind échoué — sync inter-Mac désactivé: %s", e)
+            log.warning("sync listener bind échoué (port %d) — sync désactivé: %s", _PORT, e)
 
     t = threading.Thread(target=_listen, name="sync-listener", daemon=True)
     t.start()
