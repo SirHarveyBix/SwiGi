@@ -4,6 +4,7 @@ import json
 import logging
 import socket
 import threading
+import time
 import uuid
 from collections.abc import Callable
 
@@ -30,31 +31,40 @@ def start_sync_listener(
     """Écoute les broadcasts LAN des autres Macs. Appelle callback(target_host) à réception."""
 
     def _listen() -> None:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                if hasattr(socket, "SO_REUSEPORT"):
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                s.bind(("", _PORT))
-                s.settimeout(1.0)
-                log.info("🔗 Sync inter-Mac actif (UDP :%d)", _PORT)
-                while not stop_event.is_set():
-                    try:
-                        data, _ = s.recvfrom(256)
-                        msg = json.loads(data)
-                        if not isinstance(msg, dict):
-                            continue
-                        if msg.get("from") == _MACHINE_ID:
-                            continue  # ignore son propre broadcast
-                        target = msg.get("target")
-                        if isinstance(target, int) and 0 <= target <= 9:
-                            callback(target)
-                    except TimeoutError:
-                        pass
-                    except Exception as e:
-                        log.debug("sync listener: %s", e)
-        except OSError as e:
-            log.warning("sync listener bind échoué (port %d) — sync désactivé: %s", _PORT, e)
+        # Pas de SO_REUSEPORT : un seul listener par Mac.
+        # SO_REUSEPORT distribuerait les paquets entre plusieurs sockets (hash déterministe)
+        # → si une ancienne instance tient le port, tous les paquets lui iraient, jamais à nous.
+        for attempt in range(3):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.bind(("", _PORT))
+                    s.settimeout(1.0)
+                    log.info("🔗 Sync inter-Mac actif (UDP :%d)", _PORT)
+                    while not stop_event.is_set():
+                        try:
+                            data, _ = s.recvfrom(256)
+                            msg = json.loads(data)
+                            if not isinstance(msg, dict):
+                                continue
+                            if msg.get("from") == _MACHINE_ID:
+                                continue  # ignore son propre broadcast
+                            target = msg.get("target")
+                            if isinstance(target, int) and 0 <= target <= 9:
+                                callback(target)
+                        except TimeoutError:
+                            pass
+                        except Exception as e:
+                            log.debug("sync listener: %s", e)
+                    return  # stop_event set, sortie propre
+            except OSError:
+                if attempt < 2 and not stop_event.is_set():
+                    time.sleep(0.5)  # launchd restart : port brièvement occupé
+                    continue
+                log.warning(
+                    "sync listener bind échoué (port %d) — sync inter-Mac désactivé "
+                    "(vérifier qu'une seule instance SwiGi tourne)",
+                    _PORT,
+                )
 
     t = threading.Thread(target=_listen, name="sync-listener", daemon=True)
     t.start()
