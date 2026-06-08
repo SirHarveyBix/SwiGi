@@ -22,7 +22,7 @@ SwiGi synchronise le bouton Easy-Switch entre le clavier et la souris Logitech v
 | Fonctionnalité                   | Description                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------- |
 | 🔀 **Sync Easy-Switch**          | Appuie une fois sur le clavier → la souris suit automatiquement                 |
-| 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, pas de réseau                          |
+| 🔵 **Bluetooth natif**           | Pas de dongle USB, pas de Logi Options+, aucun serveur cloud                    |
 | 🔄 **Reconnexion automatique**   | Watchdog : reconnecte clavier et souris en < 15s si déconnexion BT              |
 | 🔗 **Sync vérifiée**             | Vérifie et confirme dans les logs que la souris a bien basculé                  |
 | ⚡ **Faible latence**            | Détection notification < 5ms (lecture bloquante kernel), switch < 100ms typique |
@@ -229,15 +229,14 @@ systemctl --user enable --now swigi
 
 > **Important pour 2+ Macs**
 
-SwiGi doit tourner sur les **3 Macs SIMULTANÉMENT**. Chaque instance surveille les périphériques localement connectés via Bluetooth HID++ 2.0 — il n'y a aucune communication réseau entre les instances.
+SwiGi doit tourner sur les **3 Macs SIMULTANÉMENT**. Chaque instance surveille ses périphériques Bluetooth locaux. Les instances se coordonnent via un broadcast UDP LAN (port 37000) — aucun serveur, aucune configuration réseau requise.
 
-**Pourquoi c'est nécessaire :** SwiGi ne peut envoyer CHANGE_HOST qu'aux périphériques **actuellement connectés au Mac local**. Quand la souris est sur Mac2, Mac1 ne peut pas la commander via Bluetooth HID.
+**Pourquoi c'est nécessaire :** SwiGi ne peut envoyer CHANGE_HOST qu'aux périphériques **actuellement connectés au Mac local**. Quand la souris est sur Mac1, c'est Mac1 qui doit l'envoyer — pas Mac2.
 
-**Exemple avec 3 Macs (Mac1=hôte0, Mac2=hôte1, Mac3=hôte2) :**
+**Le switch automatique fonctionne dans les deux sens :**
 
-- Mac1 → Mac2 : SwiGi sur **Mac1** envoie CHANGE_HOST(1) à la souris ✓
-- Mac2 → Mac1 : SwiGi sur **Mac2** envoie CHANGE_HOST(0) à la souris ✓
-- Mac1 → Mac3 : SwiGi sur **Mac1** envoie CHANGE_HOST(2) ✓
+- MX Keys Mini : le Mac source capte la notification PUSH et envoie CHANGE_HOST à la souris directement.
+- MX Keys S : le Mac destination détecte l'arrivée du clavier, diffuse via UDP, le Mac qui a la souris l'envoie sur la bonne cible.
 
 **Support multi-clavier :** 2 claviers MX Keys connectés au même Mac sont supportés. SwiGi surveille chaque clavier dans un thread dédié.
 
@@ -295,7 +294,8 @@ scp ~/.swigi_profiles/mon-profil.json user@mac3:~/.swigi_profiles/
 | Rien ne se passe sur macOS                     | Ajoute `python3` (launchd) ou Terminal (manuel) dans Surveillance des entrées, puis relance le service                                                                                            |
 | L'icône n'apparaît pas (installation)          | Re-exécute `bash install_mac.sh` depuis le dossier SwiGi — le vieux plist peut pointer vers le mauvais Python. Vérifie ensuite : `python3 -c "import rumps"`                                      |
 | L'icône n'apparaît pas (général)               | 1) `python3` dans Surveillance des entrées. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** (voir ci-dessus). Vérifie les logs via launchd : `tail -50 ~/Library/Logs/swigi.log` (ou le terminal si lancement manuel)                     |
+| Souris ne revient pas après switch             | SwiGi doit tourner sur **les 3 Macs simultanément** et être sur le même sous-réseau LAN (sync UDP broadcast). Logs : `tail -50 ~/Library/Logs/swigi.log`                                          |
+| MX Keys S : souris ne suit pas (multi-Mac)     | macOS a peut-être bloqué le port UDP 37000. Au premier lancement : accepte le popup "autoriser les connexions réseau". Sinon : Réglages Système → Sécurité → Pare-feu → python3 → Autoriser       |
 | 2 Macs OK, 3e Mac instable au retour           | Vérifie les reconnexions clavier répétées dans les logs : c'est un signe de reconnexion BT lente (instabilité radio/Bluetooth locale).                                                            |
 | `hidapi introuvable` sur macOS                 | Lance `brew install hidapi`                                                                                                                                                                       |
 | `hidapi introuvable` sur Windows               | Vérifie que `hidapi.dll` est dans le même dossier que `swigi.py`                                                                                                                                  |
@@ -317,16 +317,17 @@ python3 swigi.py --log-file swigi.log     # écriture logs dans un fichier (rota
 
 ### Comment ça marche
 
-1. SwiGi surveille le clavier via Bluetooth HID — une lecture bloquante `hid_read_timeout` (500 ms) par cycle ; la notification est détectée en quelques millisecondes dès son arrivée kernel, sans busy-loop
-2. Quand tu appuies sur Easy-Switch, le clavier envoie une notification `CHANGE_HOST` (protocole HID++ 2.0, feature `0x1814`)
-3. SwiGi la capture et envoie **immédiatement** la même commande à toutes les souris connectées (fire-and-forget, conforme spec)
-4. Les périphériques basculent sur le même hôte (0 = Mac 1, 1 = Mac 2, 2 = Mac 3)
-5. Un probe loop (0,5 s après switch, 3 s en veille) détecte les reconnexions souris et réexécute les switches différés si la souris n'était pas disponible
-6. À chaque reconnexion BT du clavier, SwiGi restaure automatiquement le niveau de rétroéclairage via la feature HID++ `0x8070` (BACKLIGHT2) — le firmware Logitech remet le backlight à zéro à chaque reconnexion, SwiGi joue le rôle que joue normalement Logi Options+
+1. SwiGi surveille le clavier via Bluetooth HID — lecture bloquante `hid_read_timeout` (500 ms) ; notification détectée en quelques ms dès son arrivée kernel, sans busy-loop
+2. Quand tu appuies sur Easy-Switch :
+   - **MX Keys Mini** : envoie une notification `CHANGE_HOST` (HID++ 2.0, feature `0x1814`) avant de déconnecter → Mac source capte et dispatch
+   - **MX Keys S** : déconnecte sans notifier → Mac destination détecte l'arrivée du clavier
+3. Le Mac qui a la souris envoie **immédiatement** CHANGE_HOST à toutes les souris connectées
+4. En multi-Mac : le Mac destination diffuse la cible via **broadcast UDP LAN** (~1 ms) → le Mac qui a la souris l'envoie sur la bonne cible automatiquement
+5. Les périphériques basculent sur le même hôte (0 = Mac 1, 1 = Mac 2, 2 = Mac 3)
+6. Un probe loop (0,5 s après switch, 3 s en veille) réexécute les switches différés si la souris n'était pas disponible
+7. À chaque reconnexion BT, SwiGi restaure le rétroéclairage via HID++ `0x8070` (BACKLIGHT2)
 
-Architecture pipeline unidirectionnel : clavier notifie → SwiGi dispatch → souris bascule. Pas de correction agressive, pas de boucle de feedback.
-
-Utilise HID++ 2.0 (features `0x1814` CHANGE_HOST, `0x8070` BACKLIGHT2). Un package Python modulaire, une seule dépendance (hidapi).
+Utilise HID++ 2.0 (features `0x1814` CHANGE_HOST, `0x8070` BACKLIGHT2). Package Python modulaire, une seule dépendance (hidapi).
 
 ---
 
@@ -334,13 +335,13 @@ Utilise HID++ 2.0 (features `0x1814` CHANGE_HOST, `0x8070` BACKLIGHT2). Un packa
 
 SwiGi est extrêmement léger — conçu pour tourner 24h/24 en arrière-plan sans impact visible.
 
-| Ressource | Valeur typique                                                   |
-| --------- | ---------------------------------------------------------------- |
-| CPU       | < 0,5 % (boucle bloquée en attente kernel BT)                    |
-| RAM       | ~10–15 Mo (Python + hidapi)                                      |
-| Disque    | 0 écriture en fonctionnement normal (logs uniquement si demandé) |
-| Réseau    | 0 octet (100 % Bluetooth local, aucune connexion internet)       |
-| Batterie  | Négligeable — équivalent à avoir le Bluetooth activé normalement |
+| Ressource | Valeur typique                                                         |
+| --------- | ---------------------------------------------------------------------- |
+| CPU       | < 0,5 % (boucle bloquée en attente kernel BT)                          |
+| RAM       | ~10–15 Mo (Python + hidapi)                                            |
+| Disque    | 0 écriture en fonctionnement normal (logs uniquement si demandé)       |
+| Réseau    | < 100 octets par switch (broadcast UDP LAN, aucune connexion internet) |
+| Batterie  | Négligeable — équivalent à avoir le Bluetooth activé normalement       |
 
 La boucle principale passe 100 % de son temps bloquée dans `hid_read_timeout` (appel système kernel, 500 ms timeout). Python ne s'exécute que quelques microsecondes à chaque notification ou cycle de ping. La consommation est comparable à un daemon SSH ou à l'agent Bluetooth natif.
 
@@ -374,7 +375,7 @@ SwiGi syncs Easy-Switch between your Logitech keyboard and mouse over Bluetooth 
 | Feature                       | Description                                                            |
 | ----------------------------- | ---------------------------------------------------------------------- |
 | 🔀 **Easy-Switch sync**       | Press once on keyboard → mouse follows automatically                   |
-| 🔵 **Native Bluetooth**       | No USB dongle, no Logi Options+, no network required                   |
+| 🔵 **Native Bluetooth**       | No USB dongle, no Logi Options+, no cloud or server required           |
 | 🔄 **Auto-reconnect**         | Watchdog reconnects both devices in < 15s after BT drop                |
 | 🔗 **Verified sync**          | Confirms in logs that the mouse actually switched                      |
 | ⚡ **Low latency**            | < 300ms response under normal conditions                               |
@@ -462,17 +463,16 @@ python3 swigi.py --log-file swigi.log     # write logs to file (auto-rotation: 1
 
 > **Required if you use 2+ Macs**
 
-SwiGi must run on **all 3 Macs SIMULTANEOUSLY**. Each instance monitors locally connected devices via Bluetooth HID++ 2.0 — there is no network communication between instances.
+SwiGi must run on **all 3 Macs SIMULTANEOUSLY**. Instances coordinate via LAN UDP broadcast (port 37000) — zero configuration, no server required.
 
-**Why this matters:** SwiGi can only send CHANGE_HOST to devices **currently connected to the local Mac**. When the mouse is on Mac2, Mac1 cannot reach it over Bluetooth HID.
+**Why this matters:** SwiGi can only send CHANGE_HOST to devices **currently connected to the local Mac**. When the mouse is on Mac1, Mac1 must send the command — Mac2 can't reach it.
 
-**Example with 3 Macs (Mac1=host0, Mac2=host1, Mac3=host2):**
+**The switch works both ways automatically:**
 
-- Mac1 → Mac2: SwiGi on **Mac1** sends CHANGE_HOST(1) to mouse ✓
-- Mac2 → Mac1: SwiGi on **Mac2** sends CHANGE_HOST(0) to mouse ✓
-- Mac1 → Mac3: SwiGi on **Mac1** sends CHANGE_HOST(2) ✓
+- **MX Keys Mini**: source Mac captures the PUSH notification and sends CHANGE_HOST to the mouse directly.
+- **MX Keys S**: destination Mac detects keyboard arrival, broadcasts the target via UDP, the Mac that has the mouse sends it to the right host.
 
-**Multi-keyboard support:** 2 MX Keys keyboards connected to the same Mac are supported. SwiGi monitors each keyboard in a dedicated thread.
+**Multi-keyboard support:** MX Keys Mini + MX Keys S connected across 3 Macs are supported. SwiGi monitors each keyboard in a dedicated thread.
 
 Install on each Mac:
 
@@ -528,7 +528,8 @@ scp ~/.swigi_profiles/my-profile.json user@mac3:~/.swigi_profiles/
 | Nothing happens on macOS                     | Add `python3` (launchd) or Terminal (manual) to Input Monitoring, then restart the service                                                                                              |
 | Menu bar icon missing (install)              | Re-run `bash install_mac.sh` from the SwiGi folder — the old plist may point to the wrong Python. Then verify: `python3 -c "import rumps"`                                              |
 | Menu bar icon missing (general)              | 1) `python3` in Input Monitoring. 2) `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.swigi.plist` |
-| Mouse doesn't come back after switch         | SwiGi must run on **all 3 Macs simultaneously** (see above). Via launchd: `tail -50 ~/Library/Logs/swigi.log`. Manual: logs print to terminal.                                          |
+| Mouse doesn't come back after switch         | SwiGi must run on **all 3 Macs simultaneously** and be on the same LAN subnet (sync uses UDP broadcast). Via launchd: `tail -50 ~/Library/Logs/swigi.log`.                              |
+| MX Keys S: mouse doesn't follow (multi-Mac)  | macOS may have blocked UDP port 37000. On first launch: accept the "allow incoming network connections" popup. Or: System Settings → Security → Firewall → python3 → Allow               |
 | `hidapi not found` on macOS                  | Run `brew install hidapi`                                                                                                                                                               |
 | `hidapi not found` on Windows                | Check `hidapi.dll` is in the same folder as `swigi.py`                                                                                                                                  |
 | SwiGi starts but does nothing                | Logs are already in DEBUG mode by default — run from terminal and read the output. `-q` reduces logs; don't use it for debugging.                                                       |
@@ -537,15 +538,16 @@ scp ~/.swigi_profiles/my-profile.json user@mac3:~/.swigi_profiles/
 
 ### How it works
 
-1. SwiGi monitors the keyboard over Bluetooth HID (regular ping)
-2. When you press Easy-Switch, the keyboard sends a `CHANGE_HOST` notification
-3. SwiGi captures it and **immediately** sends the same command to all connected mice
-4. All devices switch to the same host
-5. The probe loop verifies and confirms in logs that the mouse is on the correct host
+1. SwiGi monitors the keyboard over Bluetooth HID (blocking read, 500ms timeout)
+2. When you press Easy-Switch:
+   - **MX Keys Mini**: sends a `CHANGE_HOST` notification before disconnecting → source Mac captures and dispatches
+   - **MX Keys S**: disconnects silently → destination Mac detects keyboard arrival
+3. The Mac that has the mouse sends CHANGE_HOST **immediately** to all connected mice
+4. On multi-Mac: destination Mac broadcasts the target over **LAN UDP** (~1 ms) → the Mac with the mouse switches it automatically
+5. All devices switch to the same host (0 = Mac 1, 1 = Mac 2, 2 = Mac 3)
+6. A probe loop (0.5s after switch, 3s idle) retries deferred switches if the mouse wasn't available
 
-Unidirectional pipe architecture: keyboard notifies → SwiGi sends CHANGE_HOST → mouse switches → log confirms. No aggressive correction, no feedback loop.
-
-Uses the HID++ 2.0 protocol (CHANGE_HOST feature `0x1814`). Single Python package, one dependency (hidapi).
+Uses HID++ 2.0 (CHANGE_HOST `0x1814`, BACKLIGHT2 `0x8070`). Single Python package, one dependency (hidapi).
 
 ### ⚡ Performance
 
@@ -556,7 +558,7 @@ SwiGi is extremely lightweight — designed to run 24/7 in the background with n
 | CPU      | < 0.5% (loop blocked waiting in kernel BT syscall)                   |
 | RAM      | ~10–15 MB (Python + hidapi)                                          |
 | Disk     | 0 writes during normal operation (logs only if `--log-file` is used) |
-| Network  | 0 bytes (100% local Bluetooth, no internet connection)               |
+| Network  | < 100 bytes per switch (LAN UDP broadcast, no internet connection)   |
 | Battery  | Negligible — equivalent to having Bluetooth enabled normally         |
 
 The main loop spends most of its time blocked in `hid_read_timeout` (a kernel syscall). Python only executes for a few microseconds per cycle. Comparable to a background SSH agent or the native Bluetooth daemon.

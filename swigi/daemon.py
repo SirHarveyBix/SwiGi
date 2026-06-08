@@ -23,6 +23,7 @@ from swigi.state import (
     _set_keyboard_status,
     _SwitchEvent,
 )
+from swigi.sync import broadcast_switch, start_sync_listener
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
@@ -347,6 +348,11 @@ def run_daemon(
         daemon=True,
     ).start()
 
+    start_sync_listener(
+        lambda host: event_queue.put(_SwitchEvent(host, "sync-relay", "sync")),
+        stop_event,
+    )
+
     log.info("🟢 Prêt — %d clavier(s), %d souris", len(keyboards), len(mice))
 
     # Boucle principale : dispatch unifié
@@ -414,6 +420,8 @@ def run_daemon(
                     log.warning("⚠️ Aucune souris disponible — switch hôte %d différé", event.target_host + 1)
                 else:
                     log.warning("⚠️ Toutes les souris ont échoué — switch hôte %d différé", event.target_host + 1)
+        if event.source != "sync":
+            broadcast_switch(event.target_host)
         hunt_trigger.set()
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()

@@ -31,6 +31,7 @@ _STABILITY_WAIT = 0.5
 class _SwitchEvent:
     target_host: int
     keyboard_name: str
+    source: str = ""  # "" = local, "sync" = reçu d'un autre Mac (anti-boucle)
 
 
 def _reconnect_keyboard(
