@@ -143,7 +143,7 @@ def _emit_drain_switch(
         last_switch_time = time.time()
         last_switch_target = target
         log.info("★ [%s] Easy-Switch → hôte %d (%s)", name, target + 1, log_suffix)
-        event_queue.put(_SwitchEvent(target, name, "push"))
+        event_queue.put(_SwitchEvent(target, name))
         hunt_trigger.set()
     return last_switch_time, last_switch_target
 
@@ -169,7 +169,7 @@ def _emit_arrival_switch(
     if target == last_switch_target and time.time() - last_switch_time < _DEBOUNCE:
         return last_switch_time, last_switch_target
     log.info("★ [%s] Easy-Switch → hôte %d (arrival)", name, target + 1)
-    event_queue.put(_SwitchEvent(target, name, "push"))
+    event_queue.put(_SwitchEvent(target, name))
     hunt_trigger.set()
     return time.time(), target
 
@@ -231,7 +231,7 @@ def watch_keyboard_push(
 
     while not stop_event.is_set():
         # Backlight dirty (changement via GUI) — appliqué ici pour ne pas bloquer la GUI
-        if state.pop("backlight_dirty", False) and keyboard.backlight_index is not None:
+        if keyboard.backlight_index is not None and state.pop(f"backlight_dirty_{keyboard.product_id}", False):
             _restore_backlight(keyboard)
         # Watchdog
         if time.time() - last_response > _WATCHDOG_TIMEOUT:
@@ -376,7 +376,7 @@ def watch_keyboard_push(
             last_switch_time = time.time()
             last_switch_target = target
             log.info("★ [%s] Easy-Switch → hôte %d", name, target + 1)
-            event_queue.put(_SwitchEvent(target, name, "push"))
+            event_queue.put(_SwitchEvent(target, name))
             hunt_trigger.set()
 
     if keyboard is not None:

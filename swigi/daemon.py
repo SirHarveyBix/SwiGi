@@ -20,23 +20,12 @@ from swigi.path_push import watch_keyboard_push
 from swigi.prefs import _prefs_lock, prefs
 from swigi.protocol import get_host_info, send_change_host
 from swigi.state import (
-    _reconnect_keyboard,
     _set_keyboard_status,
     _SwitchEvent,
-    _sync_keyboard_display,
 )
-from swigi.sync import broadcast_switch, start_sync_listener
 from swigi.transport import TransportError
 
 log = logging.getLogger("swigi.daemon")
-
-# Re-exports pour compatibilité avec les imports existants
-__all__ = [
-    "_SwitchEvent",
-    "_reconnect_keyboard",
-    "_set_keyboard_status",
-    "_sync_keyboard_display",
-]
 
 # ── Constantes patchables ─────────────────────────────────────────────────────
 
@@ -275,7 +264,7 @@ def _keyboard_probe_loop(
                     if info is not None:
                         _, this_mac_host = info
                         log.info("★ [%s] Easy-Switch → hôte %d (arrivée)", keyboard.name, this_mac_host + 1)
-                        event_queue.put(_SwitchEvent(this_mac_host, keyboard.name, "push"))
+                        event_queue.put(_SwitchEvent(this_mac_host, keyboard.name))
                         hunt_trigger.set()
                 except Exception:
                     log.debug("get_host_info échoué — switch d'arrivée ignoré")
@@ -358,12 +347,6 @@ def run_daemon(
         daemon=True,
     ).start()
 
-    # Sync inter-Mac : reçoit les broadcasts des autres Macs et dispatch en local
-    start_sync_listener(
-        lambda host: event_queue.put(_SwitchEvent(host, "sync-relay", "sync")),
-        stop_event,
-    )
-
     log.info("🟢 Prêt — %d clavier(s), %d souris", len(keyboards), len(mice))
 
     # Boucle principale : dispatch unifié
@@ -432,10 +415,6 @@ def run_daemon(
                 else:
                     log.warning("⚠️ Toutes les souris ont échoué — switch hôte %d différé", event.target_host + 1)
         hunt_trigger.set()
-        # Broadcast inter-Mac : informe les autres Macs pour qu'ils switchent leur souris.
-        # Pas de re-broadcast pour les events déjà reçus via sync (anti-boucle).
-        if event.source != "sync":
-            broadcast_switch(event.target_host)
         last_dispatch_target = event.target_host
         last_dispatch_time = time.time()
 

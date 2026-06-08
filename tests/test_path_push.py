@@ -29,7 +29,6 @@ def _make_keyboard(name="MX Keys Mini", product_id=0xB369, change_host_index=5):
     device.product_id = product_id
     device.change_host_index = change_host_index
     device.backlight_index = None
-    device.generation = "push"
     device.transport = MagicMock()
     device.transport.is_open = True
 
@@ -126,7 +125,6 @@ class TestWatchKeyboardPush(unittest.TestCase):
 
         self.assertIsInstance(event, _SwitchEvent)
         self.assertEqual(event.target_host, 2)
-        self.assertEqual(event.source, "push")
 
     def test_debounce_same_target(self, mock_get_host):
         """Même target < debounce → un seul event."""
@@ -200,9 +198,8 @@ class TestWatchKeyboardPush(unittest.TestCase):
         events = []
         while not event_queue.empty():
             events.append(event_queue.get_nowait())
-        push_events = [e for e in events if e.source == "push"]
-        self.assertGreaterEqual(len(push_events), 1)
-        self.assertEqual(push_events[0].target_host, 2)
+        self.assertGreaterEqual(len(events), 1)
+        self.assertEqual(events[0].target_host, 2)
 
     @patch("swigi.path_push._reconnect_keyboard")
     def test_reconnect_posts_no_pull_event(self, mock_reconnect, mock_get_host):
@@ -247,8 +244,7 @@ class TestWatchKeyboardPush(unittest.TestCase):
         events = []
         while not event_queue.empty():
             events.append(event_queue.get_nowait())
-        pull_events = [e for e in events if e.source == "pull"]
-        self.assertEqual(len(pull_events), 0)
+        self.assertEqual(len(events), 0)
 
     @patch("swigi.path_push._reconnect_keyboard")
     def test_watchdog_triggers_reconnect(self, mock_reconnect, mock_get_host):
@@ -462,7 +458,6 @@ class TestStaleDetection(unittest.TestCase):
             thread.join(timeout=2.0)
 
         self.assertEqual(event.target_host, 2)
-        self.assertEqual(event.source, "push")
 
     @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_real_switch_in_window_accepted_ping_timeout(self, mock_get_host):
@@ -501,7 +496,6 @@ class TestStaleDetection(unittest.TestCase):
             thread.join(timeout=2.0)
 
         self.assertEqual(event.target_host, 2)
-        self.assertEqual(event.source, "push")
 
     @patch("swigi.path_push.get_host_info", return_value=(3, 0))
     def test_source_mac_no_ping_outside_window(self, mock_get_host):
@@ -630,6 +624,100 @@ class TestSwIdFilter(unittest.TestCase):
             thread.join(timeout=2.0)
 
         self.assertFalse(event_queue.empty(), "Aucun SwitchEvent pour paquet notification")
+
+
+class TestBacklightPerKeyboard(unittest.TestCase):
+    """backlight_dirty_{pid} : flag per-keyboard — MX Mini ne vole pas le flag de MX Keys S."""
+
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
+    @patch("swigi.path_push.set_backlight_config", return_value=True)
+    @patch("swigi.path_push.get_backlight_config", return_value=(75, 0, 0))
+    def test_keys_s_restores_backlight_on_dirty_flag(
+        self, mock_get_bl, mock_set_bl, mock_get_host
+    ):
+        """MX Keys S (backlight_index != None) restaure le backlight quand son flag est posé."""
+        from swigi.prefs import prefs
+        keys_s = _make_keyboard(name="MX Keys S", product_id=0xB35B, change_host_index=5)
+        keys_s.backlight_index = 7
+        prefs[f"backlight_{keys_s.product_id}"] = 75
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {keys_s.product_id: {"name": keys_s.name, "ok": True}},
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] == 1:
+                state[f"backlight_dirty_{keys_s.product_id}"] = True
+                return None
+            stop_event.set()
+            return None
+
+        keys_s.transport.read.side_effect = mock_read
+
+        with patch("swigi.path_push._PING_INTERVAL", 1000.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.05
+        ):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(keys_s, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=2.0)
+
+        mock_set_bl.assert_called()
+        self.assertNotIn(f"backlight_dirty_{keys_s.product_id}", state)
+
+    @patch("swigi.path_push.get_host_info", return_value=(3, 0))
+    @patch("swigi.path_push.set_backlight_config", return_value=True)
+    def test_mx_mini_does_not_consume_keys_s_flag(self, mock_set_bl, mock_get_host):
+        """MX Mini (pas de backlight) n'efface PAS le flag backlight_dirty du MX Keys S."""
+        keys_s_pid = 0xB35B
+        mini = _make_keyboard(name="MX Keys Mini", product_id=0xB369, change_host_index=5)
+        mini.backlight_index = None
+
+        event_queue = queue.Queue()
+        state = {
+            "_lock": threading.Lock(),
+            "keyboards": {mini.product_id: {"name": mini.name, "ok": True}},
+            f"backlight_dirty_{keys_s_pid}": True,
+        }
+        stop_event = threading.Event()
+        hunt_trigger = threading.Event()
+
+        calls = [0]
+
+        def mock_read(timeout=10):
+            calls[0] += 1
+            if calls[0] >= 2:
+                stop_event.set()
+            return None
+
+        mini.transport.read.side_effect = mock_read
+
+        with patch("swigi.path_push._PING_INTERVAL", 1000.0), patch(
+            "swigi.path_push._READ_WINDOW", 0.05
+        ):
+            thread = threading.Thread(
+                target=watch_keyboard_push,
+                args=(mini, event_queue, state, stop_event, hunt_trigger),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=2.0)
+
+        self.assertTrue(
+            state.get(f"backlight_dirty_{keys_s_pid}"),
+            "MX Mini a consommé le flag backlight du MX Keys S — BUG",
+        )
+        mock_set_bl.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -220,7 +220,8 @@ if HAS_RUMPS and _rumps:
                 for pid in pids:
                     prefs[f"backlight_{pid}"] = level
                 save_prefs(dict(prefs))
-            self._state["backlight_dirty"] = True
+            for pid in pids:
+                self._state[f"backlight_dirty_{pid}"] = True
             for label, item in self._backlight_items.items():
                 item.state = (label == sender.title)
             log.info("💡 Rétroéclairage → %d%%", level)

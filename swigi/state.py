@@ -31,7 +31,6 @@ _STABILITY_WAIT = 0.5
 class _SwitchEvent:
     target_host: int
     keyboard_name: str
-    source: str  # "push"
 
 
 def _reconnect_keyboard(
