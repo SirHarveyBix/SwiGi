@@ -42,6 +42,8 @@ def start_sync_listener(
                     try:
                         data, _ = s.recvfrom(256)
                         msg = json.loads(data)
+                        if not isinstance(msg, dict):
+                            continue
                         if msg.get("from") == _MACHINE_ID:
                             continue  # ignore son propre broadcast
                         target = msg.get("target")
@@ -49,7 +51,7 @@ def start_sync_listener(
                             callback(target)
                     except TimeoutError:
                         pass
-                    except (json.JSONDecodeError, OSError) as e:
+                    except Exception as e:
                         log.debug("sync listener: %s", e)
         except OSError as e:
             log.warning("sync listener bind échoué (port %d) — sync désactivé: %s", _PORT, e)
