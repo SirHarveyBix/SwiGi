@@ -18,7 +18,14 @@ if "swigi.gui" not in sys.modules:
     _mock_gui._prefs_lock = threading.Lock()
     sys.modules["swigi.gui"] = _mock_gui
 
-from swigi.path_push import _drain_switch, watch_keyboard_push
+from swigi.path_push import (
+    _drain_switch,
+    _emit_arrival_switch,
+    _is_stale_notification,
+    _restore_backlight,
+    _save_initial_backlight,
+    watch_keyboard_push,
+)
 from swigi.state import _SwitchEvent
 from swigi.transport import TransportError
 
@@ -718,6 +725,232 @@ class TestBacklightPerKeyboard(unittest.TestCase):
             "MX Mini a consommé le flag backlight du MX Keys S — BUG",
         )
         mock_set_bl.assert_not_called()
+
+
+# ── Tests helpers backlight ────────────────────────────────────────────────────
+
+
+class TestSaveInitialBacklight(unittest.TestCase):
+    def _make_keyboard_with_backlight(self, product_id=0xB35B):
+        kb = _make_keyboard(product_id=product_id)
+        kb.backlight_index = 7
+        return kb
+
+    @patch("swigi.path_push.save_prefs")
+    @patch("swigi.path_push.get_backlight_config", return_value=(80, 0, 0))
+    def test_saves_level_when_key_absent(self, mock_get_bl, mock_save):
+        """Sauvegarde le level initial quand la clé est absente des prefs."""
+        kb = self._make_keyboard_with_backlight(product_id=0xAAAA)
+        fresh_prefs = {}
+        with patch("swigi.path_push.prefs", fresh_prefs):
+            _save_initial_backlight(kb)
+        self.assertEqual(fresh_prefs.get(f"backlight_{kb.product_id}"), 80)
+        mock_save.assert_called_once()
+
+    @patch("swigi.path_push.save_prefs")
+    @patch("swigi.path_push.get_backlight_config", return_value=None)
+    def test_no_save_when_config_returns_none(self, mock_get_bl, mock_save):
+        """Pas de sauvegarde si get_backlight_config retourne None."""
+        kb = self._make_keyboard_with_backlight(product_id=0xBBBB)
+        fresh_prefs = {}
+        with patch("swigi.path_push.prefs", fresh_prefs):
+            _save_initial_backlight(kb)
+        mock_save.assert_not_called()
+
+    @patch("swigi.path_push.save_prefs")
+    @patch("swigi.path_push.get_backlight_config", side_effect=TransportError("dead"))
+    def test_transport_error_silenced(self, mock_get_bl, mock_save):
+        """TransportError dans get_backlight_config ne propage pas."""
+        kb = self._make_keyboard_with_backlight(product_id=0xCCCC)
+        fresh_prefs = {}
+        with patch("swigi.path_push.prefs", fresh_prefs):
+            _save_initial_backlight(kb)  # ne doit pas lever
+        mock_save.assert_not_called()
+
+    def test_skips_when_backlight_index_none(self):
+        """backlight_index=None → retour immédiat, rien n'est appelé."""
+        kb = _make_keyboard(product_id=0xDDDD)
+        kb.backlight_index = None
+        with patch("swigi.path_push.get_backlight_config") as mock_get:
+            _save_initial_backlight(kb)
+        mock_get.assert_not_called()
+
+    @patch("swigi.path_push.save_prefs")
+    @patch("swigi.path_push.get_backlight_config")
+    def test_skips_when_key_already_in_prefs(self, mock_get, mock_save):
+        """Clé déjà dans les prefs → get_backlight_config non appelé."""
+        kb = self._make_keyboard_with_backlight(product_id=0xEEEE)
+        existing_prefs = {f"backlight_{kb.product_id}": 50}
+        with patch("swigi.path_push.prefs", existing_prefs):
+            _save_initial_backlight(kb)
+        mock_get.assert_not_called()
+
+
+class TestRestoreBacklight(unittest.TestCase):
+    def _make_keyboard_with_backlight(self, product_id=0xB35B):
+        kb = _make_keyboard(product_id=product_id)
+        kb.backlight_index = 7
+        return kb
+
+    @patch("swigi.path_push.set_backlight_config", return_value=True)
+    def test_restores_level_when_saved(self, mock_set):
+        """Restaure le level quand la clé est dans les prefs."""
+        kb = self._make_keyboard_with_backlight(product_id=0xF001)
+        prefs_with_level = {f"backlight_{kb.product_id}": 75}
+        with patch("swigi.path_push.prefs", prefs_with_level):
+            _restore_backlight(kb)
+        mock_set.assert_called_once()
+
+    @patch("swigi.path_push.set_backlight_config", return_value=False)
+    def test_no_reply_logged_not_raised(self, mock_set):
+        """set_backlight_config retourne False → loggé, pas d'exception."""
+        kb = self._make_keyboard_with_backlight(product_id=0xF002)
+        prefs_with_level = {f"backlight_{kb.product_id}": 50}
+        with patch("swigi.path_push.prefs", prefs_with_level):
+            _restore_backlight(kb)  # ne doit pas lever
+        mock_set.assert_called_once()
+
+    @patch("swigi.path_push.set_backlight_config", side_effect=TransportError("dead"))
+    def test_transport_error_silenced(self, mock_set):
+        """TransportError dans set_backlight_config ne propage pas."""
+        kb = self._make_keyboard_with_backlight(product_id=0xF003)
+        prefs_with_level = {f"backlight_{kb.product_id}": 60}
+        with patch("swigi.path_push.prefs", prefs_with_level):
+            _restore_backlight(kb)  # ne doit pas lever
+
+    def test_skips_when_level_none(self):
+        """Pas de level dans les prefs → set_backlight_config non appelé."""
+        kb = self._make_keyboard_with_backlight(product_id=0xF004)
+        empty_prefs = {}
+        with patch("swigi.path_push.prefs", empty_prefs), \
+             patch("swigi.path_push.set_backlight_config") as mock_set:
+            _restore_backlight(kb)
+        mock_set.assert_not_called()
+
+    def test_skips_when_backlight_index_none(self):
+        """backlight_index=None → retour immédiat."""
+        kb = _make_keyboard(product_id=0xF005)
+        kb.backlight_index = None
+        with patch("swigi.path_push.set_backlight_config") as mock_set:
+            _restore_backlight(kb)
+        mock_set.assert_not_called()
+
+
+# ── Tests _is_stale_notification ──────────────────────────────────────────────
+
+
+class TestIsStaleNotification(unittest.TestCase):
+    def test_returns_true_when_ping_response_valid(self):
+        """Ping répondu correctement → clavier stable → True."""
+        from swigi.constants import SW_ID
+        kb = _make_keyboard()
+        kb.transport.write.return_value = None
+        kb.transport.read.return_value = bytes([0x11, 0xFF, 0x00, SW_ID] + [0] * 16)
+        self.assertTrue(_is_stale_notification(kb))
+
+    def test_returns_false_when_no_response(self):
+        """Pas de réponse au ping → déconnexion → False."""
+        kb = _make_keyboard()
+        kb.transport.write.return_value = None
+        kb.transport.read.return_value = None
+        self.assertFalse(_is_stale_notification(kb))
+
+    def test_returns_false_on_transport_error(self):
+        """TransportError pendant le ping → False (clavier déconnecté)."""
+        kb = _make_keyboard()
+        kb.transport.write.side_effect = TransportError("dead")
+        self.assertFalse(_is_stale_notification(kb))
+
+    def test_returns_false_on_os_error(self):
+        """OSError pendant read → False."""
+        kb = _make_keyboard()
+        kb.transport.write.return_value = None
+        kb.transport.read.side_effect = OSError("io error")
+        self.assertFalse(_is_stale_notification(kb))
+
+
+# ── Tests _drain_switch ligne 101 ─────────────────────────────────────────────
+
+
+class TestDrainSwitchUnknownReportId(unittest.TestCase):
+    def test_unknown_report_id_continues_drain(self):
+        """raw[0] hors MSG_LENGTHS (>= 6 octets) → continue, pas de return."""
+        kb = _make_keyboard()
+        unknown_packet = bytes([0x99, 0xFF, 5, 0x00, 3, 1] + [0] * 6)  # 0x99 not in {0x10, 0x11, 0x12}
+        valid_packet = bytes([0x11, 0xFF, 5, 0x00, 3, 2] + [0] * 14)
+        kb.transport.read.side_effect = [unknown_packet, valid_packet] + [None] * 8
+        result = _drain_switch(kb)
+        self.assertEqual(result, 2)
+
+
+# ── Tests _emit_arrival_switch ────────────────────────────────────────────────
+
+
+class TestEmitArrivalSwitch(unittest.TestCase):
+    def test_emits_when_long_enough(self):
+        """Reconnexion longue + this_mac_host connu → SwitchEvent émis."""
+        event_queue = queue.Queue()
+        hunt_trigger = threading.Event()
+        t, target = _emit_arrival_switch(
+            reconnect_duration=2.0,
+            this_mac_host=1,
+            event_queue=event_queue,
+            hunt_trigger=hunt_trigger,
+            last_switch_time=0.0,
+            last_switch_target=-1,
+            name="MX Keys S",
+        )
+        self.assertFalse(event_queue.empty())
+        event = event_queue.get_nowait()
+        self.assertEqual(event.target_host, 1)
+        self.assertTrue(hunt_trigger.is_set())
+        self.assertEqual(target, 1)
+
+    def test_no_emit_when_too_short(self):
+        """Reconnexion courte (blip BT) → pas d'événement."""
+        event_queue = queue.Queue()
+        hunt_trigger = threading.Event()
+        _emit_arrival_switch(
+            reconnect_duration=0.1,
+            this_mac_host=1,
+            event_queue=event_queue,
+            hunt_trigger=hunt_trigger,
+            last_switch_time=0.0,
+            last_switch_target=-1,
+            name="MX Keys S",
+        )
+        self.assertTrue(event_queue.empty())
+
+    def test_no_emit_when_host_is_none(self):
+        """this_mac_host=None → pas d'événement."""
+        event_queue = queue.Queue()
+        hunt_trigger = threading.Event()
+        _emit_arrival_switch(
+            reconnect_duration=5.0,
+            this_mac_host=None,
+            event_queue=event_queue,
+            hunt_trigger=hunt_trigger,
+            last_switch_time=0.0,
+            last_switch_target=-1,
+            name="MX Keys S",
+        )
+        self.assertTrue(event_queue.empty())
+
+    def test_debounce_same_target(self):
+        """Même target récent → debounce → pas d'événement."""
+        import time
+        event_queue = queue.Queue()
+        hunt_trigger = threading.Event()
+        _emit_arrival_switch(
+            reconnect_duration=5.0,
+            this_mac_host=1,
+            event_queue=event_queue,
+            hunt_trigger=hunt_trigger,
+            last_switch_time=time.time(),
+            last_switch_target=1,
+            name="MX Keys S",
+        )
+        self.assertTrue(event_queue.empty())
 
 
 if __name__ == "__main__":
